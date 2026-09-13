@@ -165,6 +165,10 @@ void ParamsPage::setPageField(TIStream &is, const TFxP &fx, bool isVertical) {
         QString str =
             QString::fromStdWString(TStringTable::translate(paramName));
         ParamField *field = ParamField::create(this, str, param);
+        if (paramName == "STD_glbModelFx.modelFile") {
+          if (auto stringField = dynamic_cast<StringParamField *>(field))
+            stringField->enableGlbFileControls();
+        }
         if (field) {
           if (decimals >= 0) field->setPrecision(decimals);
           m_fields.push_back(field);

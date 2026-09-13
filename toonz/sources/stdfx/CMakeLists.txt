@@ -121,6 +121,7 @@ set(SOURCES
     fourpointsgradientfx.cpp
     freedistortfx.cpp
     gammafx.cpp
+    glbmodelfx.cpp
     glowfx.cpp
     gradients.cpp
     hsvkeyfx.cpp
@@ -338,4 +339,10 @@ target_link_libraries(tnzstdfx Qt5::Core Qt5::Gui Qt5::OpenGL ${GL_LIB} ${GLEW_L
 
 if(OpenCV_FOUND)
     target_link_libraries(tnzstdfx ${OpenCV_LIBS})
+endif()
+# Optional regression target for the read-only GLB Model FX framework.
+option(BUILD_GLB_FX_TESTS "Build the GLB Model FX framework regression executable" OFF)
+if(BUILD_GLB_FX_TESTS)
+    add_executable(glbmodelfx_test tests/glbmodelfx_test.cpp)
+    target_link_libraries(glbmodelfx_test Qt5::Core Qt5::Gui ${TNZLIBS} ${PTHREAD_LIBRARY})
 endif()

@@ -630,15 +630,21 @@ class DVAPI StringParamField final : public ParamField {
   TStringParamP m_currentParam, m_actualParam;
   DVGui::LineEdit *m_textFld            = nullptr;
   component::MyTextEdit *m_multiTextFld = nullptr;
+  bool m_glbFileControls                = false;
 
 public:
   StringParamField(QWidget *parent, QString name, const TStringParamP &param);
+
+  // Select or clear a GLB reference without opening or validating its data.
+  void enableGlbFileControls();
 
   void setParam(const TParamP &current, const TParamP &actual,
                 int frame) override;
   void update(int frame) override;
 
   QSize getPreferredSize() override {
+    if (m_glbFileControls)
+      return sizeHint().expandedTo(QSize(260, 54));
     if (m_textFld)
       return QSize(100, 20);
     else
