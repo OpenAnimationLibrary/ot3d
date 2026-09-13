@@ -16,6 +16,8 @@
   <item>"STD_glbModelFx.farClip" "Far Clip" </item>
   <item>"STD_glbModelFx.lighting" "Lighting" </item>
   <item>"STD_glbModelFx.renderStyle" "Display Style" </item>
+  <item>"STD_glbModelFx.colorMode" "Color Mode" </item>
+  <item>"STD_glbModelFx.materialColors" "Material" </item>
 <!------------------------------ FX ------------------------------------------->
 
   <item>"addFx"			"Add"			</item>
