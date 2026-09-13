@@ -108,7 +108,7 @@ jobs:
         shell: cmd
 
       # Run the focused regression before the longer application build.
-      - name: Build and test GLB Model FX framework
+      - name: Build and test GLB Model FX rendering
         shell: cmd
         run: |
           cd toonz\build
@@ -157,7 +157,7 @@ jobs:
           xcopy /Y /E /I ..\..\stuff .\Opentoonz\portablestuff
         shell: cmd
 
-      - name: Test packaged GLB Model FX framework
+      - name: Test packaged GLB Model FX rendering
         shell: cmd
         run: |
           cd toonz\build\Opentoonz
