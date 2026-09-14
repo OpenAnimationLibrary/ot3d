@@ -152,7 +152,6 @@
     STD_iwa_FractalNoiseFx 
   </Noise>
   <Render>
-    STD_glbModelFx
     STD_cloudsFx 
     STD_inopnCloudsFx
     STD_particlesFx 
@@ -194,6 +193,9 @@
   SHADER_spinblurGPU
   SHADER_HSLBlendGPU
 </Shaders>
+  <3D>
+    STD_glbModelFx
+  </3D>
   <Utility>
     STD_nothingFx
   </Utility>
