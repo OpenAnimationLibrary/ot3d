@@ -12,6 +12,7 @@ set(HEADERS
     perlinnoise.h
     pins.h
     stdfx.h
+    t3dsource.h
     texturefxP.h
     warp.h
     motionawarebasefx.h
@@ -165,6 +166,7 @@ set(SOURCES
     stdfx.cpp
     targetspotfx.cpp
     texturefx.cpp
+    threepointlightfx.cpp
     tilefx.cpp
     tonecurvefx.cpp
     unmultiplyfx.cpp
@@ -340,9 +342,11 @@ target_link_libraries(tnzstdfx otglb Qt5::Core Qt5::Gui Qt5::OpenGL ${GL_LIB} ${
 if(OpenCV_FOUND)
     target_link_libraries(tnzstdfx ${OpenCV_LIBS})
 endif()
-# Optional regression target for the read-only GLB Model FX framework.
-option(BUILD_GLB_FX_TESTS "Build the GLB Model FX framework regression executable" OFF)
+# Optional regression targets for the GLB Model and downstream 3D-lighting FX.
+option(BUILD_GLB_FX_TESTS "Build the GLB Model FX framework regression executables" OFF)
 if(BUILD_GLB_FX_TESTS)
     add_executable(glbmodelfx_test tests/glbmodelfx_test.cpp)
     target_link_libraries(glbmodelfx_test otglb toonzqt Qt5::Core Qt5::Gui Qt5::Widgets ${TNZLIBS} ${PTHREAD_LIBRARY})
+    add_executable(threepointlightfx_test tests/threepointlightfx_test.cpp)
+    target_link_libraries(threepointlightfx_test otglb Qt5::Core Qt5::Gui ${TNZLIBS} ${PTHREAD_LIBRARY})
 endif()
