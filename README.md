@@ -1,70 +1,110 @@
-# OpenToonz
+# OT3D
 
-## ⚠️ **Important**
+OT3D is an experimental downstream of [OpenToonz](https://github.com/opentoonz/opentoonz)
+for productions that combine 2D artwork and externally authored 3D assets in one
+interactive virtual space.
 
-**OFFICIAL SOURCE ONLY:** The only official websites for OpenToonz are [**opentoonz.github.io**](https://opentoonz.github.io/) and this [GitHub repository](https://github.com/opentoonz/opentoonz). To ensure your security, please avoid downloading OpenToonz from any other domain, as there are no other official mirrors or partner sites.
+The project is working toward a Viewer in which artists can stage, inspect, and play
+mixed 2D/3D scenes without first running a Preview render. Final rendering remains a
+separate quality and delivery step.
 
-[日本語](./doc/README_ja.md) [简体中文](./doc/README_chs.md)
+> **Project status:** early development. OT3D is not yet a production-ready replacement
+> for OpenToonz. Scenes and preferences should be backed up before testing development
+> builds.
 
-[![](https://ci.appveyor.com/api/projects/status/oa5l5pc964h8fv49/branch/master?svg=true)](https://ci.appveyor.com/project/opentoonz/opentoonz)
-[![Build Windows](https://github.com/opentoonz/opentoonz/actions/workflows/workflow_windows.yml/badge.svg?branch=master)](https://github.com/opentoonz/opentoonz/actions/workflows/workflow_windows.yml)
-[![Build macOS](https://github.com/opentoonz/opentoonz/actions/workflows/workflow_macos.yml/badge.svg?branch=master)](https://github.com/opentoonz/opentoonz/actions/workflows/workflow_macos.yml)
-[![Build Linux](https://github.com/opentoonz/opentoonz/actions/workflows/workflow_linux.yml/badge.svg?branch=master)](https://github.com/opentoonz/opentoonz/actions/workflows/workflow_linux.yml)
-[![Translation status](https://hosted.weblate.org/widgets/opentoonz/-/svg-badge.svg)](https://hosted.weblate.org/engage/opentoonz/)
+## Why OT3D exists
 
-## What is OpenToonz?
+OpenToonz already provides a 3D stage for arranging 2D columns, but its interactive
+views do not yet present a complete mixed 2D/3D workspace. OT3D is the integration
+branch for closing that gap while keeping OpenToonz's drawing, xsheet, and compositing
+workflow at the center.
 
-OpenToonz is a 2D animation software published by 
-[DWANGO](http://dwango.co.jp/english/). It is based on **Toonz Studio
-Ghibli Version**, originally developed in Italy by
-[Digital Video, Inc.](http://www.toonz.com/), and customized by
-[Studio Ghibli](http://www.ghibli.jp/) over many years of production.
+The intended workflow is:
 
-## Program Requirements
+1. Draw and animate 2D material in OT3D.
+2. Model, rig, and animate 3D material in a dedicated DCC such as
+   [Blender](https://www.blender.org/) or
+   [Animation:Master](https://www.hash.com/animation-master-features).
+3. Exchange 3D assets through GLB (binary glTF 2.0).
+4. Stage and review both media together in OT3D's interactive Viewer.
+5. Use the final renderer when final-quality output is required.
 
-Please refer to the OpenToonz site at <https://opentoonz.github.io/e/index.html>.
+GLB is a read-only interchange boundary in the initial architecture. The external DCC
+project remains the source of truth; OT3D does not write changes back to `.blend`,
+Animation:Master project files, or GLB assets.
 
-## Installation
+## Initial scope
 
-Please download and install OpenToonz from the latest installer at <https://opentoonz.github.io/e/index.html>.
+Essential Viewer work comes before broad 3D feature coverage:
 
-Older versions and unstable nightly builds are also available at <https://github.com/opentoonz/opentoonz/releases>.
+- establish a deterministic OpenToonz and migrated-3D source baseline;
+- draw static GLB geometry in the interactive Viewer;
+- make 2D planes and 3D geometry share a camera and depth model;
+- play supported GLB animation at scene time;
+- add selection, transforms, diagnostics, and dependable asset reload;
+- then expand 2D-plane orientation, fidelity, performance, and exchange workflows.
 
-## Development
+Arbitrary 3D rotation of 2D planes is deliberately deferred. During the early
+milestones, 2D columns retain their current planar orientation controls and Z placement;
+pitch/yaw that tilts a plane through depth (Rx/Ry) is planned for a later milestone.
 
-- [Development checklist (draft)](./doc/development_checklist.md)
-- [AI-assisted development checklist (draft)](./doc/ai_assisted_development_checklist.md)
+See the [roadmap](doc/ot3d/ROADMAP.md) for ordered milestones and explicit non-goals.
 
-## How to Build Locally
+## Project documents
 
-- [Windows](./doc/how_to_build_win.md)
-- [macOS](./doc/how_to_build_macosx.md)
-- [Linux](./doc/how_to_build_linux.md)
-- [BSD](./doc/how_to_build_bsd.md)
+- [Mission and principles](doc/ot3d/MISSION.md)
+- [Development roadmap](doc/ot3d/ROADMAP.md)
+- [External asset compatibility contract](doc/ot3d/COMPATIBILITY.md)
+- [Release policy](doc/ot3d/RELEASES.md)
+- [OpenToonz relationship and upstream policy](doc/ot3d/UPSTREAM.md)
+- [Initial 3D source migration record](doc/ot3d/THREE_D_MIGRATION.md)
 
-For instructions on how to build stylesheets, please [see here](./doc/how_to_stylesheet.md).
+## Builds and releases
 
-Can't develop but still want to help? Help us test individual Pull Requests before they are merged with [these steps](./doc/how_to_test_prs.md).
+Tagged OT3D builds will be published in this repository's
+[Releases](https://github.com/OpenAnimationLibrary/ot3d/releases). Early releases will
+be clearly marked pre-release and will prioritize a portable Windows package so that
+test preferences can remain isolated from an installed OpenToonz configuration.
 
-## Community
+Until the first tagged release is published, build from source using the inherited
+OpenToonz instructions:
 
-- To share tips or to troubleshoot, join the [Google OpenToonz Users forum](https://groups.google.com/forum/#!forum/opentoonz_en)
-- If you found a bug with the software after troubleshooting, or are a developer, search the [Github issues](https://github.com/opentoonz/opentoonz/issues) and post there.
+- [Windows](doc/how_to_build_win.md)
+- [macOS](doc/how_to_build_macosx.md)
+- [Linux](doc/how_to_build_linux.md)
+- [BSD](doc/how_to_build_bsd.md)
 
-## Documentation
+## Relationship to other projects
 
-- For general documentation, please [look here](https://github.com/opentoonz/opentoonz_docs).
+OT3D derives from OpenToonz, which is based on Toonz Studio Ghibli Version, originally
+developed by Digital Video and customized by Studio Ghibli. OT3D preserves the upstream
+source history, authorship, licenses, and third-party notices associated with that work.
+
+OT3D is maintained independently by the Open Animation Library community. It is not an
+official OpenToonz distribution and is not endorsed by or affiliated with DWANGO,
+Digital Video, Studio Ghibli, the Blender Foundation, or Hash, Inc. “OpenToonz,”
+“Blender,” and “Animation:Master” identify their respective projects and products.
+
+General fixes that do not depend on OT3D should be kept suitable for contribution to
+OpenToonz. Integrated or experimental 3D work may remain downstream until it can be
+reviewed as a focused, independently useful change.
+
+## Contributing
+
+Use focused pull requests with an observable acceptance case. A Viewer change should
+state what is visible before and after it, which scene/asset reproduces the result, and
+whether final rendering changes. New asset behavior should include a redistributable
+fixture or a generator for one when licensing permits.
+
+Please preserve upstream attribution and third-party notices. See the
+[upstream policy](doc/ot3d/UPSTREAM.md) before moving code between repositories.
 
 ## Licensing
 
-- Files outside of the `thirdparty` and `stuff/library/mypaint brushes` directories are based on the Modified BSD License.
-  - [modified BSD license](./LICENSE.txt).
-  - Based on this license, this software may be used or changed freely for business or personal use.
-- For files in the `thirdparty` directory:
-  - Please consult with the licenses in the appropriate READMEs or source codes.
-- For files in the `stuff/library/mypaint brushes` directory:
-  - Please see the licenses in `stuff/library/mypaint brushes/Licenses.txt`.
+OT3D retains OpenToonz's licensing and attribution. Files outside `thirdparty` and
+`stuff/library/mypaint brushes` are generally covered by the
+[Modified BSD License](LICENSE.txt). Third-party directories and bundled brush assets
+carry their own notices; consult the license files beside those materials.
 
-### Special Thanks
-
-This open-source program is developed from Toonz, a software originally created by Digital Video, S.p.A., Rome, Italy
+This repository's downstream name and documentation do not alter the licenses of
+OpenToonz or any third-party component.

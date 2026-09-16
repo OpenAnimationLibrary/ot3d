@@ -7,7 +7,7 @@ concurrency:
 on:
   push:
     branches:
-      - master  # Specify branches where the workflow should run
+      - main  # OT3D's integrated development branch
     paths:
       - '**/*'                                    # Include all files in the repository
       - '!appveyor.yml'                           # Ignore changes in AppVeyor
@@ -23,6 +23,10 @@ on:
       - '!doc/**'
       - '!**/.github/**'
       - '.github/workflows/workflow_windows.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   Windows:
