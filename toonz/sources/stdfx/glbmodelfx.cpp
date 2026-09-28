@@ -258,9 +258,8 @@ public:
 
   std::shared_ptr<const otglb::RenderScene> get3DRenderScene(
       double frame, const int *canceled,
-      const otglb::LightingRig *lighting = nullptr,
-      const std::vector<otglb::ModelTransform> *transforms =
-          nullptr,
+      const otglb::LightingRig *lighting                   = nullptr,
+      const std::vector<otglb::ModelTransform> *transforms = nullptr,
       const TRenderSettings * = nullptr) const override {
     return projected(frame, canceled, lighting, transforms);
   }
