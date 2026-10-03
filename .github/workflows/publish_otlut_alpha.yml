@@ -1,0 +1,58 @@
+name: Publish otlut alpha
+
+on:
+  push:
+    branches:
+      - release/otlut-alpha-2026-10-02
+    paths:
+      - ".github/workflows/publish_otlut_alpha.yml"
+      - "release-notes/otlut-alpha-2026-10-02.md"
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out OT3D release metadata
+        uses: actions/checkout@v4
+
+      - name: Check out otlut alpha source
+        uses: actions/checkout@v4
+        with:
+          repository: OpenAnimationLibrary/otlut
+          ref: 59d426ae5371d09c70131b48829d0d225b902925
+          path: otlut
+
+      - name: Configure otlut
+        run: cmake -S otlut -B otlut/build -A x64 -DBUILD_TESTING=ON
+
+      - name: Build otlut
+        run: cmake --build otlut/build --config Release
+
+      - name: Test otlut
+        run: ctest --test-dir otlut/build -C Release --output-on-failure
+
+      - name: Prepare alpha package
+        shell: pwsh
+        run: |
+          $tag = "otlut-alpha-2026-10-02"
+          $package = Join-Path $PWD "package"
+          New-Item -ItemType Directory -Force -Path $package | Out-Null
+          Copy-Item "otlut/build/Release/otlut.exe" $package
+          Copy-Item "otlut/README.md" $package
+          Copy-Item "otlut/LICENSE" $package
+          Copy-Item "otlut/docs/FORMAT_COMPATIBILITY.md" $package
+          & "$package/otlut.exe" --identity --output "$package/identity-33.cube" --size 33
+          & "$package/otlut.exe" --identity --output "$package/identity-33.3dl" --size 33 --output-bit-depth 12
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Compress-Archive -Path "$package/*" -DestinationPath "dist/$tag-windows-x64.zip" -Force
+
+      - name: Publish prerelease
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "otlut-alpha-2026-10-02" "dist/otlut-alpha-2026-10-02-windows-x64.zip" --repo "${{ github.repository }}" --target "${{ github.sha }}" --title "otlut Alpha - 2026-10-02" --notes-file "release-notes/otlut-alpha-2026-10-02.md" --prerelease
