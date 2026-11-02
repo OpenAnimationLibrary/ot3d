@@ -88,9 +88,11 @@ ViewerGeometry prepareViewerGeometry(const Asset &asset, const RenderOptions &o,
     }
     const auto &matrix = evaluated.pose.nodes[index].world;
     for (const auto &primitive : asset.meshes[node.mesh].primitives) {
-      if (primitive.mode != 4 || primitive.hasMorphTargets) {
+      if (primitive.mode < 4 || primitive.mode > 6 ||
+          primitive.hasMorphTargets) {
         warn(out,
-             "Only triangle primitives without morph targets are drawn "
+             "Only triangle lists, strips and fans without morph targets are "
+             "drawn "
              "initially.");
         continue;
       }
@@ -99,7 +101,9 @@ ViewerGeometry prepareViewerGeometry(const Asset &asset, const RenderOptions &o,
                     std::size_t(primitive.material) < asset.materials.size(),
                 "Invalid Viewer material index");
         const auto &material = asset.materials[primitive.material];
-        if (material.alphaMode != 0 || material.baseColor[3] < 1.0f) {
+        // OPAQUE ignores the stored alpha factor. Only MASK and BLEND need
+        // transparency handling that this initial Viewer does not provide.
+        if (material.alphaMode != 0) {
           warn(out,
                "Transparent and alpha-cutout materials are not drawn "
                "initially.");
@@ -121,9 +125,12 @@ ViewerGeometry prepareViewerGeometry(const Asset &asset, const RenderOptions &o,
       const std::size_t count = primitive.indices.empty()
                                     ? primitive.vertexCount
                                     : primitive.indices.size();
-      require(count % 3 == 0, "Incomplete Viewer triangle");
+      require(primitive.mode == 4 ? count % 3 == 0 : count == 0 || count >= 3,
+              "Incomplete Viewer triangle");
+      const std::size_t triangleCount =
+          primitive.mode == 4 ? count / 3 : (count >= 3 ? count - 2 : 0);
       require(out.triangles.size() <= maxTriangles &&
-                  count / 3 <= maxTriangles - out.triangles.size(),
+                  triangleCount <= maxTriangles - out.triangles.size(),
               "Viewer triangle budget exceeded");
       const std::size_t material = primitive.material == NoIndex
                                        ? asset.materials.size()
@@ -135,13 +142,20 @@ ViewerGeometry prepareViewerGeometry(const Asset &asset, const RenderOptions &o,
       for (float v : color)
         require(std::isfinite(v) && v >= 0 && v <= 1,
                 "Invalid Viewer base color");
-      for (std::size_t t = 0; t < count; t += 3) {
+      for (std::size_t t = 0; t < triangleCount; ++t) {
+        const std::size_t first            = primitive.mode == 4 ? t * 3 : t;
+        std::array<std::size_t, 3> corners = {primitive.mode == 6 ? 0 : first,
+                                              first + 1, first + 2};
+        // Triangle strips alternate the first two vertices to keep winding
+        // consistent, including when the source uses an index buffer.
+        if (primitive.mode == 5 && t % 2) std::swap(corners[0], corners[1]);
         ViewerTriangle triangle;
         triangle.color = color;
         for (int corner = 0; corner < 3; ++corner) {
-          const auto vertex = primitive.indices.empty()
-                                  ? t + corner
-                                  : std::size_t(primitive.indices[t + corner]);
+          const auto vertex =
+              primitive.indices.empty()
+                  ? corners[corner]
+                  : std::size_t(primitive.indices[corners[corner]]);
           require(vertex < primitive.vertexCount,
                   "Invalid Viewer vertex index");
           const float *p = position->values.data() + vertex * 3;

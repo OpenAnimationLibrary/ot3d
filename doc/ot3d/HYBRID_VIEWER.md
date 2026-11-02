@@ -12,7 +12,8 @@ remain inherited; this is not a second incompatible drawing-tool stack.
 An exposed, camera-stand-visible GLB Model FX column supplies an immutable,
 bounded, unprojected triangle snapshot through `T3DViewerSource`. The Viewer
 draws triangles with OpenGL without requesting a Preview or FX raster render.
-The snapshot preserves XYZ, node transforms and supported node animation,
+The snapshot expands triangle lists, strips and fans while preserving winding,
+XYZ, node transforms and supported node animation,
 the Model FX instance transform, material color overrides and wireframe mode.
 Frame changes and changed file revisions invalidate the snapshot.
 
@@ -32,7 +33,9 @@ preparation are synchronous; background preparation is still required.
 
 This draft is not ready to replace a production Viewer yet:
 
-- Native application compilation and Windows/macOS/Linux GPU checks.
+- Windows/macOS/Linux visual and GPU checks. Native application compilation
+  passed on all three platforms at the original PR head; corrections must
+  pass updated platform CI too.
 - Fixture-tested shared scene camera/units/clipping and 2D/3D depth. The first
   pass has **mesh-to-mesh depth only**, draws models after 2D, and clears depth
   for that pass. It does not claim correct interleaving with drawings.
@@ -53,7 +56,8 @@ Level editing, picking and camera-test rendering retain base Viewer behavior.
 
 The standalone `glbviewer` regression compares transformed XY and retained Z
 against the existing CPU renderer, checks node animation, indexed geometry,
-capacity rejection, malformed vertices and unsupported-feature diagnostics.
+list/strip/fan topology and winding, capacity rejection, malformed vertices,
+opaque-alpha handling and unsupported-feature diagnostics.
 It runs in the existing three-platform GLB workflow, including its Linux
 sanitizer build. It does not validate a GL context or the native application.
 

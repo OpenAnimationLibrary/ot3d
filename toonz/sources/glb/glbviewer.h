@@ -18,8 +18,8 @@ struct ViewerGeometry {
   bool wireframe                = false;
 };
 
-// Opaque triangle primitives and node animation are supported initially.
-// Skinning, morphs, textures and transparent primitives are reported
+// Opaque triangle lists, strips, fans and node animation are supported
+// initially. Skinning, morphs, textures and transparent primitives are reported
 // explicitly. Capacity is checked before emitting triangles; partial results
 // never escape.
 ViewerGeometry prepareViewerGeometry(const Asset &asset,

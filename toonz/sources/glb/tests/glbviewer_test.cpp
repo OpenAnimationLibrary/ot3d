@@ -38,10 +38,77 @@ Asset triangle() {
   asset.defaultScene = 0;
   return asset;
 }
+
+void testTriangleTopologies() {
+  for (int mode : {5, 6}) {
+    for (bool indexed : {false, true}) {
+      auto asset              = triangle();
+      auto &primitive         = asset.meshes[0].primitives[0];
+      primitive.mode          = mode;
+      primitive.vertexCount   = 4;
+      primitive.triangleCount = 2;
+      primitive.attributes[0].values =
+          mode == 5
+              ? std::vector<float>{-1, -1, 0, 1, -1, 0, -1, 1, 0, 1, 1, 0}
+              : std::vector<float>{-1, -1, 0, 1, -1, 0, 1, 1, 0, -1, 1, 0};
+      if (indexed) primitive.indices = {3, 2, 1, 0};
+      RenderOptions options;
+      const auto viewer    = prepareViewerGeometry(asset, options, 2);
+      const auto reference = prepareRender(asset, options);
+      check(viewer.triangles.size() == 2 && reference.triangles.size() == 2,
+            "Strip/fan did not produce the reference triangles");
+      for (int t = 0; t < 2; ++t) {
+        for (int corner = 0; corner < 3; ++corner) {
+          // The two-sided renderer leaves odd strip winding reversed. The
+          // Viewer keeps consistent winding while preserving the same surface.
+          const int referenceCorner =
+              mode == 5 && t % 2 && corner < 2 ? 1 - corner : corner;
+          const auto &v = viewer.triangles[t].vertices[corner];
+          const auto &r = reference.triangles[t].vertices[referenceCorner];
+          near(v[0] * viewer.stageUnitsPerModelUnit, r.x);
+          near(v[1] * viewer.stageUnitsPerModelUnit, r.y);
+          near(v[2] - options.cameraDistance, r.depth);
+        }
+        const auto &v        = viewer.triangles[t].vertices;
+        const double winding = (v[1][0] - v[0][0]) * (v[2][1] - v[0][1]) -
+                               (v[1][1] - v[0][1]) * (v[2][0] - v[0][0]);
+        check(indexed && mode == 6 ? winding < 0 : winding > 0,
+              "Strip/fan triangle winding changed");
+      }
+      rejects([&] { prepareViewerGeometry(asset, options, 1); });
+      primitive.indices = {0, 1, 2, 4};
+      rejects([&] { prepareViewerGeometry(asset, options); });
+      primitive.indices = {0, 1};
+      rejects([&] { prepareViewerGeometry(asset, options); });
+    }
+  }
+}
+
+void testOpaqueAlpha() {
+  auto asset = triangle();
+  asset.materials.push_back(Material());
+  asset.meshes[0].primitives[0].material = 0;
+  RenderOptions options;
+  options.materialColors = true;
+  for (float alpha : {0.0f, 0.5f, 1.0f}) {
+    asset.materials[0].baseColor[3] = alpha;
+    const auto geometry             = prepareViewerGeometry(asset, options);
+    check(geometry.triangles.size() == 1 && geometry.warnings.empty(),
+          "Opaque material disappeared because of its stored alpha factor");
+  }
+  for (int mode : {1, 2}) {
+    asset.materials[0].alphaMode = mode;
+    const auto geometry          = prepareViewerGeometry(asset, options);
+    check(geometry.triangles.empty() && !geometry.warnings.empty(),
+          "Unsupported mask/blend material was not reported");
+  }
+}
 }  // namespace
 
 int main() {
   try {
+    testTriangleTopologies();
+    testOpaqueAlpha();
     auto asset = triangle();
     RenderOptions options;
     options.position     = {{1, 2, 0.5}};
