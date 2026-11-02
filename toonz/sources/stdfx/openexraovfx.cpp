@@ -320,6 +320,14 @@ struct LayerPlanes {
 LayerPlanes loadLayer(ExrDocument &document, int partIndex,
                       const std::string &layer) {
   const ExrPartInfo &part = document.parts().at(partIndex);
+  const bool exists = std::any_of(part.channels.begin(), part.channels.end(),
+                                  [&](const std::string &name) {
+                                    return !layerComponent(layer, name).empty();
+                                  });
+  if (!exists)
+    throw std::runtime_error(
+        "EXR layer was not found: " +
+        (layer.empty() ? std::string("(base layer)") : layer));
   LayerPlanes result;
   result.rgba[3].fill = 1.0f;
 

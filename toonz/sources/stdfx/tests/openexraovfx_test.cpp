@@ -265,6 +265,35 @@ void testRoutingAndComposite(OpenExrAovFx &fx) {
   expect(composite.m, 1.0f, "Composite alpha failed");
 }
 
+void testMissingLayerSelection(OpenExrAovFx &fx) {
+  auto expectMissing = [&](const char *parameterName, int mode) {
+    parameter<TIntEnumParam>(fx, "outputMode")->setValue(mode);
+    parameter<TStringParam>(fx, parameterName)->setValue(L"absent");
+    bool rejected = false;
+    try {
+      renderFloat(fx);
+    } catch (const TException &error) {
+      rejected = error.getMessage().find(L"EXR layer was not found: absent") !=
+                 std::wstring::npos;
+    }
+    require(
+        rejected,
+        "A missing EXR layer silently rendered instead of reporting an error");
+  };
+  expectMissing("layer", 0);
+  expectMissing("slot1Layer", 4);
+
+  // The tiled part has only base channels. A named-layer selection from another
+  // part/frame must remain unavailable rather than turning into opaque black.
+  parameter<TStringParam>(fx, "part")->setValue(L"tiles");
+  expectMissing("layer", 0);
+  parameter<TStringParam>(fx, "layer")->setValue(L"");
+  expect(pixel(renderFloat(fx), 1, 2).r, 0.9f,
+         "Selecting the existing base layer did not recover after an error");
+  parameter<TStringParam>(fx, "part")->setValue(L"beauty");
+  parameter<TStringParam>(fx, "slot1Layer")->setValue(L"diffuse");
+}
+
 void testTiledAndClone(OpenExrAovFx &fx) {
   parameter<TIntEnumParam>(fx, "outputMode")->setValue(0);
   parameter<TStringParam>(fx, "part")->setValue(L"tiles");
@@ -319,6 +348,7 @@ int main(int argc, char *argv[]) {
     testDiscovery(fx);
     testLayerAndWindows(fx);
     testRoutingAndComposite(fx);
+    testMissingLayerSelection(fx);
     testTiledAndClone(fx);
     testPersistence(fx, directory.filePath("aov.fx"),
                     directory.filePath("shot.####.exr"));
