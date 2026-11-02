@@ -853,9 +853,11 @@ if(BUILD_ASSET_GENERATION_TESTS)
     endif()
     ot_configure_native_test_runtime(assetgeneration_native)
     if(APPLE)
-        # Startup initializes shader contexts. The macOS offscreen plugin
-        # cannot create those; use the runner's WindowServer via Cocoa.
+        # Startup initializes shader contexts. Generic offscreen backends
+        # cannot create CGL/WGL contexts; use the native desktop on these hosts.
         set(asset_test_platform cocoa)
+    elseif(WIN32)
+        set(asset_test_platform windows)
     else()
         set(asset_test_platform offscreen)
     endif()
