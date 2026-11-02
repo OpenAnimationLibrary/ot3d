@@ -68,17 +68,21 @@ AssetGenerationPanel::AssetGenerationPanel(QWidget *parent) : TPanel(parent) {
   description->setWordWrap(true);
   layout->addWidget(description);
   m_check = new QPushButton(tr("Check Integration (Local Only)"), body);
+  m_check->setObjectName("assetCheck");
   layout->addWidget(m_check);
   auto *form = new QFormLayout;
   m_mode     = new QComboBox(body);
+  m_mode->setObjectName("assetMode");
   m_mode->addItem(tr("Image to 3D"), "image");
   m_mode->addItem(tr("Text to 3D"), "text");
   m_model  = new QComboBox(body);
   m_prompt = new QTextEdit(body);
+  m_prompt->setObjectName("assetPrompt");
   m_prompt->setAcceptRichText(false);
   m_prompt->setMaximumHeight(120);
-  m_image      = new QLineEdit(body);
-  m_output     = new QLineEdit(body);
+  m_image  = new QLineEdit(body);
+  m_output = new QLineEdit(body);
+  m_output->setObjectName("assetOutput");
   auto pathRow = [&](QLineEdit *field, bool saving) {
     auto *row       = new QWidget(body);
     auto *rowLayout = new QHBoxLayout(row);
@@ -115,16 +119,21 @@ AssetGenerationPanel::AssetGenerationPanel(QWidget *parent) : TPanel(parent) {
   layout->addWidget(m_terms);
   m_send = new QCheckBox(
       tr("Send this input to the selected Hugging Face service"), body);
+  m_send->setObjectName("assetSend");
   layout->addWidget(m_send);
   auto *buttons = new QHBoxLayout;
   m_generate    = new QPushButton(tr("Generate New Asset"), body);
-  m_cancel      = new QPushButton(tr("Cancel"), body);
-  m_import      = new QPushButton(tr("Import GLB Model FX"), body);
+  m_generate->setObjectName("assetGenerate");
+  m_cancel = new QPushButton(tr("Cancel"), body);
+  m_cancel->setObjectName("assetCancel");
+  m_import = new QPushButton(tr("Import GLB Model FX"), body);
+  m_import->setObjectName("assetImport");
   buttons->addWidget(m_generate);
   buttons->addWidget(m_cancel);
   buttons->addWidget(m_import);
   layout->addLayout(buttons);
   m_status = new QLabel(body);
+  m_status->setObjectName("assetStatus");
   m_status->setWordWrap(true);
   m_status->setTextFormat(Qt::PlainText);
   m_status->setTextInteractionFlags(Qt::TextSelectableByMouse);

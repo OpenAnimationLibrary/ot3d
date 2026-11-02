@@ -1,6 +1,6 @@
 # OT3D foundation implementation series
 
-These draft changes implement the agreed priorities in reviewable slices.
+These changes implement the agreed priorities in reviewable slices.
 A draft can contain a working backend while its native UI, platform and
 compatibility gates remain unfinished. Do not infer completion from PR creation.
 
@@ -15,7 +15,7 @@ compatibility gates remain unfinished. Do not infer completion from PR creation.
 | Retained assets | [#6](https://github.com/OpenAnimationLibrary/ot3d/pull/6) | Based on #5 | Retained EXR levels/sequences and sibling images |
 | Direct 3D Viewer | [#7](https://github.com/OpenAnimationLibrary/ot3d/pull/7) | Independent, targets main | Replacement based on SceneViewer; direct GLB geometry |
 | EXR inspection/deep | [#8](https://github.com/OpenAnimationLibrary/ot3d/pull/8) | Based on #4 | Native metadata inspection and typed deep transport |
-| Python/external jobs | [#9](https://github.com/OpenAnimationLibrary/ot3d/pull/9) | Independent; lower delivery priority | Out-of-process SculptForge/Hugging Face text/image job adapter |
+| Python/external jobs | [#9](https://github.com/OpenAnimationLibrary/ot3d/pull/9) | Builds on merged #4–#8 | Addons configuration, generation panel, cancellable SculptForge/Hugging Face jobs and explicit undoable GLB import |
 
 For stacked PRs, merge the parent first and retarget the child to main without
 bringing neighboring OT-Dev history across. #8's source-CMake addition must be
@@ -38,10 +38,10 @@ retained alongside #5/#6 when integrating both branches.
 6. Decode/preserve deep scanline and tiled samples, inspect counts/depth ranges,
    define volume integration and FX boundaries, then add deep compositing and
    output. Point-only preview flattening is not full deep support.
-7. Grow the Python command/undo/job boundary as core operations settle. Add
-   Addons paths and an Asset Generation panel, then connect explicit completed
-   SculptForge jobs to normal GLB validation/import/reload. Online generation
-   stays optional and is lower delivery priority than core 2D/3D interaction.
+7. Validate #9's Addons paths, Asset Generation panel and explicit undoable
+   GLB import. Extend its out-of-process job boundary with persistent history,
+   replacement/reload and a general Python command/undo API. Online generation
+   stays optional; core 2D/3D interaction remains independent.
 8. Add depth/normal/object-ID FX workflows and hybrid projection/drawing tools
    after the source, camera, transport and interaction contracts are verified.
 

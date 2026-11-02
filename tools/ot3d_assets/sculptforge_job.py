@@ -252,8 +252,12 @@ def _execute(argv: list[str], cwd: Path | None, timeout: float,
     if exceeded.is_set():
         raise JobError("SculptForge exceeded the job log budget")
     if process.returncode:
-        raise JobError("SculptForge failed: " +
-                       _redact(bytes(tail).decode("utf-8", errors="replace")).strip())
+        detail = _redact(bytes(tail).decode("utf-8", errors="replace")).strip()
+        if "Text to 3D is disable" in detail:
+            raise JobError("The selected hosted Space has disabled text-to-3D. "
+                           "Choose another model or use image input; this setting belongs "
+                           "to the hosted service.", "service_unavailable")
+        raise JobError("SculptForge failed: " + detail)
     return bytes(tail)
 
 

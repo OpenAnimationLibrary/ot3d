@@ -57,6 +57,9 @@ if values.get('OT3D_PROMPT') == 'secret':
     import os
     print(os.environ['HF_TOKEN'])
     raise SystemExit(2)
+if values.get('OT3D_PROMPT') == 'disabled':
+    print('Text to 3D is disable. Please enable it by python gradio_app.py --enable_t23d')
+    raise SystemExit(2)
 if values.get('OT3D_PROMPT') == 'quota':
     print('GPU quota exhausted; retry later')
     raise SystemExit(2)
@@ -227,6 +230,13 @@ class Jobs(unittest.TestCase):
                         self.request("x\0y")):
             with self.assertRaises(job.JobError):
                 job.command_for(request, request.output)
+
+    def test_disabled_hosted_service_is_not_reported_as_local_setup_failure(self):
+        with self.assertRaises(job.JobError) as error:
+            job.run_job(self.request("disabled"))
+        self.assertEqual(error.exception.code, "service_unavailable")
+        self.assertIn("hosted Space", str(error.exception))
+        self.assertNotIn("gradio_app.py", str(error.exception))
 
     def test_timeout_stops_descendants(self):
         marker = self.root / "orphan.txt"

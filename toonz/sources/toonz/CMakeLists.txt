@@ -830,3 +830,22 @@ endif()
 
 # Hybrid Viewer consumes the immutable GLB geometry service directly.
 target_link_libraries(OpenToonz otglb)
+
+option(BUILD_ASSET_GENERATION_TESTS "Build native asset generation panel checks" OFF)
+if(BUILD_ASSET_GENERATION_TESTS)
+    find_package(Python3 3.11 REQUIRED COMPONENTS Interpreter)
+    enable_testing()
+    target_compile_definitions(OpenToonz PRIVATE OT3D_ASSET_GENERATION_TESTS)
+    target_sources(OpenToonz PRIVATE tests/assetgeneration_smoke.cpp)
+    add_executable(assetgeneration_fixture tests/assetgeneration_fixture.cpp)
+    target_link_libraries(assetgeneration_fixture PRIVATE Qt5::Core)
+    add_dependencies(OpenToonz assetgeneration_fixture)
+    add_test(NAME assetgeneration_native COMMAND $<TARGET_FILE:OpenToonz>)
+    ot_configure_native_test_runtime(assetgeneration_native)
+    set_property(TEST assetgeneration_native APPEND PROPERTY ENVIRONMENT
+        "QT_QPA_PLATFORM=offscreen"
+        "TOONZROOT=${CMAKE_SOURCE_DIR}/../../stuff"
+        "OT3D_ASSET_SMOKE_PYTHON=${Python3_EXECUTABLE}"
+    )
+    set_tests_properties(assetgeneration_native PROPERTIES TIMEOUT 120)
+endif()

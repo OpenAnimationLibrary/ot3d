@@ -655,6 +655,20 @@ int main(int argc, char *argv[]) {
   TTool::setApplication(TApp::instance());
   TApp::instance()->init();
 
+#ifdef OT3D_ASSET_GENERATION_TESTS
+  if (!qEnvironmentVariable("OT3D_ASSET_SMOKE_PYTHON").isEmpty()) {
+    extern int runAssetGenerationSmoke(const QString &, const QString &);
+    return runAssetGenerationSmoke(
+        qEnvironmentVariable("OT3D_ASSET_SMOKE_PYTHON"),
+        QApplication::applicationDirPath() +
+            "/assetgeneration_fixture"
+#ifdef _WIN32
+            ".exe"
+#endif
+    );
+  }
+#endif
+
   splash.showMessage(offsetStr + "Loading Plugins...", Qt::AlignCenter,
                      Qt::white);
   a.processEvents();
