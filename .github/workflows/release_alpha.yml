@@ -1,0 +1,210 @@
+name: Package first OT3D alpha
+
+on:
+  push:
+    branches: [release/0.1.0-alpha.1]
+    paths: [.github/workflows/release_alpha.yml]
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: ot3d-v0.1.0-alpha.1
+  cancel-in-progress: false
+
+jobs:
+  package:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      SOURCE_SHA: 44d8b09c2d828a8880be13d2a7a3d3977b18748f
+      RELEASE_TAG: ot3d-v0.1.0-alpha.1
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: 44d8b09c2d828a8880be13d2a7a3d3977b18748f
+          lfs: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Verify successful source builds and package their exact artifacts
+        shell: python
+        run: |
+          import hashlib, io, json, os, pathlib, shutil, subprocess, tarfile, zipfile
+          from datetime import datetime, timezone
+
+          repo = os.environ['GH_REPO']
+          if repo != 'OpenAnimationLibrary/ot3d':
+              raise RuntimeError('This initial release belongs only to OpenAnimationLibrary/ot3d')
+          sha, tag = os.environ['SOURCE_SHA'], os.environ['RELEASE_TAG']
+          version = '0.1.0-alpha.1'
+          out = pathlib.Path('release-assets')
+          out.mkdir()
+          def api(path):
+              return json.loads(subprocess.check_output(['gh', 'api', f'repos/{repo}/{path}']))
+
+          # The release tag is immutable. A rerun must never replace published assets.
+          releases = api('releases?per_page=100')
+          if any(r['tag_name'] == tag for r in releases):
+              raise RuntimeError('Release already exists; inspect it instead of replacing assets')
+
+          notes = '''# OT3D 0.1.0-alpha.1
+
+          First experimental test release from current integrated code. This is an early
+          developer alpha, before completion of the M3 production acceptance gates.
+          It is an independent Open Animation Library build derived from OpenToonz.
+
+          ## Included
+          - OT3D opening room with Xsheet, Viewer and FX Schematic.
+          - Hybrid Viewer with direct display of supported opaque GLB geometry.
+          - GLB Model FX, supported embedded animation and Three-Point Light FX.
+          - Full OpenEXR library, EXR AOV routing and retained-source multipart levels.
+          - EXR document inspection and typed deep-sample transport foundations.
+
+          ## Known limitations
+          The Viewer has mesh-to-mesh depth only; correct interleaving of drawings and
+          3D geometry is unfinished. Viewer/final-render parity, textures, transparency,
+          PBR, skinning, morphs and interactive picking are incomplete. Deep EXR pixel
+          decoding and deep-image viewing are not implemented. Native Animation:Master
+          models/projects and Blender projects are not supported by this release.
+          See the enclosed OT3D documents for exact feature boundaries.
+
+          ## Install, isolate and remove
+          Windows x64: extract the entire portable ZIP to a new writable folder and run
+          Opentoonz.exe. Keep portablestuff alongside it. Do not overlay an existing
+          installation or copy old preferences into the package.
+          macOS Intel: extract the ZIP, open the DMG, and copy the application to a
+          separate test location. Signing/notarization and Apple Silicon operation
+          have not been verified. Internal bundle and executable names remain OpenToonz.
+          Linux x64: extract the complete tar.gz, keep portablestuff beside the AppImage,
+          mark the AppImage executable if needed, then launch it. Ubuntu 22.04 is the
+          packaging baseline; a clang build is provided as an alternative to gcc.
+          Prefer Windows portable for initial testing. macOS/Linux preference isolation
+          and coexistence with installed OpenToonz have not been manually verified;
+          use a separate OS test account/profile when testing those packages.
+          To remove, close the program and delete its separate extracted test folder.
+          Do not delete shared OpenToonz user settings as part of removal.
+
+          ## Compatibility and rollback
+          Back up scenes, assets and preferences, and edit copies. Round trips through
+          official OpenToonz are unverified and may lose downstream-only state. External
+          GLB sources remain read-only. Keep original projects and your previous build;
+          rollback means reopening those originals with that build.
+
+          ## Verification
+          Windows, macOS Intel and Linux gcc/clang application builds passed at the
+          exact source revision below. Their workflows also passed EXR regression tests;
+          Windows passed GLB Model FX and Three-Point Light tests, including packaged
+          execution. Linux Fedora compile/test coverage passed as well.
+          Desktop first-launch, GPU appearance, save/reopen, removal, 100%/150% scaling
+          and cross-application scene round trips have not been manually verified.
+          These are test packages, not production platform support claims.
+          BUILD_INFO.json records source/build provenance. SHA256SUMS verifies downloads.
+          '''
+          # Remove YAML's common indentation from the literal text.
+          import textwrap
+          notes = textwrap.dedent(notes).strip() + '\n'
+          notes += f'\nSource: https://github.com/{repo}/commit/{sha}\n'
+          notes += f'Tag: {tag}\n'
+          (out / 'RELEASE_NOTES.md').write_text(notes)
+
+          specs = [
+              ('windows-x64-portable', 41424437780, 13132797043, 'Windows Build', 'Windows', '.zip'),
+              ('macos-intel', 41424437794, 13132852349, 'MacOS Build', 'macOS', '.zip'),
+              ('linux-x64-gcc', 41424437744, 13132285435, 'Linux Build', 'Linux-gcc', '.tar.gz'),
+              ('linux-x64-clang', 41424437744, 13131571710, 'Linux Build', 'Linux-clang', '.tar.gz'),
+          ]
+          for platform, run_id, artifact_id, workflow, artifact_platform, suffix in specs:
+              run = api(f'actions/runs/{run_id}')
+              artifact = api(f'actions/artifacts/{artifact_id}')
+              assert run['head_repository']['full_name'] == repo
+              assert run['head_sha'] == sha and run['head_branch'] == 'main'
+              assert run['name'] == workflow and run['event'] == 'push'
+              assert run['status'] == 'completed' and run['conclusion'] == 'success'
+              assert artifact['workflow_run']['id'] == run_id and not artifact['expired']
+              assert artifact['name'] == f'Opentoonz-{artifact_platform}-{sha}'
+              archive = subprocess.check_output(['gh', 'api', f'repos/{repo}/actions/artifacts/{artifact_id}/zip'])
+              digest = 'sha256:' + hashlib.sha256(archive).hexdigest()
+              assert artifact['digest'] == digest, 'Artifact digest mismatch'
+              root = pathlib.Path('staging') / f'OT3D-{version}-{platform}'
+              root.mkdir(parents=True)
+              z = zipfile.ZipFile(io.BytesIO(archive))
+              if platform.startswith('linux'):
+                  members = z.namelist()
+                  assert len(members) == 1 and members[0].endswith('.tar.gz')
+                  with tarfile.open(fileobj=io.BytesIO(z.read(members[0])), mode='r:gz') as tar:
+                      tar.extractall(root, filter='data')
+                  children = list(root.iterdir())
+                  assert len(children) == 1 and children[0].is_dir()
+                  inner = children[0]
+                  for child in inner.iterdir():
+                      shutil.move(str(child), root / child.name)
+                  inner.rmdir()
+                  assert (root / 'OpenToonz.AppImage').is_file()
+              else:
+                  for member in z.infolist():
+                      target = (root / member.filename).resolve()
+                      assert target.is_relative_to(root.resolve()), 'Unsafe ZIP path'
+                  z.extractall(root)
+                  if platform.startswith('windows'):
+                      assert (root / 'Opentoonz.exe').is_file()
+                      assert (root / 'portablestuff').is_dir()
+                  else:
+                      assert (root / 'OpenToonz.dmg').is_file()
+
+              shutil.copy('LICENSE.txt', root)
+              shutil.copytree('stuff/doc/LICENSE', root / 'LICENSES')
+              shutil.copy('thirdparty/cgltf/LICENSE', root / 'LICENSES' / 'LICENSE_cgltf.txt')
+              shutil.copytree('thirdparty/libmypaint/license', root / 'LICENSES' / 'libmypaint-dependencies')
+              shutil.copytree('doc/ot3d', root / 'OT3D-docs')
+              shutil.copy(out / 'RELEASE_NOTES.md', root / 'README-OT3D.md')
+              info = dict(version=version, tag=tag, source_sha=sha,
+                  upstream_baseline='9001fd493e4ec27bf3efc368252eccb7da703928',
+                  migration_record=f'https://github.com/{repo}/blob/{sha}/doc/ot3d/THREE_D_MIGRATION.md',
+                  platform=platform, architecture='x86_64', source_build_created_utc=run['created_at'],
+                  source_build_completed_utc=run['updated_at'], workflow_run=run['html_url'],
+                  workflow_file=run['path'], source_artifact_id=artifact_id,
+                  source_artifact_digest=digest, package_created_utc=datetime.now(timezone.utc).isoformat(),
+                  toolchain={'windows-x64-portable':'MSVC Visual Studio 18 2026 / Qt 5.15.2 WinTab',
+                      'macos-intel':'Apple Clang on macos-15-intel / Homebrew Qt 5',
+                      'linux-x64-gcc':'Ubuntu 22.04 GCC / Qt 5',
+                      'linux-x64-clang':'Ubuntu 22.04 Clang / Qt 5'}[platform],
+                  experimental_features=['hybrid GLB Viewer', 'GLB Model FX', 'Three-Point Light FX',
+                      'OpenEXR AOV routing', 'retained EXR levels', 'EXR document/deep transport foundation'],
+                  feature_matrix_revision=sha, manual_desktop_acceptance='not verified',
+                  packaging_run=f'https://github.com/{repo}/actions/runs/' + os.environ['GITHUB_RUN_ID'])
+              (root / 'BUILD_INFO.json').write_text(json.dumps(info, indent=2) + '\n')
+              base = out / root.name
+              if suffix == '.zip':
+                  shutil.make_archive(str(base), 'zip', root.parent, root.name)
+              else:
+                  with tarfile.open(str(base) + suffix, 'w:gz') as tar:
+                      tar.add(root, arcname=root.name)
+              package = pathlib.Path(str(base) + suffix)
+              (out / (package.name + '.sha256')).write_text(hashlib.sha256(package.read_bytes()).hexdigest() + '  ' + package.name + '\n')
+
+          sums = ''.join(p.read_text() for p in sorted(out.glob('*.sha256')))
+          (out / 'SHA256SUMS').write_text(sums)
+
+      - name: Retain release packages before publication
+        uses: actions/upload-artifact@v6
+        with:
+          name: OT3D-0.1.0-alpha.1-release-packages
+          path: release-assets
+          retention-days: 90
+
+      - name: Publish immutable alpha release
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release create "$RELEASE_TAG" --target "$SOURCE_SHA" \
+            --title "OT3D 0.1.0-alpha.1" --draft --prerelease \
+            --notes-file release-assets/RELEASE_NOTES.md
+          gh release upload "$RELEASE_TAG" release-assets/*
+          gh release edit "$RELEASE_TAG" --draft=false --prerelease --latest=false
