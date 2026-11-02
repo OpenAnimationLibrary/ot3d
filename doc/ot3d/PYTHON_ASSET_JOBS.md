@@ -108,9 +108,12 @@ save/reopen in platform CI. Before merge, verify the portable panel visually: co
 probe, start/cancel/fail/complete a job, switch scenes during a job, import/undo,
 save/reopen and check a portable package. Real hosted text/image generation,
 quota/authentication feedback and current Space availability need explicit live
-acceptance. Live anonymous text attempts with both current Hunyuan text presets returned the hosted
-Space's text-generation-disabled error. The adapter reports service_unavailable with
-a hosted-service explanation. A successful hosted text job is not claimed.
+acceptance. A live anonymous image-to-3D request using Hunyuan3D 2.1 completed in about
+35 seconds. Its 2.4 MB GLB loaded without warnings in OT3D (one mesh, 99,562
+triangles) and rendered through the existing CPU renderer. Live anonymous text
+attempts with both current Hunyuan text presets returned the hosted Space's
+text-generation-disabled error. The adapter reports service_unavailable with a
+hosted-service explanation. A successful hosted text job is not claimed.
 
 Follow-up scope: persistent job history and queues, background native geometry
 validation, replacement/reload with placement preservation, exact remote model

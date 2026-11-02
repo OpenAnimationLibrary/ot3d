@@ -42,6 +42,10 @@ jobs:
     steps:
     - uses: actions/checkout@v6
 
+    - uses: actions/setup-python@v6
+      with:
+        python-version: '3.11'
+
     - name: Install libraries
       run: |
         sudo apt-get update
@@ -149,7 +153,7 @@ jobs:
           qt5-qtbase-devel qt5-qtsvg qt5-qtsvg-devel qt5-qtscript qt5-qtscript-devel \
           qt5-qttools qt5-qttools-devel qt5-qttools-static qt5-qtmultimedia \
           qt5-qtmultimedia-devel qt5-qtserialport-devel qt5-qtwayland \
-          pkgconf-pkg-config
+          pkgconf-pkg-config python3
 
     - name: Build libtiff
       run: |
