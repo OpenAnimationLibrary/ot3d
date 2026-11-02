@@ -1,3 +1,4 @@
+ot3d.ini
 room1.ini 
 room2.ini 
 room3.ini 
