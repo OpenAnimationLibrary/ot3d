@@ -8,13 +8,14 @@ compatibility gates remain unfinished. Do not infer completion from PR creation.
 
 | Priority | Draft | Relationship | Initial result |
 | --- | --- | --- | --- |
+| CI prerequisite | [#10](https://github.com/OpenAnimationLibrary/ot3d/pull/10) | Merge first; correction carried in affected drafts | Keep clang-format 14 on a supported runner |
 | Workspace | [#3](https://github.com/OpenAnimationLibrary/ot3d/pull/3) | Independent, targets main | Xsheet left, Viewer center, FX Schematic right |
 | Native EXR | [#4](https://github.com/OpenAnimationLibrary/ot3d/pull/4) | Independent, targets main | Full OpenEXR/Imath library and adapter |
 | AOV workflow | [#5](https://github.com/OpenAnimationLibrary/ot3d/pull/5) | Based on #4 | Multipart/layer/channel routing and raw data |
 | Retained assets | [#6](https://github.com/OpenAnimationLibrary/ot3d/pull/6) | Based on #5 | Retained EXR levels/sequences and sibling images |
 | Direct 3D Viewer | [#7](https://github.com/OpenAnimationLibrary/ot3d/pull/7) | Independent, targets main | Replacement based on SceneViewer; direct GLB geometry |
 | EXR inspection/deep | [#8](https://github.com/OpenAnimationLibrary/ot3d/pull/8) | Based on #4 | Native metadata inspection and typed deep transport |
-| Python/external jobs | [Python asset jobs](PYTHON_ASSET_JOBS.md) | Independent; lower delivery priority | Out-of-process SculptForge/Hugging Face text/image job adapter |
+| Python/external jobs | [#9](https://github.com/OpenAnimationLibrary/ot3d/pull/9) | Independent; lower delivery priority | Out-of-process SculptForge/Hugging Face text/image job adapter |
 
 For stacked PRs, merge the parent first and retarget the child to main without
 bringing neighboring OT-Dev history across. #8's source-CMake addition must be
