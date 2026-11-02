@@ -2617,11 +2617,14 @@ QWidget* PreferencesPopup::createAddonsPage() {
   QWidget* widget  = new QWidget(this);
   QGridLayout* lay = new QGridLayout();
 
-  putLabel(tr("Optional 3D asset generation uses your own Python 3.11+ and "
-              "SculptForge CLI installations. Configure executable files here, "
-              "then open Asset Generation and choose Check Integration. "
-              "Credentials stay in SculptForge settings or the environment."),
-           lay);
+  auto* generationInfo = new QLabel(
+      tr("Optional 3D asset generation uses your own Python 3.11+ and "
+         "SculptForge CLI installations. Configure executable files here, "
+         "then open Asset Generation and choose Check Integration. "
+         "Credentials stay in SculptForge settings or the environment."),
+      widget);
+  generationInfo->setWordWrap(true);
+  lay->addWidget(generationInfo, lay->rowCount(), 0, 1, 4);
   insertUI(ot3dPythonPath, lay);
   insertUI(ot3dSculptForgePath, lay);
   getUI<FileField*>(ot3dPythonPath)->setFileMode(QFileDialog::ExistingFile);
