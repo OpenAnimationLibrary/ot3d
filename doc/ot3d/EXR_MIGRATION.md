@@ -45,3 +45,21 @@ Adaptation: keep EXR and GLB file controls without OT-Dev LUT controls or LUT
 tests. Existing GLB validation is retained. Configure with
 `BUILD_EXR_AOV_FX_TESTS=ON`, build `openexraovfx_test`, and run
 `ctest --output-on-failure -R '^(tiio_exr|openexraovfx)$'`.
+
+## Retained EXR levels
+
+Selectively ports OT-Dev PR #199, merge commit
+`01ae6cae317cc5185a1c676a8523c8b3e31de1c1` (first-parent delta).
+Source: https://github.com/OpenAnimationLibrary/opentoonz-dev/pull/199
+Original merge author: Rodney <rodney.baker@gmail.com>.
+
+`TXshExrLevel` retains the physical EXR/sequence, persists stable part/layer
+selection, and supplies disposable lazy raster representations. Flat images
+can load as sibling levels. Save/collect operate on the retained source;
+ordinary image edits cannot overwrite it. Deep transport, subsampled source
+channels and multiview UI remain separate work. Older builds do not know the
+new `<exrLevel>` persistence tag. Test copies of scenes when evaluating it.
+
+Adaptation: add only the EXR level header to toonzlib; omit the neighboring
+OT-Dev LUT header. Configure `BUILD_EXR_TESTS=ON`, build
+`tiio_exr_level_test`, and run the EXR/AOV/level regression targets.
