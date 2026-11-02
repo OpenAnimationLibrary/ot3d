@@ -2,6 +2,7 @@
 
 #include "toonzqt/paramfield.h"
 #include "toonzqt/gutil.h"
+#include "toonzqt/dvdialog.h"
 #include "toonzqt/fxsettings.h"
 #include "toonzqt/intfield.h"
 #include "toonzqt/spectrumfield.h"

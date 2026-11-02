@@ -733,6 +733,7 @@ set(CMAKE_C_FLAGS "${C_WARNINGS} ${CMAKE_C_FLAGS}")
 set(CMAKE_CXX_FLAGS "${CXX_WARNINGS} ${CMAKE_CXX_FLAGS}")
 
 include("${CMAKE_CURRENT_SOURCE_DIR}/../cmake/OpenEXR.cmake")
+include("${CMAKE_CURRENT_SOURCE_DIR}/../cmake/TestRuntime.cmake")
 
 option(BUILD_EXR_TESTS "Build the OpenEXR image I/O regression test" OFF)
 option(BUILD_EXR_AOV_FX_TESTS "Build the OpenEXR AOV FX regression test" OFF)
