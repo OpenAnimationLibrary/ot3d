@@ -835,15 +835,26 @@ option(BUILD_ASSET_GENERATION_TESTS "Build native asset generation panel checks"
 if(BUILD_ASSET_GENERATION_TESTS)
     find_package(Python3 3.11 REQUIRED COMPONENTS Interpreter)
     enable_testing()
-    target_compile_definitions(OpenToonz PRIVATE OT3D_ASSET_GENERATION_TESTS)
+    set_property(SOURCE main.cpp APPEND PROPERTY COMPILE_DEFINITIONS OT3D_ASSET_GENERATION_TESTS)
     target_sources(OpenToonz PRIVATE tests/assetgeneration_smoke.cpp)
     add_executable(assetgeneration_fixture tests/assetgeneration_fixture.cpp)
     target_link_libraries(assetgeneration_fixture PRIVATE Qt5::Core)
     add_dependencies(OpenToonz assetgeneration_fixture)
-    add_test(NAME assetgeneration_native COMMAND $<TARGET_FILE:OpenToonz>)
+    if(UNIX AND NOT APPLE)
+        find_program(OT3D_XVFB_RUN xvfb-run)
+        if(NOT OT3D_XVFB_RUN)
+            message(FATAL_ERROR "Native asset panel checks require xvfb-run")
+        endif()
+        add_test(NAME assetgeneration_native COMMAND ${OT3D_XVFB_RUN} -a
+            $<TARGET_FILE:OpenToonz> -TOONZROOT "${CMAKE_SOURCE_DIR}/../../stuff")
+    else()
+        add_test(NAME assetgeneration_native COMMAND $<TARGET_FILE:OpenToonz>
+            -TOONZROOT "${CMAKE_SOURCE_DIR}/../../stuff")
+    endif()
     ot_configure_native_test_runtime(assetgeneration_native)
     set_property(TEST assetgeneration_native APPEND PROPERTY ENVIRONMENT
         "QT_QPA_PLATFORM=offscreen"
+        "LIBGL_ALWAYS_SOFTWARE=1"
         "TOONZROOT=${CMAKE_SOURCE_DIR}/../../stuff"
         "OT3D_ASSET_SMOKE_PYTHON=${Python3_EXECUTABLE}"
     )
