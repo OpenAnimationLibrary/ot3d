@@ -852,8 +852,15 @@ if(BUILD_ASSET_GENERATION_TESTS)
             -TOONZROOT "${CMAKE_SOURCE_DIR}/../../stuff")
     endif()
     ot_configure_native_test_runtime(assetgeneration_native)
+    if(APPLE)
+        # Startup initializes shader contexts. The macOS offscreen plugin
+        # cannot create those; use the runner's WindowServer via Cocoa.
+        set(asset_test_platform cocoa)
+    else()
+        set(asset_test_platform offscreen)
+    endif()
     set_property(TEST assetgeneration_native APPEND PROPERTY ENVIRONMENT
-        "QT_QPA_PLATFORM=offscreen"
+        "QT_QPA_PLATFORM=${asset_test_platform}"
         "LIBGL_ALWAYS_SOFTWARE=1"
         "TOONZROOT=${CMAKE_SOURCE_DIR}/../../stuff"
         "OT3D_ASSET_SMOKE_PYTHON=${Python3_EXECUTABLE}"
