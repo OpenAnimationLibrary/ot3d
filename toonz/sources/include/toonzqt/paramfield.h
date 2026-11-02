@@ -661,8 +661,7 @@ public:
   void update(int frame) override;
 
   QSize getPreferredSize() override {
-    if (m_glbFileControls || m_exrFileControls ||
-        m_exrChoiceControls)
+    if (m_glbFileControls || m_exrFileControls || m_exrChoiceControls)
       return sizeHint().expandedTo(QSize(260, 54));
     if (m_textFld)
       return QSize(100, 20);
