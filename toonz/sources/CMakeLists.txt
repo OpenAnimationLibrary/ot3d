@@ -749,6 +749,7 @@ add_subdirectory(stdfx)
 add_subdirectory(sound)
 add_subdirectory(colorfx)
 add_subdirectory(image)
+add_subdirectory(exr)
 add_subdirectory(toonzqt)
 add_subdirectory(tnztools)
 
