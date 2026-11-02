@@ -206,6 +206,8 @@ AssetGenerationPanel::AssetGenerationPanel(QWidget *parent) : TPanel(parent) {
             m_targetValid = false;
             refreshControls();
           });
+  connect(TApp::instance()->getCurrentFrame(), &TFrameHandle::frameTypeChanged,
+          this, [this]() { refreshControls(); });
   connect(TApp::instance()->getCurrentScene(), &TSceneHandle::preferenceChanged,
           this, [this](const QString &) {
             if (!m_busy) refreshConfiguration();
@@ -280,7 +282,8 @@ void AssetGenerationPanel::refreshControls() {
   m_generate->setEnabled(!m_busy && m_ready && m_send->isChecked() &&
                          m_model->count());
   m_cancel->setEnabled(m_busy && !m_cancelling);
-  m_import->setEnabled(!m_busy && !m_asset.isEmpty() && m_targetValid);
+  m_import->setEnabled(!m_busy && !m_asset.isEmpty() && m_targetValid &&
+                       TApp::instance()->getCurrentFrame()->isEditingScene());
 }
 
 void AssetGenerationPanel::launch(bool probing) {
@@ -408,6 +411,7 @@ void AssetGenerationPanel::finish(int exitCode, QProcess::ExitStatus status) {
 void AssetGenerationPanel::importAsset() {
   auto *app = TApp::instance();
   if (m_busy || m_asset.isEmpty() || !m_targetValid ||
+      !app->getCurrentFrame()->isEditingScene() ||
       app->getCurrentScene()->getScene() != m_originScene ||
       app->getCurrentXsheet()->getXsheet() != m_originXsheet)
     return;

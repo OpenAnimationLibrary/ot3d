@@ -5,6 +5,7 @@
 #include "tparamcontainer.h"
 #include "tnotanimatableparam.h"
 #include "toonz/preferences.h"
+#include "toonz/tframehandle.h"
 #include "toonz/tcolumnfx.h"
 #include "toonz/toonzscene.h"
 #include "toonz/tscenehandle.h"
@@ -99,6 +100,11 @@ int runAssetGenerationSmoke(const QString &python, const QString &fixture) {
     run("cube", "asset.glb");
     waitFor([&] { return generate->isEnabled(); });
     check(import->isEnabled(), "Completed native job is not importable");
+    auto *frames = TApp::instance()->getCurrentFrame();
+    frames->setFid(TFrameId(1));
+    check(!import->isEnabled(), "GLB import remained enabled in level editing");
+    frames->setFrame(0);
+    check(import->isEnabled(), "Returning to scene editing lost the result");
     auto *xsheet      = TApp::instance()->getCurrentXsheet()->getXsheet();
     const int history = TUndoManager::manager()->getHistoryCount();
     import->click();
