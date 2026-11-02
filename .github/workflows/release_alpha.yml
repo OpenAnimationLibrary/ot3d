@@ -77,7 +77,7 @@ jobs:
 
           ## Install, isolate and remove
           Windows x64: extract the entire portable ZIP to a new writable folder and run
-          Opentoonz.exe. Keep portablestuff alongside it. Do not overlay an existing
+          OpenToonz.exe. Keep portablestuff alongside it. Do not overlay an existing
           installation or copy old preferences into the package.
           macOS Intel: extract the ZIP, open the DMG, and copy the application to a
           separate test location. Signing/notarization and Apple Silicon operation
@@ -153,7 +153,7 @@ jobs:
                       assert target.is_relative_to(root.resolve()), 'Unsafe ZIP path'
                   z.extractall(root)
                   if platform.startswith('windows'):
-                      assert (root / 'Opentoonz.exe').is_file()
+                      assert any(p.is_file() and p.name.lower() == 'opentoonz.exe' for p in root.iterdir()), list(root.iterdir())
                       assert (root / 'portablestuff').is_dir()
                   else:
                       assert (root / 'OpenToonz.dmg').is_file()
