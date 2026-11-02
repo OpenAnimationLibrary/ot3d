@@ -10,6 +10,7 @@
 
 #include "tfiletype.h"
 #include "tstream.h"
+#include "tsystem.h"
 
 #include <OpenEXR/ImfChannelList.h>
 #include <OpenEXR/ImfFrameBuffer.h>
@@ -20,6 +21,7 @@
 #include <OpenEXR/ImfTiledOutputPart.h>
 
 #include <QCoreApplication>
+#include <QDir>
 #include <QFile>
 #include <QTemporaryDir>
 
@@ -494,6 +496,107 @@ void testSequenceLoadingRange(const QString &sourcePath,
           "Later matching base layer was lost during canonicalization");
 }
 
+QByteArray fileBytes(const QString &path) {
+  QFile file(path);
+  require(file.open(QIODevice::ReadOnly), "Cannot read EXR copy test file");
+  return file.readAll();
+}
+
+void testRetainedCopy(const TFilePath &sourcePath,
+                      const QTemporaryDir &directory) {
+  TXshExrLevel level(L"EXR Copy");
+  level.setPath(sourcePath, true);
+  TXshExrLevel::Selection selection;
+  selection.part  = "name:beauty";
+  selection.layer = "normal";
+  selection.raw   = true;
+  level.setSelection(selection, false);
+  const QByteArray original = fileBytes(sourcePath.getQString());
+
+  // Exercise Save Level As through the same virtual base-class API as IoCmd.
+  TXshSimpleLevel &simpleLevel = level;
+  for (const char *extension : {"png", "jpg", ""}) {
+    const QString suffix = *extension ? QString(".") + extension : QString();
+    const QString parent = directory.filePath(QString("rejected-") + extension);
+    const TFilePath destination((parent + "/copy" + suffix).toStdWString());
+    bool rejected = false;
+    try {
+      simpleLevel.save(destination);
+    } catch (const TSystemException &error) {
+      rejected =
+          error.getMessage().find(L".exr extension") != std::wstring::npos;
+    }
+    require(rejected, "Non-EXR Save As was not rejected with an EXR message");
+    require(!QFile::exists(destination.getQString()) && !QDir(parent).exists(),
+            "Rejected Save As created a destination file or directory");
+  }
+
+  // Invalid saves must not destroy an existing file, even with overwrite on.
+  const QString existingPath = directory.filePath("existing.png");
+  const QByteArray sentinel("existing image must survive");
+  {
+    QFile file(existingPath);
+    require(file.open(QIODevice::WriteOnly), "Cannot create copy sentinel");
+    require(file.write(sentinel) == sentinel.size(),
+            "Cannot write copy sentinel");
+  }
+  bool rejected = false;
+  try {
+    ExrLevel::saveRetainedCopy(&level, TFilePath(existingPath.toStdWString()),
+                               TFilePath(), true);
+  } catch (const TSystemException &) {
+    rejected = true;
+  }
+  require(rejected && fileBytes(existingPath) == sentinel,
+          "Rejected EXR copy overwrote an existing non-EXR file");
+
+  const TFilePath destination(directory.filePath("copied.exr").toStdWString());
+  simpleLevel.save(destination);
+  require(fileBytes(destination.getQString()) == original,
+          "EXR Save As did not preserve the complete source bytes");
+  require(fileBytes(sourcePath.getQString()) == original &&
+              level.getPath() == sourcePath &&
+              level.getSelection() == selection && !level.isPrimaryBinding(),
+          "EXR Save As changed its source or selected binding");
+  require(!ExrLevel::saveRetainedCopy(&level, destination, TFilePath(), false),
+          "EXR copy ignored overwrite=false");
+
+  TXshExrLevel reopened(L"EXR Copy Reopened");
+  reopened.setPath(destination, true);
+  reopened.setSelection(selection, false);
+  reopened.load();
+  std::vector<TFrameId> fids;
+  reopened.getFids(fids);
+  require(fids.size() == 1, "Copied EXR did not reopen as a retained level");
+  TRasterImageP image =
+      reopened.getFrame(fids.front(), ImageManager::isFloatEnabled, 1);
+  expect(raster(image)->pixels(2)[1].r, -1.0f,
+         "Reopened EXR copy lost the selected raw normal layer");
+}
+
+void testRetainedSequenceCopy(const QString &sourcePath,
+                              const QTemporaryDir &directory) {
+  const QString firstPath = directory.filePath("copy-source.0001.exr");
+  const QString thirdPath = directory.filePath("copy-source.0003.exr");
+  require(
+      QFile::copy(sourcePath, firstPath) && QFile::copy(sourcePath, thirdPath),
+      "Cannot create EXR copy sequence");
+  const TFilePath firstFrame(firstPath.toStdWString());
+  TXshExrLevel level(L"EXR Sequence Copy");
+  level.setPath(
+      firstFrame.getParentDir() + TFilePath(firstFrame.getLevelNameW()), true);
+  const TFilePath destination(
+      directory.filePath("copied-sequence..exr").toStdWString());
+  require(ExrLevel::saveRetainedCopy(&level, destination),
+          "Retained EXR sequence copy failed");
+  for (const TFrameId &fid : {TFrameId(1), TFrameId(3)})
+    require(fileBytes(destination.withFrame(fid).getQString()) ==
+                fileBytes(level.getPath().withFrame(fid).getQString()),
+            "EXR sequence copy changed source frames or their numbers");
+  require(!QFile::exists(destination.withFrame(TFrameId(2)).getQString()),
+          "EXR sequence copy filled a missing frame");
+}
+
 void testLevelPersistence(const TFilePath &sourcePath,
                           const TFilePath &scenePath) {
   TXshExrLevel original(L"EXR Normal");
@@ -563,6 +666,8 @@ int main(int argc, char *argv[]) {
     testBindings(filePath);
     testRetainedBuilder(filePath);
     testSequenceLoadingRange(path, directory);
+    testRetainedCopy(filePath, directory);
+    testRetainedSequenceCopy(path, directory);
     testLevelPersistence(
         filePath,
         TFilePath(directory.filePath("exr-level.tnz").toStdWString()));

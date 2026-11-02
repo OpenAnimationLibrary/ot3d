@@ -57,6 +57,7 @@ DVAPI void restoreRetainedLevel(TXshExrLevel *level,
                                 const std::vector<TFrameId> &fids);
 
 //! Save Level As support: byte-copy the source document(s), never re-encode.
+//! Non-EXR destinations throw TSystemException before any filesystem changes.
 DVAPI bool saveRetainedCopy(TXshExrLevel *level, const TFilePath &path,
                             const TFilePath &oldPath = TFilePath(),
                             bool overwrite           = true);

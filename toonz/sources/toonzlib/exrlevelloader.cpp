@@ -596,6 +596,14 @@ bool saveRetainedCopy(TXshExrLevel *level, const TFilePath &path,
             : (oldPath.isEmpty() ? level->getPath() : oldPath);
   const TFilePath destination = scene ? scene->decodeFilePath(path) : path;
 
+  // This operation preserves the complete source document byte for byte; it
+  // cannot convert the selected raster into a different image format. Reject
+  // a misleading extension before touching any destination file or folder.
+  if (destination.getType() != "exr")
+    throw TSystemException(
+        destination,
+        "Retained EXR levels can only be saved with an .exr extension.");
+
   if (sameSourcePath(nullptr, source, destination)) return true;
   const std::vector<SourceFrame> sources = collectSourceFrames(source);
   if (sources.empty() || !TSystem::touchParentDir(destination)) return false;
