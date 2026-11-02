@@ -42,6 +42,7 @@
 #include "tapp.h"
 #include "mainwindow.h"
 #include "sceneviewer.h"
+#include "hybridsceneviewer.h"
 #include "xsheetdragtool.h"
 #include "ruler.h"
 #include "menubarcommandids.h"
@@ -112,7 +113,7 @@ BaseViewerPanel::BaseViewerPanel(QWidget *parent, Qt::WindowFlags flags)
 
   // Viewer
   m_fsWidget = new ImageUtils::FullScreenWidget(this);
-  m_fsWidget->setWidget(m_sceneViewer = new SceneViewer(m_fsWidget));
+  m_fsWidget->setWidget(m_sceneViewer = new HybridSceneViewer(m_fsWidget));
   m_sceneViewer->setIsStyleShortcutSwitchable();
 
   m_keyFrameButton = new ViewerKeyframeNavigator(0, app->getCurrentFrame());

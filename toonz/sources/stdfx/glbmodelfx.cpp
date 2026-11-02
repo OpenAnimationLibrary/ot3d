@@ -48,7 +48,8 @@ void copyGlbPixels(TRasterPT<PIXEL> raster,
 // animated material color overrides.
 class GlbModelFx final : public TStandardZeraryFx,
                          public TFxMaterialSource,
-                         public T3DRenderSource {
+                         public T3DRenderSource,
+                         public T3DViewerSource {
   FX_PLUGIN_DECLARATION(GlbModelFx)
 
   TStringParamP m_modelFile;
@@ -79,6 +80,10 @@ class GlbModelFx final : public TStandardZeraryFx,
   };
   // Render clones share owned data, but hold the lock only while preparing it.
   std::shared_ptr<Cache> m_cache = std::make_shared<Cache>();
+
+  mutable std::shared_ptr<const otglb::ViewerGeometry> m_viewerGeometry;
+  mutable otglb::RenderOptions m_viewerOptions;
+  mutable QString m_viewerRevision;
 
   QString fileRevision() const {
     const QFileInfo file(QString::fromStdWString(m_modelFile->getValue()));
@@ -188,15 +193,8 @@ class GlbModelFx final : public TStandardZeraryFx,
     settings.sourceSeconds = seconds;
   }
 
-  std::shared_ptr<const otglb::RenderScene> projected(
-      double frame, const int *canceled,
-      const otglb::LightingRig *lighting                   = nullptr,
-      const std::vector<otglb::ModelTransform> *transforms = nullptr) const {
-    if (m_modelFile->getValue().empty()) return {};
-    auto settings = options(frame);
-    QMutexLocker lock(&m_cache->mutex);
-    loadLocked();
-    applyAnimationLocked(frame, settings);
+  void applyMaterialsLocked(double frame,
+                            otglb::RenderOptions &settings) const {
     settings.materialColors = m_colorMode->getValue() == 1;
     if (settings.materialColors) {
       const auto &asset = *m_cache->loaded.asset;
@@ -214,6 +212,18 @@ class GlbModelFx final : public TStandardZeraryFx,
         settings.colors.push_back(color);
       }
     }
+  }
+
+  std::shared_ptr<const otglb::RenderScene> projected(
+      double frame, const int *canceled,
+      const otglb::LightingRig *lighting                   = nullptr,
+      const std::vector<otglb::ModelTransform> *transforms = nullptr) const {
+    if (m_modelFile->getValue().empty()) return {};
+    auto settings = options(frame);
+    QMutexLocker lock(&m_cache->mutex);
+    loadLocked();
+    applyAnimationLocked(frame, settings);
+    applyMaterialsLocked(frame, settings);
     if (lighting) {
       settings.useLightingRig = true;
       settings.lighting = *lighting;
@@ -262,6 +272,25 @@ public:
       const std::vector<otglb::ModelTransform> *transforms = nullptr,
       const TRenderSettings * = nullptr) const override {
     return projected(frame, canceled, lighting, transforms);
+  }
+
+  std::shared_ptr<const otglb::ViewerGeometry> get3DViewerGeometry(
+      double frame) const override {
+    if (m_modelFile->getValue().empty()) return {};
+    QMutexLocker lock(&m_cache->mutex);
+    loadLocked();
+    auto settings = options(frame);
+    applyAnimationLocked(frame, settings);
+    applyMaterialsLocked(frame, settings);
+    if (!m_viewerGeometry || m_viewerRevision != m_cache->revision ||
+        !(settings == m_viewerOptions)) {
+      auto geometry = std::make_shared<otglb::ViewerGeometry>(
+          otglb::prepareViewerGeometry(*m_cache->loaded.asset, settings));
+      m_viewerGeometry = std::move(geometry);
+      m_viewerOptions  = settings;
+      m_viewerRevision = m_cache->revision;
+    }
+    return m_viewerGeometry;
   }
 
   GlbModelFx()

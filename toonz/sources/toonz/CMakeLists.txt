@@ -87,6 +87,7 @@ set(MOC_HEADERS
     scanpopup.h
     scenebrowser.h
     scenesettingspopup.h
+    hybridsceneviewer.h
     sceneviewer.h
     sceneviewercontextmenu.h
     scriptconsolepanel.h
@@ -263,6 +264,7 @@ set(SOURCES
     xshnoteviewer.cpp
     xshrowviewer.cpp
     xshtoolbar.cpp
+    hybridsceneviewer.cpp
     sceneviewer.cpp
     sceneviewerevents.cpp
     viewerdraw.cpp
@@ -823,3 +825,6 @@ exec \$OPENTOONZ_BASE/bin/OpenToonz \"\$@\"
     )
 
 endif()
+
+# Hybrid Viewer consumes the immutable GLB geometry service directly.
+target_link_libraries(OpenToonz otglb)
