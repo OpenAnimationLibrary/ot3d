@@ -736,7 +736,8 @@ include("${CMAKE_CURRENT_SOURCE_DIR}/../cmake/OpenEXR.cmake")
 include("${CMAKE_CURRENT_SOURCE_DIR}/../cmake/TestRuntime.cmake")
 
 option(BUILD_EXR_TESTS "Build the OpenEXR image I/O regression test" OFF)
-if(BUILD_EXR_TESTS)
+option(BUILD_EXR_AOV_FX_TESTS "Build the OpenEXR AOV FX regression test" OFF)
+if(BUILD_EXR_TESTS OR BUILD_EXR_AOV_FX_TESTS)
     enable_testing()
 endif()
 

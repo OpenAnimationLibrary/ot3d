@@ -27,3 +27,21 @@ Configure with `BUILD_EXR_TESTS=ON`, build `tiio_exr_test`, and run
 `ctest --output-on-failure -R '^tiio_exr$'`. Verify an ordinary EXR round trip
 and a portable package on Windows, macOS and Linux. Existing GLB tests remain
 required. Test results from the source PR are provenance, not OT3D validation.
+
+## AOV workflow
+
+Selectively ports OT-Dev PR #197, merge commit
+`0805d02e4b6e6e21aca8a82eca0e3765cb345063` (first-parent delta).
+Source: https://github.com/OpenAnimationLibrary/opentoonz-dev/pull/197
+Original merge author: Rodney <rodney.baker@gmail.com>.
+
+The OpenEXR AOV Switchboard exposes flat multipart/layer/channel selection,
+custom RGBA routing, scalar visualization and explicit scene-linear/raw-data
+semantics. Deep parts are identified but rejected until native deep transport
+exists. UINT samples are converted to float for the current raster path;
+exact integer-ID transport remains work for the document/channel service.
+
+Adaptation: keep EXR and GLB file controls without OT-Dev LUT controls or LUT
+tests. Existing GLB validation is retained. Configure with
+`BUILD_EXR_AOV_FX_TESTS=ON`, build `openexraovfx_test`, and run
+`ctest --output-on-failure -R '^(tiio_exr|openexraovfx)$'`.
