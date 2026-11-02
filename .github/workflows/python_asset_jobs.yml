@@ -1,0 +1,26 @@
+name: Python asset job foundation
+
+on:
+  pull_request:
+    paths:
+      - 'tools/ot3d_assets/**'
+      - '.github/workflows/python_asset_jobs.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  jobs:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022, macos-14]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - name: Test local worker lifecycle (no network generation)
+        run: python -m unittest discover -s tools/ot3d_assets/tests -v
