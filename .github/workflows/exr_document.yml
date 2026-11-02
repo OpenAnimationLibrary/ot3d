@@ -1,0 +1,24 @@
+name: EXR document and deep transport
+
+on:
+  pull_request:
+    paths:
+      - 'toonz/sources/exr/**'
+      - 'toonz/cmake/OpenEXR.cmake'
+      - '.github/workflows/exr_document.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  document:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v6
+      - name: Configure standalone document service
+        run: cmake -S toonz/sources/exr -B exr-build -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build exr-build --parallel 2
+      - name: Test
+        run: ctest --test-dir exr-build --output-on-failure
