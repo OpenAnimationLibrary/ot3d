@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.14)
 
 set(CMAKE_BUILD_TYPE_INIT Release)
 
@@ -732,6 +732,15 @@ endif()
 set(CMAKE_C_FLAGS "${C_WARNINGS} ${CMAKE_C_FLAGS}")
 set(CMAKE_CXX_FLAGS "${CXX_WARNINGS} ${CMAKE_CXX_FLAGS}")
 
+include("${CMAKE_CURRENT_SOURCE_DIR}/../cmake/OpenEXR.cmake")
+include("${CMAKE_CURRENT_SOURCE_DIR}/../cmake/TestRuntime.cmake")
+
+option(BUILD_EXR_TESTS "Build the OpenEXR image I/O and level source regression tests" OFF)
+option(BUILD_EXR_AOV_FX_TESTS "Build the OpenEXR AOV FX regression test" OFF)
+if(BUILD_EXR_TESTS OR BUILD_EXR_AOV_FX_TESTS)
+    enable_testing()
+endif()
+
 add_subdirectory(tnzcore)
 add_subdirectory(tnzbase)
 add_subdirectory(tnzext)
@@ -742,6 +751,7 @@ add_subdirectory(stdfx)
 add_subdirectory(sound)
 add_subdirectory(colorfx)
 add_subdirectory(image)
+add_subdirectory(exr)
 add_subdirectory(toonzqt)
 add_subdirectory(tnztools)
 

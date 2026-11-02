@@ -1,6 +1,7 @@
 #pragma once
 
 #include "glbrenderer.h"
+#include "glbviewer.h"
 #include "trasterfx.h"
 #include "toonz/tcolumnfx.h"
 
@@ -47,4 +48,13 @@ public:
   }
 
   T3DRenderSource *source() const { return resolve(getFx()); }
+};
+
+// Interactive geometry is a separate contract from the projected FX raster.
+// Returned snapshots own their data and can outlive cache invalidation.
+class T3DViewerSource {
+public:
+  virtual ~T3DViewerSource() = default;
+  virtual std::shared_ptr<const otglb::ViewerGeometry> get3DViewerGeometry(
+      double frame) const = 0;
 };

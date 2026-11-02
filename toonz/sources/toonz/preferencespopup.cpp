@@ -1339,6 +1339,8 @@ QString PreferencesPopup::getUIString(PreferencesItemId id) {
        tr("Use QuickTime to decode/code .mov and .3gp (If Installed)")},
       {rhubarbPath, tr("Rhubarb Path:")},
       {rhubarbTimeout, tr("Rhubarb Timeout:")},
+      {ot3dPythonPath, tr("Python 3.11+ Executable:")},
+      {ot3dSculptForgePath, tr("SculptForge CLI Executable:")},
 
       // Drawing
       {DefRasterFormat, tr("Default Raster / Scan Level Format:")},
@@ -1652,9 +1654,7 @@ PreferencesPopup::PreferencesPopup()
              << tr("Animation") << tr("Auto Lip-Sync") << tr("Colors")
              << tr("Vector Visualize") << tr("Version Control")
              << tr("Touch/Tablet Settings");
-#ifdef _WIN32
   categories << tr("Addons");
-#endif
   categoryList->addItems(categories);
   categoryList->setFixedWidth(160);
   categoryList->setCurrentRow(0);
@@ -1677,9 +1677,7 @@ PreferencesPopup::PreferencesPopup()
   stackedWidget->addWidget(createVisualizationPage());
   stackedWidget->addWidget(createVersionControlPage());
   stackedWidget->addWidget(createTouchTabletPage());
-#ifdef _WIN32
   stackedWidget->addWidget(createAddonsPage());
-#endif  // WIN32
 
   QHBoxLayout* mainLayout = new QHBoxLayout();
   mainLayout->setContentsMargins(0, 0, 0, 0);
@@ -2614,10 +2612,23 @@ QWidget* PreferencesPopup::createTouchTabletPage() {
 
 #ifdef _WIN32
 #include <windows.h>
+#endif
 QWidget* PreferencesPopup::createAddonsPage() {
   QWidget* widget  = new QWidget(this);
   QGridLayout* lay = new QGridLayout();
 
+  putLabel(tr("Optional 3D asset generation uses your own Python 3.11+ and "
+              "SculptForge CLI installations. Configure executable files here, "
+              "then open Asset Generation and choose Check Integration. "
+              "Credentials stay in SculptForge settings or the environment."),
+           lay);
+  insertUI(ot3dPythonPath, lay);
+  insertUI(ot3dSculptForgePath, lay);
+  getUI<FileField*>(ot3dPythonPath)->setFileMode(QFileDialog::ExistingFile);
+  getUI<FileField*>(ot3dSculptForgePath)
+      ->setFileMode(QFileDialog::ExistingFile);
+
+#ifdef _WIN32
   static auto CheckToonzPreview = []() -> bool {
     HKEY h;
     bool r = RegOpenKeyW(HKEY_CLASSES_ROOT,
@@ -2690,13 +2701,13 @@ QWidget* PreferencesPopup::createAddonsPage() {
   });
 
   lay->addWidget(groupBox, lay->rowCount(), 0, 2, 4, Qt::AlignLeft);
+#endif
   lay->setRowStretch(lay->rowCount(), 1);
 
   widget->setLayout(lay);
 
   return widget;
 }
-#endif  // _WIN32
 
 //-----------------------------------------------------------------------------
 

@@ -1,6 +1,7 @@
 set(VERSION 1.8)
 
 set(MOC_HEADERS
+    assetgenerationpanel.h
     addfilmstripframespopup.h
     adjustlevelspopup.h
     adjustthicknesspopup.h
@@ -87,6 +88,7 @@ set(MOC_HEADERS
     scanpopup.h
     scenebrowser.h
     scenesettingspopup.h
+    hybridsceneviewer.h
     sceneviewer.h
     sceneviewercontextmenu.h
     scriptconsolepanel.h
@@ -218,6 +220,7 @@ set(HEADERS
 )
 
 set(SOURCES
+    assetgenerationpanel.cpp
     floatingpanelcommand.cpp
     canvassizepopup.cpp
     commandbar.cpp
@@ -263,6 +266,7 @@ set(SOURCES
     xshnoteviewer.cpp
     xshrowviewer.cpp
     xshtoolbar.cpp
+    hybridsceneviewer.cpp
     sceneviewer.cpp
     sceneviewerevents.cpp
     viewerdraw.cpp
@@ -440,7 +444,7 @@ endif()
 set(OBJCSOURCES filebrowsermodel.cpp)
 
 # Resource file(s)
-set(RESOURCES toonz.qrc)
+set(RESOURCES toonz.qrc assetgeneration.qrc)
 
 if(BUILD_ENV_MSVC)
     set(RC_FILE toonz.rc)
@@ -823,3 +827,6 @@ exec \$OPENTOONZ_BASE/bin/OpenToonz \"\$@\"
     )
 
 endif()
+
+# Hybrid Viewer consumes the immutable GLB geometry service directly.
+target_link_libraries(OpenToonz otglb)

@@ -62,7 +62,7 @@ public:
 // SceneViewer
 //-----------------------------------------------------------------------------
 
-class SceneViewer final : public TToolViewer, public Previewer::Listener {
+class SceneViewer : public TToolViewer, public Previewer::Listener {
   Q_OBJECT
 
   double m_pressure;
@@ -337,7 +337,8 @@ protected:
   void drawOverlay();
   void drawViewerIndicators();
 
-  void drawScene();
+  virtual void drawScene();
+  bool isScenePicking() const { return m_isPicking; }
   void drawToolGadgets();
 
 protected:

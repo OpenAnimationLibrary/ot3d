@@ -13,6 +13,7 @@ set(HEADERS
     pins.h
     stdfx.h
     t3dsource.h
+    ../include/tfxaovsource.h
     texturefxP.h
     warp.h
     motionawarebasefx.h
@@ -138,6 +139,7 @@ set(SOURCES
     multitonefx.cpp
     noisefx.cpp
     nothingfx.cpp
+    openexraovfx.cpp
     palettefilterfx.cpp
     particles.cpp
     particlesengine.cpp
@@ -339,7 +341,7 @@ include_directories(
 
 _find_toonz_library(TNZLIBS "tnzcore;tnzbase;toonzlib")
 
-target_link_libraries(tnzstdfx otglb Qt5::Core Qt5::Gui Qt5::OpenGL ${GL_LIB} ${GLEW_LIB} ${TNZLIBS} ${PTHREAD_LIBRARY})
+target_link_libraries(tnzstdfx otglb OpenEXR::OpenEXR Qt5::Core Qt5::Gui Qt5::OpenGL ${GL_LIB} ${GLEW_LIB} ${TNZLIBS} ${PTHREAD_LIBRARY})
 
 if(OpenCV_FOUND)
     target_link_libraries(tnzstdfx ${OpenCV_LIBS})
@@ -353,4 +355,12 @@ if(BUILD_GLB_FX_TESTS)
     target_link_libraries(threepointlightfx_test otglb Qt5::Core Qt5::Gui ${TNZLIBS} ${PTHREAD_LIBRARY})
     add_executable(transform3dfx_test tests/transform3dfx_test.cpp)
     target_link_libraries(transform3dfx_test otglb Qt5::Core Qt5::Gui ${TNZLIBS} ${PTHREAD_LIBRARY})
+endif()
+
+# Optional regression target for multipart, tiled, and channel-mapped EXR AOVs.
+if(BUILD_EXR_AOV_FX_TESTS)
+    add_executable(openexraovfx_test tests/openexraovfx_test.cpp)
+    target_link_libraries(openexraovfx_test OpenEXR::OpenEXR Qt5::Core Qt5::Gui ${TNZLIBS} ${PTHREAD_LIBRARY})
+    add_test(NAME openexraovfx COMMAND openexraovfx_test)
+    ot_configure_native_test_runtime(openexraovfx)
 endif()

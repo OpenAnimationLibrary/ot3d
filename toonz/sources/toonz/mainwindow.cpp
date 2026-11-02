@@ -2281,6 +2281,8 @@ void MainWindow::defineActions() {
                        "run_script");
   createMenuFileAction("MI_OpenScriptConsole",
                        QT_TR_NOOP("Open Script Console..."), "", "console");
+  createMenuFileAction("MI_AssetGeneration", QT_TR_NOOP("Asset Generation..."),
+                       "");
   createMenuFileAction(MI_Print, QT_TR_NOOP("&Print Current Frame..."),
                        "Ctrl+P", "printer");
   createMenuFileAction(MI_Quit, QT_TR_NOOP("&Quit"), "Ctrl+Q", "quit");
