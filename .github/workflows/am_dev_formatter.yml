@@ -1,0 +1,24 @@
+name: A:M development formatter
+on:
+  push:
+    branches: [feature/am-model-level-3d-transforms]
+    paths: [.github/workflows/am_dev_formatter.yml]
+permissions:
+  contents: read
+jobs:
+  formatter:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-format-14
+          mkdir /tmp/formatter
+          cp -L /usr/bin/clang-format-14 /tmp/formatter/
+          ldd /usr/bin/clang-format-14 | awk '/=> \/.*(LLVM|clang)/ {print $3}' | xargs -r -I{} cp -L {} /tmp/formatter/
+          tar -czf /tmp/formatter.tar.gz -C /tmp formatter
+      - uses: actions/upload-artifact@v4
+        with:
+          name: am-development-formatter
+          path: /tmp/formatter.tar.gz
+          retention-days: 1
