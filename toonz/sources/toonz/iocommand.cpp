@@ -1251,6 +1251,15 @@ TXshLevel *loadResource(ToonzScene *scene,
   actualRd.m_path = scene->decodeFilePath(rd.m_path);
 
   TFileType::Type type = TFileType::getInfo(actualRd.m_path);
+  if (type == TFileType::AM_MODEL_LEVEL) {
+    actualRd.m_options = boost::none;
+    fIds.assign(1, TFrameId(1));
+    // Drawing subsequences, DPI and arrangement settings do not describe a
+    // native model. All entry points expose its single identifier unchanged.
+    return loadLevel(scene, actualRd, castFolder, row0, col0, row1, col1,
+                     expose, fIds, TFrameId(1), TFrameId(1), levelName, 1, 1, 1,
+                     true);
+  }
   return (type == TFileType::PALETTE_LEVEL)
              ? loadPalette(scene, actualRd.m_path, castFolder, row0, col0)
              : loadLevel(scene, actualRd, castFolder, row0, col0, row1, col1,
@@ -2718,7 +2727,8 @@ int IoCmd::loadResources(LoadResourceArguments &args, bool updateRecentFile,
     TFilePath path   = rd.m_path;
     QString origName = path.withoutParentDir().getQString();
 
-    if (!path.isLevelName())
+    if (TFileType::getInfo(path) != TFileType::AM_MODEL_LEVEL &&
+        !path.isLevelName())
       path = TFilePath(path.getLevelNameW()).withParentDir(path.getParentDir());
 
     // duplicate check

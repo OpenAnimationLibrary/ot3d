@@ -13,10 +13,12 @@
 #include "toonz/tstageobject.h"
 #include "toonz/stage.h"
 #include "tfiletype.h"
+#include "toonzqt/gutil.h"
 #include "tstream.h"
 #include "ttile.h"
 #include "traster.h"
-#include <QCoreApplication>
+#include <QGuiApplication>
+#include <QUrl>
 #include <QTemporaryDir>
 #include <QFile>
 #include <QDir>
@@ -38,12 +40,12 @@ QByteArray readFile(const QString &path) {
 }
 }  // namespace
 int main(int argc, char **argv) {
-  QCoreApplication app(argc, argv);
+  QGuiApplication app(argc, argv);
   try {
     QTemporaryDir temp;
     check(temp.isValid(), "temporary directory");
     const QString source =
-        temp.path() + QString::fromUtf8("/model-\xc3\xa9.mdl");
+        temp.path() + QString::fromUtf8("/model-\xc3\xa9.001.MDL");
     {
       QFile f(source);
       check(f.open(QIODevice::WriteOnly), "write fixture");
@@ -53,15 +55,51 @@ int main(int argc, char **argv) {
     }
     check(TFileType::getInfo(TFilePath(source)) == TFileType::AM_MODEL_LEVEL,
           "MDL is not a native model resource");
+    check(!TFileType::isViewable(TFileType::getInfo(TFilePath(source))),
+          "model incorrectly routed to an image reader");
+    check(TFilePath(source).getLevelNameW() ==
+              TFilePath(source).withoutParentDir().getWideString(),
+          "numbered model filename collapsed into an image sequence");
+    const QList<QUrl> modelDrop{QUrl::fromLocalFile(source)};
+    check(isResource(source) && acceptResourceDrop(modelDrop) &&
+              acceptResourceOrFolderDrop(modelDrop),
+          "native model rejected by drag-and-drop resource checks");
+    const QList<QUrl> mixedDrop{
+        QUrl::fromLocalFile(source),
+        QUrl::fromLocalFile(temp.path() + "/scene.tnz")};
+    check(acceptResourceDrop(mixedDrop), "mixed resource drop rejected");
+    check(!acceptResourceDrop({QUrl::fromLocalFile(temp.path() + "/bad.xyz")}),
+          "unsupported file accepted as a model resource");
     ToonzScene scene;
     scene.setScenePath(TFilePath(temp.path() + "/scene.tnz"));
-    auto *level = scene.loadLevel(TFilePath(source))->getAMLevel();
+    TXshLevel *loaded = scene.loadLevel(TFilePath(source));
+    check(loaded, "scene loader did not recognize the model");
+    auto *level = loaded->getAMLevel();
     check(level && !level->getSimpleLevel(),
           "model masquerades as an image level");
     check(level->getType() == AM_XSHLEVEL && level->getFrameCount() == 1,
           "model level type/exposure");
     check(level->document() && level->document()->source == amtest::source,
           "source not retained");
+    check(scene.decodeFilePath(level->getPath()) == TFilePath(source),
+          "scene loader changed the physical model path");
+    const int castCount   = scene.getLevelSet()->getLevelCount();
+    const QString invalid = temp.path() + "/invalid.mdl";
+    {
+      QFile f(invalid);
+      check(f.open(QIODevice::WriteOnly), "write invalid fixture");
+      f.write("not an Animation:Master model");
+    }
+    for (const auto &path : {invalid, temp.path() + "/missing.mdl"}) {
+      bool failed = false;
+      try {
+        scene.loadLevel(TFilePath(path));
+      } catch (const TException &) {
+        failed = true;
+      }
+      check(failed && scene.getLevelSet()->getLevelCount() == castCount,
+            "failed model load left a phantom Scene Cast resource");
+    }
     auto sourceMesh = level->mesh();
     auto *xsheet    = scene.getXsheet();
     check(xsheet->setCell(0, 0, TXshCell(level, TFrameId(1))), "expose model");

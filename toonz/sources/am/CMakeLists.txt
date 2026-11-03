@@ -21,7 +21,9 @@ endif()
 
 if(BUILD_AM_LEVEL_TESTS AND NOT AM_STANDALONE)
     add_executable(amlevel_test tests/amlevel_test.cpp)
-    target_link_libraries(amlevel_test PRIVATE toonzlib Qt5::Core Qt5::Gui)
+    target_link_libraries(amlevel_test PRIVATE
+        toonzlib toonzqt Qt5::Core Qt5::Gui Qt5::Widgets
+    )
     add_test(NAME amlevel COMMAND amlevel_test)
     ot_configure_native_test_runtime(amlevel)
     set_property(TEST amlevel APPEND PROPERTY ENVIRONMENT "QT_QPA_PLATFORM=offscreen")

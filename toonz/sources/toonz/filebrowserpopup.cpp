@@ -2,6 +2,8 @@
 
 #include "filebrowserpopup.h"
 
+#include <algorithm>
+
 // Tnz6 includes
 #include "menubarcommandids.h"
 #include "iocommand.h"
@@ -53,6 +55,7 @@
 
 // TnzCore includes
 #include "tsystem.h"
+#include "tfiletype.h"
 #include "tiio.h"
 #include "tlevel_io.h"
 #include "tundo.h"
@@ -948,13 +951,18 @@ void LoadLevelPopup::onNameSetEditted() {
   // if the path exists
   else {
     TFilePath path =
-        m_browser->getFolder() + TFilePath(m_nameField->text().toStdString());
+        m_browser->getFolder() + TFilePath(m_nameField->text().toStdWString());
     getCurrentPathSet().insert(path);
     if (TSystem::doesExistFileOrLevel(path)) {
       m_notExistLabel->hide();
       updateBottomGUI();
     } else {
       m_notExistLabel->show();
+      if (TFileType::getInfo(path) == TFileType::AM_MODEL_LEVEL) {
+        // Missing models are errors, not missing image-sequence placeholders.
+        updateBottomGUI();
+        return;
+      }
 
       m_fromFrame->setValue(TFrameId(1));
       m_toFrame->setValue(TFrameId(1));
@@ -981,7 +989,8 @@ void LoadLevelPopup::updatePosTo() {
   // calculate how many frames to be occupied in the xsheet
   TFilePath fp = getCurrentPath();
 
-  if (QString::fromStdString(fp.getType()) == "tpl") {
+  if (fp.getType() == "tpl" ||
+      TFileType::getInfo(fp) == TFileType::AM_MODEL_LEVEL) {
     m_posTo->setText(m_posFrom->text());
     return;
   }
@@ -1172,6 +1181,15 @@ void LoadLevelPopup::onFrameSwitched() {
 bool LoadLevelPopup::execute() {
   if (m_selectedPaths.size() == 1) {
     const TFilePath &fp = *m_selectedPaths.begin();
+    if (TFileType::getInfo(fp) == TFileType::AM_MODEL_LEVEL) {
+      // A model has one exposure, not an image subsequence. Do not carry
+      // raster options or a previous drawing's loading range into this load.
+      setLoadingLevelRange(TFrameId(1), TFrameId(0));
+      IoCmd::LoadResourceArguments args(fp);
+      args.row0      = std::max(0, m_posFrom->text().toInt() - 1);
+      args.levelName = m_levelName->text().toStdWString();
+      return 0 < IoCmd::loadResources(args, true, 0);
+    }
     //---- SubSequent load
     // if loading the "missing" level
     if (m_notExistLabel->isVisible()) {
@@ -1343,12 +1361,18 @@ void LoadLevelPopup::updateBottomGUI() {
 
   std::set<TFilePath> paths                = getCurrentPathSet();
   std::list<std::vector<TFrameId>> fIdsSet = getCurrentFIdsSet();
+  const bool onlyModels =
+      !paths.empty() &&
+      std::all_of(paths.begin(), paths.end(), [](const TFilePath &path) {
+        return TFileType::getInfo(path) == TFileType::AM_MODEL_LEVEL;
+      });
+  m_rasterCacheBehaviorComboBox->setEnabled(!onlyModels);
 
   if (paths.empty() || paths.size() > 1) {
     disableAll();
     if (paths.size() > 1) {
       m_levelName->setEnabled(false);
-      m_levelPropertiesFrame->setEnabled(true);
+      m_levelPropertiesFrame->setEnabled(!onlyModels);
     }
     return;
   }
@@ -1362,6 +1386,17 @@ void LoadLevelPopup::updateBottomGUI() {
   if (fp.isEmpty() || ext == "") {
     disableAll();
     return;
+  } else if (TFileType::getInfo(fp) == TFileType::AM_MODEL_LEVEL) {
+    m_fromFrame->setValue(TFrameId(1));
+    m_toFrame->setValue(TFrameId(1));
+    m_xFrom->setValue(TFrameId(1));
+    m_xTo->setValue(TFrameId(1));
+    m_subsequenceFrame->setEnabled(false);
+    m_arrangementFrame->setEnabled(false);
+    m_levelPropertiesFrame->setEnabled(false);
+    m_levelName->setText(QString::fromStdWString(fp.getWideName()));
+    m_stepCombo->setCurrentIndex(0);
+    m_incCombo->setCurrentIndex(0);
   } else if (ext == "tpl") {
     m_fromFrame->setText("1");
     m_toFrame->setText("1");

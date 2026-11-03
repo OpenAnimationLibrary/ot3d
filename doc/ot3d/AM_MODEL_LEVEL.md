@@ -9,6 +9,15 @@ Scene Cast **Expose** creates another instance sharing the read-only asset.
 A model has one exposure identifier (`1`); extend that cell to keep it visible.
 Internal A:M action playback is not implemented in this slice.
 
+The Load Level dialog recognizes models as a single exposure and disables
+image-subsequence, DPI and raster-caching controls for them. Previous image
+sequence settings do not affect model loading. The File Browser's **Load**
+context action and local-file drag-and-drop use the same native loader; no
+separate Import A:M command or plugin is needed. Numeric filename suffixes and
+Unicode paths are retained. Loading still follows the Auto Expose preference:
+when it is off, use Scene Cast **Expose** to place the loaded model in the Xsheet.
+Missing or unsupported models report an error rather than creating empty levels.
+
 Select its column and choose the **Animate Tool**. Position uses existing X/Y/Z.
 Rotation adds **Rx/Ry**, with existing Angle presented as **Rz**. Scale adds **Z**
 to X/Y and uniform Scale. Center adds **Z** to the existing X/Y center. Numeric
