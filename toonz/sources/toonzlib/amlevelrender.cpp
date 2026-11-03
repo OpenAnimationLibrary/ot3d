@@ -1,6 +1,7 @@
 #include "toonz/amlevelrender.h"
 #include "toonz/txshamlevel.h"
 #include "toonz/txsheet.h"
+#include "toonz/txshcell.h"
 #include "toonz/tstageobject.h"
 #include "toonz/tstageobjecttree.h"
 #include "toonz/stage.h"

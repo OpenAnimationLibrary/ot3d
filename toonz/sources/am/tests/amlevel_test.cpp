@@ -7,6 +7,7 @@
 #include "toonz/levelset.h"
 #include "toonz/sceneresources.h"
 #include "toonz/txsheet.h"
+#include "toonz/txshcell.h"
 #include "toonz/txshsimplelevel.h"
 #include "toonz/txshleveltypes.h"
 #include "toonz/tstageobject.h"
