@@ -826,5 +826,6 @@ exec \$OPENTOONZ_BASE/bin/OpenToonz \"\$@\"
 
 endif()
 
-# Hybrid Viewer consumes the immutable GLB geometry service directly.
-target_link_libraries(OpenToonz otglb)
+# The application directly consumes both geometry services. Explicit targets
+# also propagate their headers when macOS links toonzlib by its file path.
+target_link_libraries(OpenToonz otglb otam)

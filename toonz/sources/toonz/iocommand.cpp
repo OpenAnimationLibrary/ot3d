@@ -50,6 +50,7 @@
 #include "toonz/tpalettehandle.h"
 #include "toonz/toonzscene.h"
 #include "toonz/tproject.h"
+#include "toonz/txshamlevel.h"
 #include "toonz/txshexrlevel.h"
 #include "toonz/txshsimplelevel.h"
 #include "toonz/txshchildlevel.h"
