@@ -160,6 +160,18 @@ QString TStageObjectValues::getStringForHistory() {
     channelStr = QObject::tr("Move");
   else {
     switch (m_channels.at(0).m_actionId) {
+    case TStageObject::T_RotationX:
+      channelStr = QObject::tr("A:M Rotation X");
+      break;
+    case TStageObject::T_RotationY:
+      channelStr = QObject::tr("A:M Rotation Y");
+      break;
+    case TStageObject::T_ScaleZ:
+      channelStr = QObject::tr("A:M Scale Z");
+      break;
+    case TStageObject::T_CenterZ:
+      channelStr = QObject::tr("A:M Pivot Z");
+      break;
     case TStageObject::T_Angle:
       channelStr = QObject::tr("Edit Rotation");
       break;

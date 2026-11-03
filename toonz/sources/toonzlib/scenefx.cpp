@@ -1,4 +1,4 @@
-
+#include "toonz/amlevelrender.h"
 
 // TnzBase includes
 #include "tfxattributes.h"
@@ -880,13 +880,14 @@ PlacedFx FxBuilder::makePF(TLevelColumnFx *lcfx) {
     if (m_particleDescendentCount == 0) {
       if (!xl ||
           (xl->getType() != PLI_XSHLEVEL && xl->getType() != TZP_XSHLEVEL &&
-           xl->getType() != CHILD_XSHLEVEL))
+           xl->getType() != CHILD_XSHLEVEL && xl->getType() != AM_XSHLEVEL))
         return PlacedFx();
     }
     /*-- ParticleFxのTextureポートに繋がっている場合 --*/
     else {
       if (xl && xl->getType() != PLI_XSHLEVEL &&
-          xl->getType() != TZP_XSHLEVEL && xl->getType() != CHILD_XSHLEVEL)
+          xl->getType() != TZP_XSHLEVEL && xl->getType() != CHILD_XSHLEVEL &&
+          xl->getType() != AM_XSHLEVEL)
         return PlacedFx();
     }
   }
@@ -903,6 +904,20 @@ PlacedFx FxBuilder::makePF(TLevelColumnFx *lcfx) {
   if ((m_particleDescendentCount == 0 && cell.isEmpty())) return pf;
 
   pf.m_fx = lcfx;
+
+  const bool amModel =
+      !cell.isEmpty() && cell.m_level->getType() == AM_XSHLEVEL;
+  if (amModel) {
+    // The shared snapshot already includes the model's full 3D placement and
+    // per-vertex camera perspective. Do not apply the old planar column affine
+    // a second time. FxBuilder applies the camera's final affine once later.
+    auto geometry = prepareAMLevelGeometry(m_xsh, pf.m_columnIndex, m_frame,
+                                           true, m_isPreview);
+    pf.m_fx       = makeAMLevelRenderFx(std::move(geometry));
+    pf.m_aff      = TAffine();
+    columnVisible =
+        true;  // Near-plane clipping is per triangle, not per origin.
+  }
 
   /*-- subXsheetのとき、その中身もBuildFxを実行 --*/
   if (!cell.isEmpty() && cell.m_level->getChildLevel()) {
@@ -939,7 +954,7 @@ PlacedFx FxBuilder::makePF(TLevelColumnFx *lcfx) {
         pf.m_fx = TFxUtil::makeAffine(pf.m_fx, dpiAff);
         if (pf.m_fx) pf.m_fx->setName(L"LevelColumn AffineFx");
       }
-    } else {
+    } else if (!amModel) {
       // Okay, weird code ensues. This is what happens on non-common image
       // cases, which should be:
 

@@ -263,11 +263,19 @@ void FunctionTreeModel::ChannelGroup::setChildrenAllActive(bool active) {
 //-----------------------------------------------------------------------------
 
 StageObjectChannelGroup::StageObjectChannelGroup(TStageObject *stageObject)
-    : m_stageObject(stageObject), m_plasticGroup() {
+    : m_stageObject(stageObject)
+    , m_plasticGroup()
+    , m_amChannels(stageObject->isAMTransformEnabled()) {
   m_stageObject->addRef();
 }
 
 //-----------------------------------------------------------------------------
+
+void *StageObjectChannelGroup::getInternalPointer() const {
+  return m_amChannels ? static_cast<void *>(
+                            m_stageObject->getParam(TStageObject::T_RotationX))
+                      : static_cast<void *>(m_stageObject);
+}
 
 StageObjectChannelGroup::~StageObjectChannelGroup() {
   m_stageObject->release();
@@ -914,11 +922,15 @@ void FunctionTreeModel::refreshData(TXsheet *xsh) {
 
 void FunctionTreeModel::refreshStageObjects(TXsheet *xsh) {
   static const int channelIds[TStageObject::T_ChannelCount] = {
-      TStageObject::T_X,      TStageObject::T_Y,      TStageObject::T_Z,
-      TStageObject::T_SO,     TStageObject::T_Path,   TStageObject::T_Angle,
-      TStageObject::T_ScaleX, TStageObject::T_ScaleY, TStageObject::T_Scale,
-      TStageObject::T_ShearX, TStageObject::T_ShearY};  // Explicitly ordered
-                                                        // channels
+      TStageObject::T_X,         TStageObject::T_Y,
+      TStageObject::T_Z,         TStageObject::T_SO,
+      TStageObject::T_Path,      TStageObject::T_Angle,
+      TStageObject::T_ScaleX,    TStageObject::T_ScaleY,
+      TStageObject::T_Scale,     TStageObject::T_ShearX,
+      TStageObject::T_ShearY,    TStageObject::T_RotationX,
+      TStageObject::T_RotationY, TStageObject::T_ScaleZ,
+      TStageObject::T_CenterZ};  // Explicitly ordered
+                                 // channels
 
   // Retrieve all (not-empty) root stage objects, and add them in the tree model
   QList<TreeModel::Item *> newItems;
@@ -949,6 +961,9 @@ void FunctionTreeModel::refreshStageObjects(TXsheet *xsh) {
     int j, jCount = TStageObject::T_ChannelCount;
     // making each channel of pegbar
     for (j = 0; j < jCount; ++j) {
+      if (TStageObject::isAMChannel((TStageObject::Channel)channelIds[j]) &&
+          !stageObject->isAMTransformEnabled())
+        continue;
       TDoubleParam *param =
           stageObject->getParam((TStageObject::Channel)channelIds[j]);
       Channel *channel = new Channel(this, param);

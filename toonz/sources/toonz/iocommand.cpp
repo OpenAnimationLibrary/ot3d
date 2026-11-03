@@ -721,6 +721,7 @@ public:
   void process(TXshSimpleLevel *sl) override;
   void process(TXshPaletteLevel *sl) override;
   void process(TXshSoundLevel *sl) override;
+  void process(TXshAMLevel *sl) override;
   bool aborted() const override { return m_importStrategy.aborted(); }
 };
 
@@ -803,6 +804,25 @@ void ChildLevelResourceImporter::process(TXshSimpleLevel *sl) {
 }
 
 //---------------------------------------------------------------------------
+
+void ChildLevelResourceImporter::process(TXshAMLevel *level) {
+  auto *levels = m_parentScene->getLevelSet();
+  const auto path =
+      m_importStrategy.process(m_parentScene, m_childScene, level->getPath());
+  NameModifier names(level->getName());
+  std::wstring name;
+  do {
+    name = names.getNext();
+  } while (levels->hasLevel(name));
+  TXshAMLevelP keepAlive(level);
+  m_childScene->getLevelSet()->removeLevel(level);
+  level->setName(name);
+  level->setScene(m_parentScene);
+  level->setPath(path, true);
+  levels->insertLevel(level);
+  if (!m_levelSetFolder.isEmpty())
+    levels->moveLevelToFolder(m_levelSetFolder, level);
+}
 
 void ChildLevelResourceImporter::process(TXshPaletteLevel *pl) {
   TLevelSet *parentLevelSet = m_parentScene->getLevelSet();
@@ -1080,9 +1100,22 @@ TXshLevel *loadLevel(ToonzScene *scene,
       int levelType = xl->getType();
       TXshColumn::ColumnType newLevelColumnType =
           TXshColumn::toColumnType(levelType);
-      bool columnInserted =
+      bool columnInserted = false;
+      auto *target        = scene->getXsheet()->getColumn(col0);
+      if (target && target->getCellColumn() && !target->isEmpty()) {
+        int first, last;
+        target->getCellColumn()->getRange(first, last);
+        const auto &old = target->getCellColumn()->getCell(first);
+        if (!old.isEmpty() && ((old.m_level->getType() == AM_XSHLEVEL) !=
+                               (levelType == AM_XSHLEVEL))) {
+          scene->getXsheet()->insertColumn(col0);
+          columnInserted = true;
+        }
+      }
+      columnInserted =
           beforeCellsInsert(scene->getXsheet(), row0, col0, xl->getFrameCount(),
-                            newLevelColumnType);
+                            newLevelColumnType) ||
+          columnInserted;
 
       scene->getXsheet()->exposeLevel(row0, col0, xl, fIds, xFrom, xTo, step,
                                       inc, frameCount, doesFileActuallyExist);
@@ -1093,7 +1126,7 @@ TXshLevel *loadLevel(ToonzScene *scene,
         undo->setCells(scene->getXsheet(), row0, col0, xl->getFrameCount());
       undo->setColumnInserted(columnInserted);
     }
-    if (row1 != -1 || col1 != -1)
+    if ((row1 != -1 || col1 != -1) && xl->getSimpleLevel())
       replaceUndo = new LoadAndReplaceLevelUndo(xl->getSimpleLevel(), row0,
                                                 col0, row1, col1);
   }

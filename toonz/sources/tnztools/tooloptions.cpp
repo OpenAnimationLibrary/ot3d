@@ -460,6 +460,38 @@ ArrowToolOptionsBox::ArrowToolOptionsBox(
       new PegbarChannelField(m_tool, TStageObject::T_Angle, "field",
                              frameHandle, objHandle, xshHandle, this);
 
+  m_amRotationXLabel = new ClickableLabel(tr("Rx:"), this);
+  m_amRotationXField =
+      new PegbarChannelField(m_tool, TStageObject::T_RotationX, "m_amRotationX",
+                             frameHandle, objHandle, xshHandle, this);
+  m_amRotationXField->setToolTip(
+      tr("A:M local X rotation (degrees). Rotation order: X, then Y, then Z."));
+  m_amRotationXField->setVisible(false);
+  m_amRotationXLabel->setVisible(false);
+  m_amRotationYLabel = new ClickableLabel(tr("Ry:"), this);
+  m_amRotationYField =
+      new PegbarChannelField(m_tool, TStageObject::T_RotationY, "m_amRotationY",
+                             frameHandle, objHandle, xshHandle, this);
+  m_amRotationYField->setToolTip(tr("A:M local Y rotation (degrees)."));
+  m_amRotationYField->setVisible(false);
+  m_amRotationYLabel->setVisible(false);
+  m_amScaleZLabel = new ClickableLabel(tr("Z:"), this);
+  m_amScaleZField =
+      new PegbarChannelField(m_tool, TStageObject::T_ScaleZ, "m_amScaleZ",
+                             frameHandle, objHandle, xshHandle, this);
+  m_amScaleZField->setToolTip(
+      tr("A:M local Z scale; Global scale also applies."));
+  m_amScaleZField->setVisible(false);
+  m_amScaleZLabel->setVisible(false);
+  m_amCenterZLabel = new ClickableLabel(tr("Z:"), this);
+  m_amCenterZField =
+      new PegbarChannelField(m_tool, TStageObject::T_CenterZ, "m_amCenterZ",
+                             frameHandle, objHandle, xshHandle, this);
+  m_amCenterZField->setToolTip(
+      tr("A:M local pivot Z. X/Y pivot keeps the existing Center behavior."));
+  m_amCenterZField->setVisible(false);
+  m_amCenterZLabel->setVisible(false);
+
   /* --- Scale --- */
   m_globalScaleField =
       new PegbarChannelField(m_tool, TStageObject::T_Scale, "field",
@@ -670,6 +702,10 @@ ArrowToolOptionsBox::ArrowToolOptionsBox(
             new SimpleIconViewField("edit_rotation", tr("Rotation"), this);
         rotLay->addWidget(m_axisIcons[Rotation], 0);
         rotLay->addSpacing(LABEL_SPACING * 2);
+        rotLay->addWidget(m_amRotationXLabel);
+        rotLay->addWidget(m_amRotationXField);
+        rotLay->addWidget(m_amRotationYLabel);
+        rotLay->addWidget(m_amRotationYField);
         rotLay->addWidget(m_rotationLabel, 0);
         rotLay->addSpacing(LABEL_SPACING);
         rotLay->addWidget(m_rotationField, 10);
@@ -715,6 +751,8 @@ ArrowToolOptionsBox::ArrowToolOptionsBox(
         scaleLay->addWidget(m_scaleVField, 10);
         scaleLay->addWidget(m_vFlipButton);
         scaleLay->addWidget(m_lockScaleVCheckbox, 0);
+        scaleLay->addWidget(m_amScaleZLabel);
+        scaleLay->addWidget(m_amScaleZField);
 
         scaleLay->addSpacing(ITEM_SPACING);
 
@@ -786,6 +824,8 @@ ArrowToolOptionsBox::ArrowToolOptionsBox(
         centerPosLay->addSpacing(LABEL_SPACING);
         centerPosLay->addWidget(m_nsCenterField, 10);
         centerPosLay->addWidget(m_lockNSCenterCheckbox, 0);
+        centerPosLay->addWidget(m_amCenterZLabel);
+        centerPosLay->addWidget(m_amCenterZField);
 
         centerPosLay->addSpacing(ITEM_SPACING);
         centerPosLay->addWidget(new DVGui::Separator("", this, false));
@@ -826,6 +866,11 @@ ArrowToolOptionsBox::ArrowToolOptionsBox(
   connectLabelAndField(m_zLabel, m_zField);
   connectLabelAndField(m_soLabel, m_soField);
   connectLabelAndField(m_rotationLabel, m_rotationField);
+  connectLabelAndField(m_amRotationXLabel, m_amRotationXField);
+  connectLabelAndField(m_amRotationYLabel, m_amRotationYField);
+  connectLabelAndField(m_amScaleZLabel, m_amScaleZField);
+  connectLabelAndField(m_amCenterZLabel, m_amCenterZField);
+
   connectLabelAndField(m_globalScaleLabel, m_globalScaleField);
   connectLabelAndField(m_scaleHLabel, m_scaleHField);
   connectLabelAndField(m_scaleVLabel, m_scaleVField);
@@ -918,6 +963,28 @@ bool ArrowToolOptionsBox::isCurrentObjectSplined() const {
 //-----------------------------------------------------------------------------
 
 void ArrowToolOptionsBox::updateStatus() {
+  auto *object =
+      m_xshHandle->getXsheet()->getStageObject(m_objHandle->getObjectId());
+  const bool model = object && object->isAMTransformEnabled();
+  m_amRotationXLabel->setVisible(model);
+  m_amRotationXField->setVisible(model);
+  m_amRotationXField->setEnabled(model);
+  m_amRotationXField->updateStatus();
+  m_amRotationYLabel->setVisible(model);
+  m_amRotationYField->setVisible(model);
+  m_amRotationYField->setEnabled(model);
+  m_amRotationYField->updateStatus();
+  m_amScaleZLabel->setVisible(model);
+  m_amScaleZField->setVisible(model);
+  m_amScaleZField->setEnabled(model);
+  m_amScaleZField->updateStatus();
+  m_amCenterZLabel->setVisible(model);
+  m_amCenterZField->setVisible(model);
+  m_amCenterZField->setEnabled(model);
+  m_amCenterZField->updateStatus();
+  m_rotationLabel->setText(model ? tr("Rz:") : tr("Rotation:"));
+  m_scaleHLabel->setText(model ? tr("X:") : tr("H:"));
+  m_scaleVLabel->setText(model ? tr("Y:") : tr("V:"));
   // General
   m_chooseActiveAxisCombo->updateStatus();
   m_pickCombo->updateStatus();
@@ -998,6 +1065,7 @@ void ArrowToolOptionsBox::updateStageObjectComboItems() {
 /*! synchronize the current item in the combobox to the selected stage object
  */
 void ArrowToolOptionsBox::syncCurrentStageObjectComboItem() {
+  updateStatus();
   TStageObjectId curObjId = m_objHandle->getObjectId();
 
   int index = m_currentStageObjectCombo->findData((int)curObjId.getCode());

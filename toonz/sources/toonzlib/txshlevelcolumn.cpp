@@ -73,6 +73,13 @@ bool TXshLevelColumn::canSetCell(const TXshCell &cell) const {
     return true;
   }
 
+  if (!isEmpty()) {
+    int first, last;
+    getRange(first, last);
+    const bool hasModel = getCell(first).m_level->getType() == AM_XSHLEVEL;
+    if (hasModel != (cell.m_level->getType() == AM_XSHLEVEL)) return false;
+  }
+  if (cell.m_level->getType() == AM_XSHLEVEL) return true;
   TXshSimpleLevel *sl = cell.getSimpleLevel();
   if (sl) {
     return (sl->getType() & LEVELCOLUMN_XSHLEVEL) != 0;

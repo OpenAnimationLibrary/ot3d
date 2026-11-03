@@ -15,6 +15,7 @@ public:
     // Base, hard-coded known file types
     m_table["tnz"] = TFileType::TOONZSCENE;
     m_table["tab"] = TFileType::TABSCENE;
+    m_table["mdl"] = TFileType::AM_MODEL_LEVEL;
   }
 
   static FileTypeData *instance() {

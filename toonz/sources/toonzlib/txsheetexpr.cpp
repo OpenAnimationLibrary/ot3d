@@ -283,6 +283,10 @@ public:
 
   TStageObject::Channel matchChannelName(const Token &token) const {
     std::string s = toLower(token.getText());
+    if (s == "amrx") return TStageObject::T_RotationX;
+    if (s == "amry") return TStageObject::T_RotationY;
+    if (s == "amsz") return TStageObject::T_ScaleZ;
+    if (s == "amcz") return TStageObject::T_CenterZ;
     if (s == "y" || s == "ns")
       return TStageObject::T_Y;
     else if (s == "x" || s == "ew")

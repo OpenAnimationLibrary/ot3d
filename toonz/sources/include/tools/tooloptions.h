@@ -225,6 +225,14 @@ class ArrowToolOptionsBox final : public ToolOptionsBox {
   // Rotation
   ClickableLabel *m_rotationLabel;
   PegbarChannelField *m_rotationField;
+  ClickableLabel *m_amRotationXLabel;
+  PegbarChannelField *m_amRotationXField;
+  ClickableLabel *m_amRotationYLabel;
+  PegbarChannelField *m_amRotationYField;
+  ClickableLabel *m_amScaleZLabel;
+  PegbarChannelField *m_amScaleZField;
+  ClickableLabel *m_amCenterZLabel;
+  PegbarChannelField *m_amCenterZField;
 
   // Scale
   ClickableLabel *m_globalScaleLabel;

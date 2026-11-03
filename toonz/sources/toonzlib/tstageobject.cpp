@@ -1,4 +1,5 @@
-
+#include "ammodel.h"
+#include <stdexcept>
 
 #include "toonz/tstageobject.h"
 
@@ -74,7 +75,12 @@ const int StageObjectIndexMask = ((1 << StageObjectTypeShift) - 1);
 //    TStageObjectParams  implementation
 //************************************************************************************************
 
-TStageObjectParams::TStageObjectParams() : m_spline(0), m_noScaleZ(0) {}
+TStageObjectParams::TStageObjectParams() : m_spline(0), m_noScaleZ(0) {
+  m_amRotationX = new TDoubleParam(0.0);
+  m_amRotationY = new TDoubleParam(0.0);
+  m_amScaleZ    = new TDoubleParam(1.0);
+  m_amCenterZ   = new TDoubleParam(0.0);
+}
 
 //-----------------------------------------------------------------------------
 
@@ -99,6 +105,11 @@ TStageObjectParams::TStageObjectParams(TStageObjectParams *data)
     , m_posPath(data->m_posPath)
     , m_shearx(data->m_shearx)
     , m_sheary(data->m_sheary)
+    , m_amRotationX(data->m_amRotationX)
+    , m_amRotationY(data->m_amRotationY)
+    , m_amScaleZ(data->m_amScaleZ)
+    , m_amCenterZ(data->m_amCenterZ)
+    , m_amTransformEnabled(data->m_amTransformEnabled)
     , m_skeletonDeformation(data->m_skeletonDeformation)
     , m_noScaleZ(data->m_noScaleZ)
     , m_center(data->m_center)
@@ -372,6 +383,10 @@ TStageObject::TStageObject(TStageObjectTree *tree, TStageObjectId id)
     , m_posPath(new TDoubleParam())
     , m_shearx(new TDoubleParam())
     , m_sheary(new TDoubleParam())
+    , m_amRotationX(new TDoubleParam(0.0))
+    , m_amRotationY(new TDoubleParam(0.0))
+    , m_amScaleZ(new TDoubleParam(1.0))
+    , m_amCenterZ(new TDoubleParam(0.0))
     , m_center()
     , m_offset()
     , m_cycleEnabled(false)
@@ -424,6 +439,26 @@ TStageObject::TStageObject(TStageObjectTree *tree, TStageObjectId id)
   m_sheary->setMeasureName("shear");
   m_sheary->addObserver(this);
 
+  m_amRotationX->setName("AM Rotation X");
+  m_amRotationX->setMeasureName("angle");
+  m_amRotationX->addObserver(this);
+  m_tree->setGrammar(m_amRotationX);
+
+  m_amRotationY->setName("AM Rotation Y");
+  m_amRotationY->setMeasureName("angle");
+  m_amRotationY->addObserver(this);
+  m_tree->setGrammar(m_amRotationY);
+
+  m_amScaleZ->setName("AM Scale Z");
+  m_amScaleZ->setMeasureName("scale");
+  m_amScaleZ->addObserver(this);
+  m_tree->setGrammar(m_amScaleZ);
+
+  m_amCenterZ->setName("AM Pivot Z");
+  m_amCenterZ->setMeasureName("length");
+  m_amCenterZ->addObserver(this);
+  m_tree->setGrammar(m_amCenterZ);
+
   m_posPath->setName("posPath");
   m_posPath->setMeasureName("percentage2");
   m_posPath->addObserver(this);
@@ -463,6 +498,10 @@ TStageObject::~TStageObject() {
   if (m_scale) m_scale->removeObserver(this);
   if (m_shearx) m_shearx->removeObserver(this);
   if (m_sheary) m_sheary->removeObserver(this);
+  if (m_amRotationX) m_amRotationX->removeObserver(this);
+  if (m_amRotationY) m_amRotationY->removeObserver(this);
+  if (m_amScaleZ) m_amScaleZ->removeObserver(this);
+  if (m_amCenterZ) m_amCenterZ->removeObserver(this);
   if (m_posPath) m_posPath->removeObserver(this);
 
   if (m_skeletonDeformation) {
@@ -822,6 +861,10 @@ bool TStageObject::is52FullKeyframe(int frame) const {
 //-----------------------------------------------------------------------------
 
 bool TStageObject::isFullKeyframe(int frame) const {
+  if (m_amTransformEnabled &&
+      !(m_amRotationX->isKeyframe(frame) && m_amRotationY->isKeyframe(frame) &&
+        m_amScaleZ->isKeyframe(frame) && m_amCenterZ->isKeyframe(frame)))
+    return false;
   return m_rot->isKeyframe(frame) && m_x->isKeyframe(frame) &&
          m_y->isKeyframe(frame) && m_z->isKeyframe(frame) &&
          m_so->isKeyframe(frame) && m_posPath->isKeyframe(frame) &&
@@ -850,6 +893,10 @@ TStageObject::Keyframe TStageObject::getKeyframe(int frame) const {
     k.m_channels[TStageObject::T_Path]   = m_posPath->getValue(frame);
     k.m_channels[TStageObject::T_ShearX] = m_shearx->getValue(frame);
     k.m_channels[TStageObject::T_ShearY] = m_sheary->getValue(frame);
+    k.m_channels[TStageObject::T_RotationX] = m_amRotationX->getValue(frame);
+    k.m_channels[TStageObject::T_RotationY] = m_amRotationY->getValue(frame);
+    k.m_channels[TStageObject::T_ScaleZ]    = m_amScaleZ->getValue(frame);
+    k.m_channels[TStageObject::T_CenterZ]   = m_amCenterZ->getValue(frame);
 
     if (m_skeletonDeformation)
       m_skeletonDeformation->getKeyframeAt(frame, k.m_skeletonKeyframe);
@@ -901,6 +948,21 @@ void TStageObject::setKeyframeWithoutUndo(int frame,
                             frame, k.m_easeIn, k.m_easeOut) ||
               keyWasSet;
 
+  keyWasSet =
+      ::setKeyframe(m_amRotationX, k.m_channels[TStageObject::T_RotationX],
+                    frame, k.m_easeIn, k.m_easeOut) ||
+      keyWasSet;
+  keyWasSet =
+      ::setKeyframe(m_amRotationY, k.m_channels[TStageObject::T_RotationY],
+                    frame, k.m_easeIn, k.m_easeOut) ||
+      keyWasSet;
+  keyWasSet = ::setKeyframe(m_amScaleZ, k.m_channels[TStageObject::T_ScaleZ],
+                            frame, k.m_easeIn, k.m_easeOut) ||
+              keyWasSet;
+  keyWasSet = ::setKeyframe(m_amCenterZ, k.m_channels[TStageObject::T_CenterZ],
+                            frame, k.m_easeIn, k.m_easeOut) ||
+              keyWasSet;
+
   if (m_skeletonDeformation)
     keyWasSet = m_skeletonDeformation->setKeyframe(k.m_skeletonKeyframe, frame,
                                                    k.m_easeIn, k.m_easeOut) ||
@@ -927,6 +989,12 @@ void TStageObject::setKeyframeWithoutUndo(int frame) {
   setkey(m_scale, frame);
   setkey(m_shearx, frame);
   setkey(m_sheary, frame);
+  if (m_amTransformEnabled) {
+    setkey(m_amRotationX, frame);
+    setkey(m_amRotationY, frame);
+    setkey(m_amScaleZ, frame);
+    setkey(m_amCenterZ, frame);
+  }
 
   // Plastic keys are currently not *created* by xsheet commands.
 
@@ -968,6 +1036,10 @@ void TStageObject::removeKeyframeWithoutUndo(int frame) {
   m_posPath->deleteKeyframe(frame);
   m_shearx->deleteKeyframe(frame);
   m_sheary->deleteKeyframe(frame);
+  m_amRotationX->deleteKeyframe(frame);
+  m_amRotationY->deleteKeyframe(frame);
+  m_amScaleZ->deleteKeyframe(frame);
+  m_amCenterZ->deleteKeyframe(frame);
 
   if (m_skeletonDeformation) m_skeletonDeformation->deleteKeyframe(frame);
 
@@ -1101,6 +1173,14 @@ double TStageObject::getParam(Channel type, double frame) const {
     return m_shearx->getValue(frame);
   case T_ShearY:
     return m_sheary->getValue(frame);
+  case T_RotationX:
+    return m_amRotationX->getValue(frame);
+  case T_RotationY:
+    return m_amRotationY->getValue(frame);
+  case T_ScaleZ:
+    return m_amScaleZ->getValue(frame);
+  case T_CenterZ:
+    return m_amCenterZ->getValue(frame);
 
   default:
     assert(false);
@@ -1134,6 +1214,14 @@ TDoubleParam *TStageObject::getParam(Channel channel) const {
     return m_shearx.getPointer();
   case T_ShearY:
     return m_sheary.getPointer();
+  case T_RotationX:
+    return m_amRotationX.getPointer();
+  case T_RotationY:
+    return m_amRotationY.getPointer();
+  case T_ScaleZ:
+    return m_amScaleZ.getPointer();
+  case T_CenterZ:
+    return m_amCenterZ.getPointer();
   default:
     return 0;
   }
@@ -1232,6 +1320,11 @@ TStageObject *TStageObject::clone() {
   cloned->m_posPath = static_cast<TDoubleParam *>(m_posPath->clone());
   cloned->m_shearx  = static_cast<TDoubleParam *>(m_shearx->clone());
   cloned->m_sheary  = static_cast<TDoubleParam *>(m_sheary->clone());
+  cloned->m_amRotationX->copy(m_amRotationX.getPointer());
+  cloned->m_amRotationY->copy(m_amRotationY.getPointer());
+  cloned->m_amScaleZ->copy(m_amScaleZ.getPointer());
+  cloned->m_amCenterZ->copy(m_amCenterZ.getPointer());
+  cloned->m_amTransformEnabled = m_amTransformEnabled;
 
   if (m_skeletonDeformation)
     cloned->m_skeletonDeformation =
@@ -1505,6 +1598,12 @@ void TStageObject::updateKeyframes(LazyData &ld) const {
   params.push_back(m_scale.getPointer());
   params.push_back(m_shearx.getPointer());
   params.push_back(m_sheary.getPointer());
+  if (m_amTransformEnabled) {
+    params.push_back(m_amRotationX.getPointer());
+    params.push_back(m_amRotationY.getPointer());
+    params.push_back(m_amScaleZ.getPointer());
+    params.push_back(m_amCenterZ.getPointer());
+  }
 
   if (m_skeletonDeformation) {
     params.push_back(m_skeletonDeformation->skeletonIdsParam().getPointer());
@@ -1554,6 +1653,12 @@ void TStageObject::updateKeyframes(LazyData &ld) const {
     stageKf.m_channels[TStageObject::T_Path]   = m_posPath->getKeyframeAt(f);
     stageKf.m_channels[TStageObject::T_ShearX] = m_shearx->getKeyframeAt(f);
     stageKf.m_channels[TStageObject::T_ShearY] = m_sheary->getKeyframeAt(f);
+    stageKf.m_channels[TStageObject::T_RotationX] =
+        m_amRotationX->getKeyframeAt(f);
+    stageKf.m_channels[TStageObject::T_RotationY] =
+        m_amRotationY->getKeyframeAt(f);
+    stageKf.m_channels[TStageObject::T_ScaleZ]  = m_amScaleZ->getKeyframeAt(f);
+    stageKf.m_channels[TStageObject::T_CenterZ] = m_amCenterZ->getKeyframeAt(f);
 
     if (m_skeletonDeformation)
       m_skeletonDeformation->getKeyframeAt(f, stageKf.m_skeletonKeyframe);
@@ -1640,6 +1745,11 @@ void TStageObject::saveData(TOStream &os) {
   if (!m_posPath->isDefault()) os.child("pos") << *m_posPath;
   if (!m_shearx->isDefault()) os.child("shx") << *m_shearx;
   if (!m_sheary->isDefault()) os.child("shy") << *m_sheary;
+  if (m_amTransformEnabled) os.child("amTransform") << 1;
+  if (!m_amRotationX->isDefault()) os.child("amRx") << *m_amRotationX;
+  if (!m_amRotationY->isDefault()) os.child("amRy") << *m_amRotationY;
+  if (!m_amScaleZ->isDefault()) os.child("amSz") << *m_amScaleZ;
+  if (!m_amCenterZ->isDefault()) os.child("amCz") << *m_amCenterZ;
   if (m_cycleEnabled) os.child("cycle") << 1;
 
   if (m_skeletonDeformation) os.child("plasticSD") << *m_skeletonDeformation;
@@ -1717,7 +1827,19 @@ void TStageObject::loadData(TIStream &is) {
       is >> *m_shearx;
     else if (tagName == "shy")
       is >> *m_sheary;
-    else if (tagName == "pos")
+    else if (tagName == "amRx")
+      is >> *m_amRotationX;
+    else if (tagName == "amRy")
+      is >> *m_amRotationY;
+    else if (tagName == "amSz")
+      is >> *m_amScaleZ;
+    else if (tagName == "amCz")
+      is >> *m_amCenterZ;
+    else if (tagName == "amTransform") {
+      int enabled = 0;
+      is >> enabled;
+      m_amTransformEnabled = enabled != 0;
+    } else if (tagName == "pos")
       is >> *m_posPath;
     else if (tagName == "posCP") {
       TDoubleParam posCP;
@@ -1849,6 +1971,11 @@ TStageObjectParams *TStageObject::getParams() const {
   data->m_posPath = m_posPath;
   data->m_shearx  = m_shearx;
   data->m_sheary  = m_sheary;
+  data->m_amRotationX        = m_amRotationX;
+  data->m_amRotationY        = m_amRotationY;
+  data->m_amScaleZ           = m_amScaleZ;
+  data->m_amCenterZ          = m_amCenterZ;
+  data->m_amTransformEnabled = m_amTransformEnabled;
 
   data->m_skeletonDeformation = m_skeletonDeformation;
 
@@ -1871,6 +1998,7 @@ void TStageObject::assignParams(const TStageObjectParams *src,
   m_noScaleZ = src->m_noScaleZ;
   m_offset   = src->m_offset;
   m_status   = src->m_status;
+  m_amTransformEnabled = src->m_amTransformEnabled;
   if (m_spline) m_spline->release();
   m_spline = src->m_spline;
   if (m_spline) m_spline->addRef();
@@ -1887,6 +2015,10 @@ void TStageObject::assignParams(const TStageObjectParams *src,
     m_posPath->copy(src->m_posPath.getPointer());
     m_shearx->copy(src->m_shearx.getPointer());
     m_sheary->copy(src->m_sheary.getPointer());
+    m_amRotationX->copy(src->m_amRotationX.getPointer());
+    m_amRotationY->copy(src->m_amRotationY.getPointer());
+    m_amScaleZ->copy(src->m_amScaleZ.getPointer());
+    m_amCenterZ->copy(src->m_amCenterZ.getPointer());
 
     if (src->m_skeletonDeformation)
       setPlasticSkeletonDeformation(
@@ -1914,6 +2046,18 @@ void TStageObject::assignParams(const TStageObjectParams *src,
     m_shearx->addObserver(this);
     m_sheary = src->m_sheary.getPointer();
     m_sheary->addObserver(this);
+    m_amRotationX->removeObserver(this);
+    m_amRotationX = src->m_amRotationX.getPointer();
+    m_amRotationX->addObserver(this);
+    m_amRotationY->removeObserver(this);
+    m_amRotationY = src->m_amRotationY.getPointer();
+    m_amRotationY->addObserver(this);
+    m_amScaleZ->removeObserver(this);
+    m_amScaleZ = src->m_amScaleZ.getPointer();
+    m_amScaleZ->addObserver(this);
+    m_amCenterZ->removeObserver(this);
+    m_amCenterZ = src->m_amCenterZ.getPointer();
+    m_amCenterZ->addObserver(this);
 
     m_skeletonDeformation = src->m_skeletonDeformation;
     if (m_skeletonDeformation) m_skeletonDeformation->addObserver(this);
@@ -2104,4 +2248,60 @@ int TStageObject::getEditingGroupId() {
 wstring TStageObject::getEditingGroupName() {
   if (!isGrouped() || m_groupSelector + 1 >= m_groupName.size()) return L"";
   return m_groupName[m_groupSelector + 1];
+}
+
+void TStageObject::enableAMTransform(bool enabled) {
+  enabled = enabled && m_id.isColumn();
+  if (enabled == m_amTransformEnabled) return;
+  m_amTransformEnabled = enabled;
+  m_lazyData.invalidate();
+}
+
+std::array<double, 16> TStageObject::getAMPlacement(double t) {
+  const double frame = paramsTime(t);
+  otam::Matrix local;
+  if (!m_amTransformEnabled) {
+    // Existing 2D ancestors keep their exact planar placement, with separate Z.
+    const TAffine a = getLocalPlacement(frame);
+    local           = {{a.a11, a.a12, 0, a.a13, a.a21, a.a22, 0, a.a23, 0, 0, 1,
+                        m_z->getValue(frame), 0, 0, 0, 1}};
+  } else {
+    if ((m_status & STATUS_MASK) == IK)
+      throw std::runtime_error(
+          "A:M model columns do not support the legacy 2D IK placement");
+    const double sc = m_scale->getValue(frame);
+    double angle    = m_rot->getValue(frame);
+    TPointD position(m_x->getValue(frame) * Stage::inch,
+                     m_y->getValue(frame) * Stage::inch);
+    if (isPathEnabled() && m_spline && m_spline->getStroke()) {
+      const double distance = m_spline->getStroke()->getLength() *
+                              m_posPath->getValue(frame) * 0.01;
+      position = m_spline->getStroke()->getPointAtLength(distance);
+      if (isAimEnabled() && m_spline->getStroke()->getLength() > 1e-5)
+        angle +=
+            rad2degree(atan(m_spline->getStroke()->getSpeedAtLength(distance)));
+    }
+    TPointD center =
+        (m_center + getHandlePos(m_handle, int(frame))) * Stage::inch;
+    TPointD offset = m_offset;
+    if (m_parent) offset += m_parent->getHandlePos(m_parentHandle, int(frame));
+    position += offset * Stage::inch;
+    auto shear = otam::identity();
+    shear[1]   = m_shearx->getValue(frame);
+    shear[4]   = m_sheary->getValue(frame);
+    local      = otam::multiply(
+             otam::translation(position.x, position.y, m_z->getValue(frame)),
+             otam::multiply(
+                 otam::rotation(m_amRotationX->getValue(frame),
+                                m_amRotationY->getValue(frame), angle),
+                 otam::multiply(
+                     shear,
+                     otam::multiply(otam::scaling(sc * m_scalex->getValue(frame),
+                                                  sc * m_scaley->getValue(frame),
+                                                  sc * m_amScaleZ->getValue(frame)),
+                                    otam::translation(-center.x, -center.y,
+                                                      -m_amCenterZ->getValue(frame) *
+                                                          Stage::inch)))));
+  }
+  return m_parent ? otam::multiply(m_parent->getAMPlacement(t), local) : local;
 }

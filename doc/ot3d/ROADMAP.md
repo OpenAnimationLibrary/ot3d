@@ -1,5 +1,10 @@
 # OT3D Development Roadmap
 
+> Native A:M development track: [AM_MODEL_LEVEL.md](AM_MODEL_LEVEL.md) adds an
+> experimental read-only `.mdl` level and model-only spatial Animate channels.
+> This supersedes the native-A:M deferral below for that explicitly bounded subset;
+> it does not enable spatial rotation for ordinary 2D levels or full A:M projects.
+
 ## How to read this roadmap
 
 The roadmap is ordered by dependency, not by visual impact. Each milestone must leave a

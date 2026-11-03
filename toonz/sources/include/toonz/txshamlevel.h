@@ -1,0 +1,51 @@
+#pragma once
+
+#include "toonz/txshlevel.h"
+#include "ammodel.h"
+#include <mutex>
+
+#undef DVAPI
+#undef DVVAR
+#ifdef TOONZLIB_EXPORTS
+#define DVAPI DV_EXPORT_API
+#define DVVAR DV_EXPORT_VAR
+#else
+#define DVAPI DV_IMPORT_API
+#define DVVAR DV_IMPORT_VAR
+#endif
+
+// Native read-only A:M source. Column/stage objects, not this shared resource,
+// own placement and animation. No conversion to a TXshSimpleLevel or GLB.
+class DVAPI TXshAMLevel final : public TXshLevel {
+  PERSIST_DECLARATION(TXshAMLevel)
+  DECLARE_CLASS_CODE
+  TFilePath m_path;
+  mutable std::mutex m_mutex;
+  std::shared_ptr<const otam::Document> m_document;
+  std::shared_ptr<const otam::Mesh> m_mesh;
+  std::string m_revision;
+  std::string m_error;
+
+public:
+  explicit TXshAMLevel(std::wstring name = L"");
+  ~TXshAMLevel() override;
+  TXshAMLevel *getAMLevel() override { return this; }
+  TFilePath getPath() const override { return m_path; }
+  void setPath(const TFilePath &path, bool keepCached = false);
+  bool isEmpty() const override { return m_path.isEmpty(); }
+  int getFrameCount() const override { return isEmpty() ? 0 : 1; }
+  void getFids(std::vector<TFrameId> &fids) const override;
+  void loadData(TIStream &is) override;
+  void saveData(TOStream &os) override;
+  void load() override;
+  // Saving an OT3D scene saves the reference only; never write into the MDL.
+  void save() override {}
+  std::shared_ptr<const otam::Document> document() const;
+  std::shared_ptr<const otam::Mesh> mesh() const;
+  std::string revision() const;
+  std::string error() const;
+};
+#ifdef _WIN32
+template class DV_EXPORT_API TSmartPointerT<TXshAMLevel>;
+#endif
+using TXshAMLevelP = TSmartPointerT<TXshAMLevel>;

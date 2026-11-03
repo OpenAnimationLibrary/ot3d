@@ -232,6 +232,13 @@ bool TXshCellColumn::setCells(int row, int rowCount, const TXshCell cells[]) {
   for (i = 0; i < rowCount; i++)
     if (!canSetCell(cells[i])) return false;
 
+  int batchKind = -1;
+  for (int k = 0; k < rowCount; ++k) {
+    if (cells[k].isEmpty()) continue;
+    const int kind = cells[k].m_level->getType() == AM_XSHLEVEL ? 1 : 0;
+    if (batchKind >= 0 && batchKind != kind) return false;
+    batchKind = kind;
+  }
   int oldCellCount = m_cells.size();
 
   // le celle da settare sono [ra, rb]

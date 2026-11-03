@@ -33,6 +33,8 @@ set(MOC_HEADERS
 )
 
 set(HEADERS
+    ../include/toonz/txshamlevel.h
+    ../include/toonz/amlevelrender.h
     ${MOC_HEADERS}
     autoadjust.h
     autopos.h
@@ -172,6 +174,8 @@ set(HEADERS
 )
 
 set(SOURCES
+    txshamlevel.cpp
+    amlevelrender.cpp
     autoadjust.cpp
     autoclose.cpp
     autopos.cpp
@@ -404,3 +408,6 @@ elseif(BUILD_ENV_UNIXLIKE)
 endif()
 
 target_link_libraries(toonzlib OpenEXR::OpenEXR)
+
+# Native A:M parsing and shared spatial evaluation, without SDK runtime.
+target_link_libraries(toonzlib otam)

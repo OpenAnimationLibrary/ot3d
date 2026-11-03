@@ -26,6 +26,7 @@ class TProject;
 class ToonzScene;
 class TXshSimpleLevel;
 class TXshPaletteLevel;
+class TXshAMLevel;
 class TXsheet;
 
 //=============================================================================
@@ -73,6 +74,7 @@ public:
   virtual void process(TXshSimpleLevel *sl) {}
   virtual void process(TXshPaletteLevel *sl) {}
   virtual void process(TXshSoundLevel *sl) {}
+  virtual void process(TXshAMLevel *sl) {}
   virtual bool aborted() const { return false; }
 };
 
@@ -347,6 +349,7 @@ public:
   void process(TXshSimpleLevel *sl) override;
   void process(TXshPaletteLevel *sl) override;
   void process(TXshSoundLevel *sl) override;
+  void process(TXshAMLevel *sl) override;
 
   bool aborted() const override { return m_importStrategy.aborted(); }
 
@@ -383,6 +386,7 @@ public:
 
   void process(TXshSimpleLevel *sl) override;
   void process(TXshSoundLevel *sl) override;
+  void process(TXshAMLevel *sl) override;
   void process(TXshPaletteLevel *pl) override;
 };
 

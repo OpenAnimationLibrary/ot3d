@@ -349,6 +349,7 @@ public:
       *m_plasticGroup;  //!< (not owned) Eventual plastic channels group
 
 public:
+  bool m_amChannels;  //!< Capability at creation, for tree refresh identity.
   StageObjectChannelGroup(TStageObject *pegbar);
   ~StageObjectChannelGroup();
 
@@ -357,9 +358,7 @@ public:
 
   QString getIdName() const override;
 
-  void *getInternalPointer() const override {
-    return static_cast<void *>(m_stageObject);
-  }
+  void *getInternalPointer() const override;
 
   TStageObject *getStageObject() const { return m_stageObject; }
   QVariant data(int role) const override;

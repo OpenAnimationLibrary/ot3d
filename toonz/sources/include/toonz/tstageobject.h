@@ -5,6 +5,7 @@
 
 // TnzCore includes
 #include "tgeometry.h"
+#include <array>
 
 // TnzBase includes
 #include "tdoubleparam.h"
@@ -131,6 +132,11 @@ The default value is XY.
              //! of the spline
     T_ShearX,  //!< Shear along x-axis
     T_ShearY,  //!< Shear along y-axis
+    // Appended: preserve all existing channel identifiers and 2D semantics.
+    T_RotationX,
+    T_RotationY,
+    T_ScaleZ,
+    T_CenterZ,
     T_ChannelCount
   };
 
@@ -356,6 +362,12 @@ with the frame.
   bool getKeyframeSpan(int row, int &r0, double &ease0, int &r1,
                        double &ease1) const;
 
+  // Only native A:M columns opt in. The ordinary TAffine path is unchanged.
+  bool isAMTransformEnabled() const { return m_amTransformEnabled; }
+  void enableAMTransform(bool enabled);
+  std::array<double, 16> getAMPlacement(double frame);
+  static bool isAMChannel(Channel channel) { return channel >= T_RotationX; }
+
   TAffine getPlacement(double t);
   TAffine getParentPlacement(double t) const;
 
@@ -525,6 +537,8 @@ private:
 
   TDoubleParamP m_x, m_y, m_z, m_so, m_rot, m_scalex, m_scaley, m_scale,
       m_posPath, m_shearx, m_sheary;
+  TDoubleParamP m_amRotationX, m_amRotationY, m_amScaleZ, m_amCenterZ;
+  bool m_amTransformEnabled = false;
 
   PlasticSkeletonDeformationP
       m_skeletonDeformation;  //!< Deformation curves for a plastic skeleton
@@ -609,6 +623,8 @@ public:
   TPinnedRangeSet *m_pinnedRangeSet;
   TDoubleParamP m_x, m_y, m_z, m_so, m_rot, m_scalex, m_scaley, m_scale,
       m_posPath, m_shearx, m_sheary;
+  TDoubleParamP m_amRotationX, m_amRotationY, m_amScaleZ, m_amCenterZ;
+  bool m_amTransformEnabled = false;
   PlasticSkeletonDeformationP
       m_skeletonDeformation;  //!< Deformation curves for a plastic skeleton
   double m_noScaleZ;

@@ -5,6 +5,7 @@
 #include "toonz/tproject.h"
 #include "toonz/levelset.h"
 #include "toonz/txshsimplelevel.h"
+#include "toonz/txshamlevel.h"
 #include "toonz/txshexrlevel.h"
 #include "toonz/txshpalettelevel.h"
 #include "toonz/levelproperties.h"
@@ -25,6 +26,28 @@
 
 namespace {
 //=============================================================================
+
+// Recode the same read-only MDL on Save As; moving the scene must not turn a
+// scene-relative model reference into an unrelated/missing file.
+class SceneAMModel final : public SceneResource {
+  TXshAMLevel *m_level;
+  TFilePath m_original, m_physical;
+
+public:
+  SceneAMModel(ToonzScene *scene, TXshAMLevel *level)
+      : SceneResource(scene)
+      , m_level(level)
+      , m_original(level->getPath())
+      , m_physical(scene->decodeFilePath(level->getPath())) {}
+  bool save() override { return true; }  // No native MDL write-back.
+  void updatePath() override {
+    m_level->setPath(m_scene->codeFilePath(m_physical), true);
+  }
+  void rollbackPath() override { m_level->setPath(m_original, true); }
+  void accept(ResourceProcessor *p) override { p->process(m_level); }
+  bool isDirty() override { return false; }
+  QStringList getResourceName() override { return {m_original.getQString()}; }
+};
 
 class ScenePathRestorer {
   ToonzScene *m_scene;
@@ -631,6 +654,10 @@ void SceneResources::getResources() {
   std::map<TFilePath, SharedExrSceneLevel *> sharedExrResources;
 
   for (it = levels.begin(); it != levels.end(); ++it) {
+    if (auto *am = (*it)->getAMLevel()) {
+      m_resources.push_back(new SceneAMModel(scene, am));
+      continue;
+    }
     TXshSimpleLevel *sl = (*it)->getSimpleLevel();
     if (sl) {
       if (auto *exrLevel = dynamic_cast<TXshExrLevel *>(sl);
@@ -948,4 +975,39 @@ void ResourceCollector::process(TXshPaletteLevel *pl) {
   }
   pl->setPath(collectedPath);
   m_count++;
+}
+
+void ResourceImporter::process(TXshAMLevel *level) {
+  if (level->getPath().isAbsolute()) return;
+  const auto path =
+      m_importStrategy.process(m_dstScene, m_scene, level->getPath());
+  level->setPath(path, true);
+}
+
+void ResourceCollector::process(TXshAMLevel *level) {
+  const auto path = level->getPath();
+  auto cached     = m_collectedFiles.find(path);
+  if (cached != m_collectedFiles.end()) {
+    level->setPath(cached->second, true);
+    return;
+  }
+  auto collected = path;
+  if (!getCollectedPath(m_scene, collected)) return;
+  const auto source      = m_scene->decodeFilePath(path);
+  const auto destination = m_scene->decodeFilePath(collected);
+  try {
+    if (destination != source) {
+      TSystem::touchParentDir(destination);
+      if (TSystem::doesExistFileOrLevel(destination)) {
+        makeUnique(collected);
+      }
+      TSystem::copyFile(m_scene->decodeFilePath(collected), source);
+    }
+    level->setPath(collected, true);
+    m_collectedFiles[path] = collected;
+    ++m_count;
+  } catch (...) {
+    TLogger::error() << "Cannot collect A:M source " << source;
+    // Keep the valid original reference if copying fails.
+  }
 }

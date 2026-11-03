@@ -29,6 +29,7 @@
 #include "toonz/fullcolorpalette.h"
 #include "toonz/txshpalettecolumn.h"
 #include "toonz/txshpalettelevel.h"
+#include "toonz/txshamlevel.h"
 #include "toonz/toonzfolders.h"
 
 // TnzCore includes
@@ -864,6 +865,9 @@ TXshLevel *ToonzScene::createNewLevel(int type, std::wstring levelName,
                                       TFilePath fp) {
   TLevelSet *levelSet = getLevelSet();
 
+  if (type == AM_XSHLEVEL)
+    throw TException("A:M models are read-only; load an existing .mdl file.");
+
   if (type == TZI_XSHLEVEL)  // TZI type corresponds to the 'Scan Level'
     type = OVL_XSHLEVEL;     // default option. See Toonz Preferences class.
 
@@ -1008,6 +1012,10 @@ static LevelType getLevelType(const TFilePath &fp) {
     ret.m_ltype = PLI_XSHLEVEL;
     break;
 
+  case TFileType::AM_MODEL_LEVEL:
+    ret.m_ltype = AM_XSHLEVEL;
+    break;
+
   case TFileType::AUDIO_LEVEL:
     ret.m_ltype = SND_XSHLEVEL;
     break;
@@ -1032,6 +1040,8 @@ static LevelType getLevelType(const TFilePath &fp) {
 //-----------------------------------------------------------------------------
 
 TFilePath ToonzScene::getImportedLevelPath(const TFilePath path) const {
+  if (TFileType::getInfo(path) == TFileType::AM_MODEL_LEVEL)
+    return path.withParentDir(TFilePath("+extras"));
   if (TFileType::getInfo(path) == TFileType::AUDIO_LEVEL)
     return path.withParentDir(TFilePath("+extras"));
   else if (TFileType::getInfo(path) == TFileType::PALETTE_LEVEL)
@@ -1144,6 +1154,15 @@ TXshLevel *ToonzScene::loadLevel(const TFilePath &actualPath,
   NameModifier nm(levelName);
   levelName = nm.getNext();
   while (m_levelSet->hasLevel(levelName)) levelName = nm.getNext();
+
+  if (ltype.m_ltype == AM_XSHLEVEL) {
+    TXshAMLevelP model = new TXshAMLevel(levelName);
+    model->setScene(this);
+    model->setPath(codeFilePath(levelPath));
+    model->load();
+    m_levelSet->insertLevel(model.getPointer());
+    return model.getPointer();
+  }
 
   // Discriminate sound levels
   if (ltype.m_ltype == SND_XSHLEVEL) {
@@ -1417,6 +1436,9 @@ TFilePath ToonzScene::getDefaultLevelPath(int levelType,
     break;
   case TZP_XSHLEVEL:
     levelPath = TFilePath(levelName).withType("tlv");
+    break;
+  case AM_XSHLEVEL:
+    levelPath = TFilePath(levelName).withType("mdl");
     break;
   case META_XSHLEVEL:
     levelPath = TFilePath(levelName).withType("tzm");

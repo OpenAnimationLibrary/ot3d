@@ -9,6 +9,8 @@
 #include "toonz/toonzscene.h"
 #include "toonz/txshlevel.h"
 #include "toonz/txshsimplelevel.h"
+#include "toonz/txshamlevel.h"
+#include <QPainter>
 #include "toonz/txshpalettelevel.h"
 #include "toonz/txshlevelhandle.h"
 #include "toonz/tscenehandle.h"
@@ -39,6 +41,7 @@ void CastSelection::getSelectedLevels(std::vector<TXshLevel *> &levels) {
   for (int i = 0; i < castItems.getItemCount(); i++) {
     if (!isSelected(i)) continue;
     TXshLevel *level = castItems.getItem(i)->getSimpleLevel();
+    if (!level) level = castItems.getItem(i)->getAMLevel();
     if (!level) level = castItems.getItem(i)->getPaletteLevel();
     if (!level) level = castItems.getItem(i)->getSoundLevel();
     if (level) levels.push_back(level);
@@ -86,6 +89,16 @@ int LevelCastItem::getFrameCount() const { return m_level->getFrameCount(); }
 
 QPixmap LevelCastItem::getPixmap(bool isSelected) const {
   TXshSimpleLevel *sl = m_level->getSimpleLevel();
+  if (m_level->getAMLevel()) {
+    QPixmap icon(m_itemPixmapSize);
+    icon.fill(Qt::transparent);
+    QPainter painter(&icon);
+    painter.setPen(Qt::gray);
+    painter.drawRect(icon.rect().adjusted(4, 4, -5, -5));
+    painter.drawText(icon.rect(), Qt::AlignCenter,
+                     QStringLiteral("A:M\n3D Model"));
+    return icon;
+  }
   if (!sl) return QPixmap();
   ToonzScene *scene = sl->getScene();
   assert(scene);
@@ -109,6 +122,10 @@ bool LevelCastItem::exists() const {
 }
 
 //-------------------------------------------------------
+
+TXshAMLevel *LevelCastItem::getAMLevel() const {
+  return m_level ? m_level->getAMLevel() : nullptr;
+}
 
 TXshSimpleLevel *LevelCastItem::getSimpleLevel() const {
   return m_level ? m_level->getSimpleLevel() : 0;
