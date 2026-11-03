@@ -293,7 +293,7 @@ void FileBrowserPopup::onApplyPressed() {
     m_selectedPaths.clear();
     if (!m_isDirectoryOnly)
       m_selectedPaths.insert(folder +
-                             TFilePath(m_nameField->text().toStdString()));
+                             TFilePath(m_nameField->text().toStdWString()));
     else
       m_selectedPaths.insert(TFilePath(m_nameField->text().toStdWString()));
   }
