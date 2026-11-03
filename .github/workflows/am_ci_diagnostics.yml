@@ -17,15 +17,21 @@ jobs:
         run: |
           python3 - <<'PY'
           import urllib.request, os, re, json
+          class Redirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, req, fp, code, msg, headers, newurl):
+                  result=super().redirect_request(req,fp,code,msg,headers,newurl)
+                  result.remove_header('Authorization')
+                  return result
+          opener=urllib.request.build_opener(Redirect)
           base='https://api.github.com/repos/OpenAnimationLibrary/ot3d'
           headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'], 'Accept':'application/vnd.github+json'}
           for run in [41654387745,41654387699,41654387545]:
-              with urllib.request.urlopen(urllib.request.Request(base+f'/actions/runs/{run}/jobs',headers=headers)) as r:
+              with opener.open(urllib.request.Request(base+f'/actions/runs/{run}/jobs',headers=headers)) as r:
                   jobs=json.load(r)['jobs']
               for job in jobs:
                   if job['conclusion']!='failure': continue
                   print('\nJOB',job['id'],job['name'],flush=True)
-                  with urllib.request.urlopen(urllib.request.Request(base+f'/actions/jobs/{job["id"]}/logs',headers=headers)) as r:
+                  with opener.open(urllib.request.Request(base+f'/actions/jobs/{job["id"]}/logs',headers=headers)) as r:
                       lines=r.read(30_000_000).decode('utf-8','replace').splitlines()
                   indices=set()
                   for i,line in enumerate(lines):
