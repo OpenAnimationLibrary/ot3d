@@ -4,60 +4,31 @@ on:
     branches: [diagnostics/am-level-build-e22bdd1]
     paths: [.github/workflows/am_build_diagnostics.yml]
 permissions:
-  actions: read
   contents: write
 jobs:
   diagnostics:
     runs-on: ubuntu-22.04
     timeout-minutes: 5
     steps:
-      - name: Prepare importer fix without updating any branch
+      - name: Prepare CMake fix without updating any branch
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           python3 - <<'PY'
-          import urllib.request, json, base64
+          import urllib.request, json, base64, os
           base='https://api.github.com/repos/OpenAnimationLibrary/ot3d'
-          import os
           headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'], 'Accept':'application/vnd.github+json'}
-          path='toonz/sources/toonz/iocommand.cpp'
+          path='toonz/sources/toonz/CMakeLists.txt'
           with urllib.request.urlopen(urllib.request.Request(base+'/contents/'+path+'?ref=e22bdd19633a1208c2a1f75723ba8c841211d388',headers=headers),timeout=60) as r:
               source=json.load(r)
-          assert source['sha']=='419fcc02d8ff25475b7b2237b3a63d7ae8bb49d1'
+          assert source['sha']=='9485d0355689e9f6cec06426276ad10c363c4182'
           content=base64.b64decode(source['content']).decode('utf-8')
-          anchor='#include "toonz/txshexrlevel.h"\n'
+          anchor='# Hybrid Viewer consumes the immutable GLB geometry service directly.\ntarget_link_libraries(OpenToonz otglb)'
           assert content.count(anchor)==1
-          assert '#include "toonz/txshamlevel.h"' not in content
-          content=content.replace(anchor,'#include "toonz/txshamlevel.h"\n'+anchor,1)
+          content=content.replace(anchor,'# The application directly consumes both geometry services. Explicit targets\n# also propagate their headers when macOS links toonzlib by its file path.\ntarget_link_libraries(OpenToonz otglb otam)',1)
           request=urllib.request.Request(base+'/git/blobs',data=json.dumps({'content':content,'encoding':'utf-8'}).encode(),headers={**headers,'Content-Type':'application/json'},method='POST')
           with urllib.request.urlopen(request,timeout=60) as r:
               blob=json.load(r)
           print('FIXED_BLOB',blob['sha'],path)
-          print('Added direct include of toonz/txshamlevel.h; no branch changed.')
-          PY
-      - name: Report only compiler errors, not linker warnings
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          python3 - <<'PY'
-          import urllib.request, os, re, json
-          class Redirect(urllib.request.HTTPRedirectHandler):
-              def redirect_request(self, req, fp, code, msg, headers, newurl):
-                  result=super().redirect_request(req,fp,code,msg,headers,newurl)
-                  if result is not None: result.remove_header('Authorization')
-                  return result
-          opener=urllib.request.build_opener(Redirect)
-          base='https://api.github.com/repos/OpenAnimationLibrary/ot3d'
-          headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'], 'Accept':'application/vnd.github+json'}
-          for run in [41657464661,41657464690,41657464649]:
-              with opener.open(urllib.request.Request(base+f'/actions/runs/{run}/jobs',headers=headers),timeout=60) as r:
-                  jobs=json.load(r)['jobs']
-              for job in jobs:
-                  print('JOB',job['id'],job['name'],job['status'],job['conclusion'],flush=True)
-                  if job['conclusion']!='failure': continue
-                  with opener.open(urllib.request.Request(base+f'/actions/jobs/{job["id"]}/logs',headers=headers),timeout=60) as r:
-                      lines=r.read(60_000_000).decode('utf-8','replace').splitlines()
-                  errors=[line for line in lines if re.search(r'error:|error C[0-9]+|error LNK[0-9]+|undefined reference|Undefined symbols|CMake Error',line,re.I)]
-                  print('\n'.join(line[:1800] for line in errors[:25]))
-                  if not errors: print('\n'.join(line[:1200] for line in lines[-12:]))
+          print('Added direct otam dependency; no branch changed.')
           PY
