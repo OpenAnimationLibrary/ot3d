@@ -8,225 +8,36 @@ permissions:
 jobs:
   prepare:
     runs-on: ubuntu-22.04
-    timeout-minutes: 10
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: be28e63dfe59cf03015e5778535634a1fe94a3aa
-          fetch-depth: 0
-          persist-credentials: false
-      - name: Apply the reviewed loading repair
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          def replace(path, old, new):
-              p=Path(path)
-              text=p.read_text()
-              assert text.count(old)==1, (path,text.count(old),old[:100])
-              p.write_text(text.replace(old,new))
-          replace('toonz/sources/toonzqt/gutil.cpp',
-              'type == TFileType::TOONZSCENE || fp.getType() == "tpl");',
-              'type == TFileType::TOONZSCENE || type == TFileType::AM_MODEL_LEVEL ||\n          fp.getType() == "tpl");')
-          replace('toonz/sources/toonz/filebrowser.cpp',
-              'void FileBrowser::readFrameCount(Item &item) {\n  if (!item.m_isFolder &&',
-              '''void FileBrowser::readFrameCount(Item &item) {
-            if (!item.m_isFolder &&
-                TFileType::getInfo(item.m_path) == TFileType::AM_MODEL_LEVEL) {
-              item.m_frameCount = 1;
-              item.m_frameIds.assign(1, TFrameId(1));
-              return;
-            }
-            if (!item.m_isFolder &&''')
-          p='toonz/sources/toonz/filebrowserpopup.cpp'
-          replace(p, '#include "filebrowserpopup.h"', '#include "filebrowserpopup.h"\n\n#include <algorithm>')
-          replace(p, '#include "tsystem.h"', '#include "tsystem.h"\n#include "tfiletype.h"')
-          replace(p, 'm_browser->getFolder() + TFilePath(m_nameField->text().toStdString());',
-                        'm_browser->getFolder() + TFilePath(m_nameField->text().toStdWString());')
-          replace(p, '''      m_notExistLabel->show();
-          
-                m_fromFrame->setValue(TFrameId(1));''', '''      m_notExistLabel->show();
-                if (TFileType::getInfo(path) == TFileType::AM_MODEL_LEVEL) {
-                  // Missing models are errors, not missing image-sequence placeholders.
-                  updateBottomGUI();
-                  return;
-                }
-          
-                m_fromFrame->setValue(TFrameId(1));''')
-          replace(p, 'if (QString::fromStdString(fp.getType()) == "tpl") {',
-              '''if (fp.getType() == "tpl" ||
-                TFileType::getInfo(fp) == TFileType::AM_MODEL_LEVEL) {''')
-          replace(p, '''    const TFilePath &fp = *m_selectedPaths.begin();
-              //---- SubSequent load''', '''    const TFilePath &fp = *m_selectedPaths.begin();
-              if (TFileType::getInfo(fp) == TFileType::AM_MODEL_LEVEL) {
-                // A model has one exposure, not an image subsequence. Do not carry
-                // raster options or a previous drawing's loading range into this load.
-                setLoadingLevelRange(TFrameId(1), TFrameId(0));
-                IoCmd::LoadResourceArguments args(fp);
-                args.row0 = std::max(0, m_posFrom->text().toInt() - 1);
-                args.levelName = m_levelName->text().toStdWString();
-                return 0 < IoCmd::loadResources(args, true, 0);
-              }
-              //---- SubSequent load''')
-          replace(p, '''  std::list<std::vector<TFrameId>> fIdsSet = getCurrentFIdsSet();
-          
-            if (paths.empty() || paths.size() > 1)''', '''  std::list<std::vector<TFrameId>> fIdsSet = getCurrentFIdsSet();
-            const bool onlyModels = !paths.empty() &&
-                std::all_of(paths.begin(), paths.end(), [](const TFilePath &path) {
-                  return TFileType::getInfo(path) == TFileType::AM_MODEL_LEVEL;
-                });
-            m_rasterCacheBehaviorComboBox->setEnabled(!onlyModels);
-          
-            if (paths.empty() || paths.size() > 1)''')
-          replace(p, '''      m_levelPropertiesFrame->setEnabled(true);
-              }
-              return;
-            }
-          
-            TFilePath fp''', '''      m_levelPropertiesFrame->setEnabled(!onlyModels);
-              }
-              return;
-            }
-          
-            TFilePath fp''')
-          replace(p, '''  } else if (ext == "tpl") {
-              m_fromFrame->setText("1");''', '''  } else if (TFileType::getInfo(fp) == TFileType::AM_MODEL_LEVEL) {
-              m_fromFrame->setValue(TFrameId(1));
-              m_toFrame->setValue(TFrameId(1));
-              m_xFrom->setValue(TFrameId(1));
-              m_xTo->setValue(TFrameId(1));
-              m_subsequenceFrame->setEnabled(false);
-              m_arrangementFrame->setEnabled(false);
-              m_levelPropertiesFrame->setEnabled(false);
-              m_levelName->setText(QString::fromStdWString(fp.getWideName()));
-              m_stepCombo->setCurrentIndex(0);
-              m_incCombo->setCurrentIndex(0);
-            } else if (ext == "tpl") {
-              m_fromFrame->setText("1");''')
-          p='toonz/sources/toonz/iocommand.cpp'
-          replace(p, '''  TFileType::Type type = TFileType::getInfo(actualRd.m_path);
-            return (type == TFileType::PALETTE_LEVEL)''', '''  TFileType::Type type = TFileType::getInfo(actualRd.m_path);
-            if (type == TFileType::AM_MODEL_LEVEL) {
-              actualRd.m_options = boost::none;
-              fIds.assign(1, TFrameId(1));
-              // Drawing subsequences, DPI and arrangement settings do not describe a
-              // native model. All entry points expose its single identifier unchanged.
-              return loadLevel(scene, actualRd, castFolder, row0, col0, row1, col1,
-                               expose, fIds, TFrameId(1), TFrameId(1), levelName, 1, 1,
-                               1, true);
-            }
-            return (type == TFileType::PALETTE_LEVEL)''')
-          replace(p, '''    if (!path.isLevelName())
-                path = TFilePath(path.getLevelNameW()).withParentDir(path.getParentDir());''', '''    if (TFileType::getInfo(path) != TFileType::AM_MODEL_LEVEL &&
-                  !path.isLevelName())
-                path = TFilePath(path.getLevelNameW()).withParentDir(path.getParentDir());''')
-          p='toonz/sources/am/CMakeLists.txt'
-          replace(p,'target_link_libraries(amlevel_test PRIVATE toonzlib Qt5::Core Qt5::Gui)',
-                    'target_link_libraries(amlevel_test PRIVATE\n        toonzlib toonzqt Qt5::Core Qt5::Gui Qt5::Widgets\n    )')
-          p='toonz/sources/am/tests/amlevel_test.cpp'
-          replace(p,'#include "tfiletype.h"','#include "tfiletype.h"\n#include "toonzqt/gutil.h"')
-          replace(p,'#include <QCoreApplication>','#include <QGuiApplication>\n#include <QUrl>')
-          replace(p,'QCoreApplication app(argc, argv);','QGuiApplication app(argc, argv);')
-          replace(p,'QString::fromUtf8("/model-\\xc3\\xa9.mdl");','QString::fromUtf8("/model-\\xc3\\xa9.001.MDL");')
-          replace(p,'''    ToonzScene scene;
-              scene.setScenePath''', '''    check(!TFileType::isViewable(TFileType::getInfo(TFilePath(source))),
-                    "model incorrectly routed to an image reader");
-              check(TFilePath(source).getLevelNameW() ==
-                        TFilePath(source).withoutParentDir().getWideString(),
-                    "numbered model filename collapsed into an image sequence");
-              const QList<QUrl> modelDrop{QUrl::fromLocalFile(source)};
-              check(isResource(source) && acceptResourceDrop(modelDrop) &&
-                        acceptResourceOrFolderDrop(modelDrop),
-                    "native model rejected by drag-and-drop resource checks");
-              const QList<QUrl> mixedDrop{QUrl::fromLocalFile(source),
-                                         QUrl::fromLocalFile(temp.path() + "/scene.tnz")};
-              check(acceptResourceDrop(mixedDrop), "mixed resource drop rejected");
-              check(!acceptResourceDrop({QUrl::fromLocalFile(temp.path() + "/bad.xyz")}),
-                    "unsupported file accepted as a model resource");
-              ToonzScene scene;
-              scene.setScenePath''')
-          replace(p,'''    auto *level = scene.loadLevel(TFilePath(source))->getAMLevel();''', '''    TXshLevel *loaded = scene.loadLevel(TFilePath(source));
-              check(loaded, "scene loader did not recognize the model");
-              auto *level = loaded->getAMLevel();''')
-          replace(p,'''    auto sourceMesh = level->mesh();''', '''    check(scene.decodeFilePath(level->getPath()) == TFilePath(source),
-                    "scene loader changed the physical model path");
-              const int castCount = scene.getLevelSet()->getLevelCount();
-              const QString invalid = temp.path() + "/invalid.mdl";
-              {
-                QFile f(invalid);
-                check(f.open(QIODevice::WriteOnly), "write invalid fixture");
-                f.write("not an Animation:Master model");
-              }
-              for (const auto &path : {invalid, temp.path() + "/missing.mdl"}) {
-                bool failed = false;
-                try {
-                  scene.loadLevel(TFilePath(path));
-                } catch (const TException &) {
-                  failed = true;
-                }
-                check(failed && scene.getLevelSet()->getLevelCount() == castCount,
-                      "failed model load left a phantom Scene Cast resource");
-              }
-              auto sourceMesh = level->mesh();''')
-          p='doc/ot3d/AM_MODEL_LEVEL.md'
-          replace(p,'Internal A:M action playback is not implemented in this slice.\n',
-          '''Internal A:M action playback is not implemented in this slice.
-          
-          The Load Level dialog recognizes models as a single exposure and disables
-          image-subsequence, DPI and raster-caching controls for them. Previous image
-          sequence settings do not affect model loading. The File Browser's **Load**
-          context action and local-file drag-and-drop use the same native loader; no
-          separate Import A:M command or plugin is needed. Numeric filename suffixes and
-          Unicode paths are retained. Loading still follows the Auto Expose preference:
-          when it is off, use Scene Cast **Expose** to place the loaded model in the Xsheet.
-          Missing or unsupported models report an error rather than creating empty levels.
-          ''')
-          PY
-      - name: Format changed lines and run portable regression
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y clang-format-14
-          python3 - <<'PY'
-          import subprocess,re
-          base='44d8b09c2d828a8880be13d2a7a3d3977b18748f'
-          files=subprocess.check_output(['git','diff','--name-only',base],text=True).splitlines()
-          for path in files:
-              if not path.endswith(('.cpp','.h')): continue
-              diff=subprocess.check_output(['git','diff','--unified=0',base,'--',path],text=True)
-              ranges=[]
-              for start,count in re.findall(r'^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@',diff,re.M):
-                  count=int(count or 1)
-                  if count: ranges.append(f'--lines={start}:{int(start)+count-1}')
-              if ranges: subprocess.run(['clang-format-14','-i','-style=file',*ranges,path],check=True)
-          PY
-          git diff --check
-          git diff --stat
-          cmake -S toonz/sources/am -B /tmp/am-loading-core -DCMAKE_BUILD_TYPE=Debug
-          cmake --build /tmp/am-loading-core --parallel 2
-          ctest --test-dir /tmp/am-loading-core --output-on-failure
-      - name: Prepare commit without updating a branch
+      - name: Prepare Unicode Apply-button correction without changing a branch
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           python3 - <<'PY'
-          import json,os,subprocess,urllib.request
-          from pathlib import Path
-          parent='be28e63dfe59cf03015e5778535634a1fe94a3aa'
+          import base64,json,os,urllib.request
+          parent='9760364c2be1eec82da1be5dc96691789a1db834'
           base='https://api.github.com/repos/OpenAnimationLibrary/ot3d'
           def api(path,data=None):
               headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json','Content-Type':'application/json'}
               req=urllib.request.Request(base+path,data=None if data is None else json.dumps(data).encode(),headers=headers,method='GET' if data is None else 'POST')
               with urllib.request.urlopen(req,timeout=60) as response: return json.load(response)
           assert api('/git/ref/heads/feature/am-model-level-3d-transforms')['object']['sha']==parent, 'PR head changed'
-          changed=subprocess.check_output(['git','diff','--name-only'],text=True).splitlines()
-          allowed={'doc/ot3d/AM_MODEL_LEVEL.md','toonz/sources/am/CMakeLists.txt','toonz/sources/am/tests/amlevel_test.cpp','toonz/sources/toonz/filebrowser.cpp','toonz/sources/toonz/filebrowserpopup.cpp','toonz/sources/toonz/iocommand.cpp','toonz/sources/toonzqt/gutil.cpp'}
-          assert set(changed)==allowed, changed
-          entries=[]
-          for path in changed:
-              blob=api('/git/blobs',{'content':Path(path).read_text(),'encoding':'utf-8'})
-              entries.append({'path':path,'mode':'100644','type':'blob','sha':blob['sha']})
-          tree=api('/git/trees',{'base_tree':api('/git/commits/'+parent)['tree']['sha'],'tree':entries})
-          commit=api('/git/commits',{'message':'Complete native A:M Load Level and drag-and-drop integration\n\nTreat models as single-exposure assets in the browser and load dialog, bypass\nraster subsequence options in every resource-loading entry point, and preserve\nsource filenames. Extend native regression coverage for drop acceptance and\ninvalid model loads; initialize Qt GUI for pixmap-dependent native tests.','tree':tree['sha'],'parents':[parent]})
+          path='toonz/sources/toonz/filebrowserpopup.cpp'
+          source=api('/contents/'+path+'?ref='+parent)
+          content=base64.b64decode(source['content']).decode('utf-8')
+          start=content.index('void FileBrowserPopup::onApplyPressed()')
+          end=content.index('void FileBrowserPopup::onFilePathClicked',start)
+          before=content[start:end]
+          old='TFilePath(m_nameField->text().toStdString()));'
+          new='TFilePath(m_nameField->text().toStdWString()));'
+          assert before.count(old)==1, 'Apply filename conversion changed'
+          after=before.replace(old,new)
+          content=content[:start]+after+content[end:]
+          blob=api('/git/blobs',{'content':content,'encoding':'utf-8'})
+          tree=api('/git/trees',{'base_tree':api('/git/commits/'+parent)['tree']['sha'],'tree':[{'path':path,'mode':'100644','type':'blob','sha':blob['sha']}]})
+          commit=api('/git/commits',{'message':'Preserve Unicode filenames when applying a model load\n\nUse the same wide filename conversion for Apply as for Load/OK.','tree':tree['sha'],'parents':[parent]})
           print('PREPARED_COMMIT',commit['sha'])
           print('PREPARED_TREE',tree['sha'])
-          print('No branch reference was changed; helper workflow is not in the prepared tree.')
+          print('Only the Apply filename conversion changes; no branch reference updated.')
           PY
