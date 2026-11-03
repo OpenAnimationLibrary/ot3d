@@ -1,0 +1,74 @@
+name: Apply reviewed A:M level implementation
+on:
+  push:
+    branches: [feature/am-model-level-3d-transforms]
+    paths: [.github/workflows/am_apply_development.yml, '.github/am-level-payload/**']
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install changed-line formatter
+        run: sudo apt-get update && sudo apt-get install -y clang-format-14
+      - name: Verify and apply implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64, hashlib, lzma, pathlib
+          parts = sorted(pathlib.Path('.github/am-level-payload').glob('part*.b64'))
+          assert len(parts) == 3
+          data = lzma.decompress(base64.b64decode(''.join(p.read_text().strip() for p in parts), validate=True))
+          assert hashlib.sha256(data).hexdigest() == 'c0a4bc239b0191620b8d9ab090bc484fb7c39d0ed1dab4d34038d0ccc8bfc3fd'
+          pathlib.Path('/tmp/am-level.patch').write_bytes(data)
+          PY
+          git apply --check /tmp/am-level.patch
+          git apply /tmp/am-level.patch
+          rm -r .github/am-level-payload
+          rm .github/workflows/am_apply_development.yml .github/workflows/am_development_snapshot.yml
+          git add -A
+      - name: Format only changed source lines
+        run: |
+          python3 - <<'PY'
+          import pathlib, re, subprocess
+          base = '44d8b09c2d828a8880be13d2a7a3d3977b18748f'
+          for iteration in range(3):
+              files = subprocess.check_output(['git','diff','--cached','--name-only','--diff-filter=ACMR',base], text=True).splitlines()
+              for name in files:
+                  if not name.startswith('toonz/sources/') or pathlib.Path(name).suffix not in ('.h','.cpp','.c','.cc','.hpp','.hxx','.cxx'):
+                      continue
+                  diff = subprocess.check_output(['git','diff','--cached','--unified=0',base,'--',name], text=True)
+                  ranges = []
+                  for m in re.finditer(r'^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@', diff, re.M):
+                      start, count = int(m[1]), int(m[2] or '1')
+                      if count: ranges.append('--lines=%d:%d' % (start, start+count-1))
+                  if ranges: subprocess.run(['clang-format-14','-i','-style=file',*ranges,name], check=True)
+              subprocess.run(['git','add','-A'], check=True)
+          PY
+          git diff --cached --check
+      - name: Test portable parser and spatial core
+        run: |
+          cmake -S toonz/sources/am -B /tmp/am-core -DCMAKE_BUILD_TYPE=Debug
+          cmake --build /tmp/am-core --parallel 2
+          ctest --test-dir /tmp/am-core --output-on-failure
+      - name: Publish only feature branch
+        run: |
+          git config user.name 'OpenAnimationLibrary Development'
+          git config user.email '15267732+OpenAnimationLibrary@users.noreply.github.com'
+          git commit -m 'Add native A:M model levels and model-only spatial Animate channels'
+          git push origin HEAD:refs/heads/feature/am-model-level-3d-transforms
+          git diff 44d8b09c2d828a8880be13d2a7a3d3977b18748f HEAD --binary > /tmp/am-level-formatted.patch
+          git archive --format=zip HEAD -o /tmp/ot3d-am-source.zip
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: am-level-formatted-source
+          path: |
+            /tmp/am-level-formatted.patch
+            /tmp/ot3d-am-source.zip
+          retention-days: 3
