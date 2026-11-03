@@ -1,0 +1,43 @@
+name: A:M build diagnostics
+on:
+  push:
+    branches: [diagnostics/am-level-build-e22bdd1]
+    paths: [.github/workflows/am_build_diagnostics.yml]
+permissions:
+  actions: read
+  contents: read
+jobs:
+  diagnostics:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - name: Extract concise native compiler and linker diagnostics
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import urllib.request, os, re, json
+          class Redirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, req, fp, code, msg, headers, newurl):
+                  result=super().redirect_request(req,fp,code,msg,headers,newurl)
+                  if result is not None: result.remove_header('Authorization')
+                  return result
+          opener=urllib.request.build_opener(Redirect)
+          base='https://api.github.com/repos/OpenAnimationLibrary/ot3d'
+          headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'], 'Accept':'application/vnd.github+json'}
+          for run in [41657464661,41657464690,41657464649]:
+              with opener.open(urllib.request.Request(base+f'/actions/runs/{run}/jobs',headers=headers),timeout=60) as r:
+                  jobs=json.load(r)['jobs']
+              for job in jobs:
+                  print('JOB',job['id'],job['name'],job['status'],job['conclusion'],flush=True)
+                  if job['conclusion']!='failure': continue
+                  with opener.open(urllib.request.Request(base+f'/actions/jobs/{job["id"]}/logs',headers=headers),timeout=60) as r:
+                      lines=r.read(60_000_000).decode('utf-8','replace').splitlines()
+                  count=0
+                  for i,line in enumerate(lines):
+                      if re.search(r'error:|error C[0-9]+|error LNK[0-9]+|undefined reference|Undefined symbols|CMake Error|ld: |FAILED:',line,re.I):
+                          print('\n'.join(x[:1600] for x in lines[max(0,i-1):min(len(lines),i+4)]))
+                          count+=1
+                          if count>=18: break
+                  if not count: print('\n'.join(x[:1200] for x in lines[-20:]))
+          PY
