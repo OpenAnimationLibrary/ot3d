@@ -913,7 +913,7 @@ PlacedFx FxBuilder::makePF(TLevelColumnFx *lcfx) {
     // a second time. FxBuilder applies the camera's final affine once later.
     pf.m_fx =
         makeAMLevelRenderFx(m_xsh, pf.m_columnIndex, m_frame, m_isPreview);
-    pf.m_aff      = TAffine();
+    pf.m_aff = TAffine();
     columnVisible =
         true;  // Near-plane clipping is per triangle, not per origin.
   }
