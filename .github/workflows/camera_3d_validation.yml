@@ -14,7 +14,7 @@ jobs:
         with:
           ref: 90a36968a101e238d974c4d949a0fad5eb154f82
           persist-credentials: false
-      - name: Apply spatial camera implementation
+      - name: Apply spatial camera implementation and acceptance refinements
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -29,6 +29,8 @@ jobs:
           assert hashlib.sha256(patch).hexdigest()=='57a73e24dc5b64e0a7efeeaeb35fa672f23bb3779809364a7f898881493e51a0'
           subprocess.run(['git','apply','--check','-'],input=patch,check=True)
           subprocess.run(['git','apply','-'],input=patch,check=True)
+          for sha in ['29494fee1cd5cb54e6c88f0a2a612f1e39df0341','a24ced13b2df84634f1f30e4a9a2ec54cfdf7416']:
+              subprocess.run(['python3','-'],input=blob(sha).encode(),check=True)
           PY
       - name: Install native dependencies
         run: |
@@ -39,21 +41,29 @@ jobs:
           path: /home/runner/.ccache
           key: Linux-clang-${{ github.sha }}
           restore-keys: |
+            Linux-clang-d96a2e71d4b188f91b2adda4f2650c3abfb3fe6d
             Linux-clang-
-      - name: Format and configure
+      - name: Format changed lines and configure
         run: |
           python3 - <<'PY'
           import re,subprocess
-          subprocess.run(['git','add','toonz/sources','stuff/profiles/layouts/fxs/STD_transform3DFx.xml','doc/ot3d/SPATIAL_CAMERA.md','doc/transform3d_fx.md','.github/workflows/workflow_linux.yml'],check=True)
-          files=subprocess.check_output(['git','diff','--cached','--name-only'],text=True).splitlines()
-          for path in files:
-              if not path.endswith(('.cpp','.h')):continue
-              diff=subprocess.check_output(['git','diff','--cached','--unified=0','--',path],text=True)
+          from pathlib import Path
+          paths=['toonz/sources','stuff/profiles/layouts/fxs/STD_transform3DFx.xml','doc/ot3d/SPATIAL_CAMERA.md','doc/transform3d_fx.md','.github/workflows/workflow_linux.yml']
+          subprocess.run(['git','add',*paths],check=True)
+          files=[p for p in subprocess.check_output(['git','diff','--name-only','HEAD'],text=True).splitlines() if p.endswith(('.cpp','.h'))]
+          def args(p):
+              diff=subprocess.check_output(['git','diff','--unified=0','HEAD','--',p],text=True)
               ranges=[]
               for start,count in re.findall(r'^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@',diff,re.M):
                   count=int(count or 1)
                   if count:ranges.append(f'--lines={start}:{int(start)+count-1}')
-              if ranges:subprocess.run(['clang-format-14','--dry-run','--Werror','-style=file',*ranges,path],check=True)
+              return ['clang-format-14','-style=file',*ranges,p]
+          for iteration in range(4):
+              before={p:Path(p).read_bytes() for p in files}
+              for p in files:subprocess.run(args(p)+['-i'],check=True)
+              if all(before[p]==Path(p).read_bytes() for p in files):break
+          for p in files:subprocess.run(args(p)+['--dry-run','--Werror'],check=True)
+          subprocess.run(['git','add',*paths],check=True)
           subprocess.run(['git','diff','--cached','--check'],check=True)
           PY
           (cd thirdparty/tiff-4.0.3 && CFLAGS=-fPIC CXXFLAGS=-fPIC ./configure --disable-jbig && make -j2) > /tmp/tiff.log 2>&1 || { tail -50 /tmp/tiff.log; exit 1; }
@@ -86,7 +96,7 @@ jobs:
         run: |
           cmake --build toonz/build --target OpenToonz --parallel 2 > /tmp/application-build.log 2>&1 || { tail -120 /tmp/application-build.log; exit 1; }
           echo 'OpenToonz application compiled.'
-      - name: Export tested blob manifest without changing a branch
+      - name: Export tested source manifest without changing a branch
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
