@@ -14,19 +14,21 @@ jobs:
         with:
           ref: 13c7c54f18bbceabb272a5bb108e2170f60e932d
           persist-credentials: false
-      - name: Apply reviewed integration patch
+      - name: Apply reviewed integration patch and follow-up
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           python3 - <<'PY'
           import base64,gzip,hashlib,json,os,subprocess,urllib.request
-          url='https://api.github.com/repos/OpenAnimationLibrary/ot3d/git/blobs/4045443b329c4245dcc3ba369e765ce3f5e459da'
-          req=urllib.request.Request(url,headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json'})
-          with urllib.request.urlopen(req) as r: blob=json.load(r)
-          patch=gzip.decompress(base64.b64decode(blob['content']))
+          def blob(sha):
+              url='https://api.github.com/repos/OpenAnimationLibrary/ot3d/git/blobs/'+sha
+              req=urllib.request.Request(url,headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json'})
+              with urllib.request.urlopen(req) as r: return base64.b64decode(json.load(r)['content'])
+          patch=gzip.decompress(blob('4045443b329c4245dcc3ba369e765ce3f5e459da'))
           assert hashlib.sha256(patch).hexdigest()=='ed7fce334302a4816bac9d2ff1d54681fb1b06410f4273d4b1319e8118469222'
           subprocess.run(['git','apply','--ignore-space-change','--check','-'],input=patch,check=True)
           subprocess.run(['git','apply','--ignore-space-change','-'],input=patch,check=True)
+          subprocess.run(['python3','-'],input=blob('1b5f7e28ba1ba21446a36a9a37424b25165e1ad1'),check=True)
           PY
       - name: Install native build dependencies
         run: |
@@ -42,7 +44,7 @@ jobs:
         run: |
           python3 - <<'PY'
           import re,subprocess
-          subprocess.run(['git','add','toonz/sources'],check=True)
+          subprocess.run(['git','add','toonz/sources','.github/workflows/workflow_linux.yml','doc/ot3d/AM_MODEL_LEVEL.md'],check=True)
           for path in subprocess.check_output(['git','diff','--cached','--name-only'],text=True).splitlines():
               if not path.endswith(('.cpp','.h')): continue
               diff=subprocess.check_output(['git','diff','--cached','--unified=0','--',path],text=True)
@@ -88,9 +90,10 @@ jobs:
               req=urllib.request.Request(base+path,data=None if data is None else json.dumps(data).encode(),headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json','Content-Type':'application/json'},method='GET' if data is None else 'POST')
               with urllib.request.urlopen(req,timeout=60) as r:return json.load(r)
           assert api('/git/ref/heads/feature/am-model-level-3d-transforms')['object']['sha']==parent,'PR head changed'
-          subprocess.run(['git','add','toonz/sources'],check=True)
+          subprocess.run(['git','add','toonz/sources','.github/workflows/workflow_linux.yml','doc/ot3d/AM_MODEL_LEVEL.md'],check=True)
           changed=subprocess.check_output(['git','diff','--cached','--name-only'],text=True).splitlines()
-          assert all(p.startswith('toonz/sources/') and p.endswith(('.cpp','.h','CMakeLists.txt')) for p in changed),changed
+          extra={'.github/workflows/workflow_linux.yml','doc/ot3d/AM_MODEL_LEVEL.md'}
+          assert all(p in extra or (p.startswith('toonz/sources/') and p.endswith(('.cpp','.h','CMakeLists.txt'))) for p in changed),changed
           entries=[]
           for p in changed:
               blob=api('/git/blobs',{'content':Path(p).read_text(),'encoding':'utf-8'})
@@ -102,3 +105,8 @@ jobs:
           print('FILES',changed)
           print('No branch reference updated.')
           PY
+      - uses: actions/cache/save@v5
+        if: always()
+        with:
+          path: /home/runner/.ccache
+          key: Linux-clang-${{ github.sha }}
