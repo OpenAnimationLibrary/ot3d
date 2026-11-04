@@ -20,18 +20,16 @@ jobs:
         run: |
           python3 - <<'PY'
           import base64,gzip,hashlib,json,os,subprocess,urllib.request
-          from pathlib import Path
           def blob(sha):
               url='https://api.github.com/repos/OpenAnimationLibrary/ot3d/git/blobs/'+sha
               req=urllib.request.Request(url,headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json'})
-              with urllib.request.urlopen(req) as r: return base64.b64decode(json.load(r)['content'])
+              with urllib.request.urlopen(req) as r:return base64.b64decode(json.load(r)['content'])
           patch=gzip.decompress(blob('4045443b329c4245dcc3ba369e765ce3f5e459da'))
           assert hashlib.sha256(patch).hexdigest()=='ed7fce334302a4816bac9d2ff1d54681fb1b06410f4273d4b1319e8118469222'
           subprocess.run(['git','apply','--ignore-space-change','--check','-'],input=patch,check=True)
           subprocess.run(['git','apply','--ignore-space-change','-'],input=patch,check=True)
-          for sha in ['1b5f7e28ba1ba21446a36a9a37424b25165e1ad1','d1a0bbbe8e6eb74e81229ec144775831e5f7155b']:
+          for sha in ['1b5f7e28ba1ba21446a36a9a37424b25165e1ad1','d1a0bbbe8e6eb74e81229ec144775831e5f7155b','d088ce85564e941e6b6ae7d89c7727045fec0d7d']:
               subprocess.run(['python3','-'],input=blob(sha),check=True)
-          Path('/tmp/repair-test-session.py').write_bytes(blob('d088ce85564e941e6b6ae7d89c7727045fec0d7d'))
           PY
       - name: Install native build dependencies
         run: |
@@ -49,13 +47,13 @@ jobs:
           import re,subprocess
           subprocess.run(['git','add','toonz/sources','.github/workflows/workflow_linux.yml','doc/ot3d/AM_MODEL_LEVEL.md'],check=True)
           for path in subprocess.check_output(['git','diff','--cached','--name-only'],text=True).splitlines():
-              if not path.endswith(('.cpp','.h')): continue
+              if not path.endswith(('.cpp','.h')):continue
               diff=subprocess.check_output(['git','diff','--cached','--unified=0','--',path],text=True)
               ranges=[]
               for start,count in re.findall(r'^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@',diff,re.M):
                   count=int(count or 1)
-                  if count: ranges.append(f'--lines={start}:{int(start)+count-1}')
-              if ranges: subprocess.run(['clang-format-14','-i','-style=file',*ranges,path],check=True)
+                  if count:ranges.append(f'--lines={start}:{int(start)+count-1}')
+              if ranges:subprocess.run(['clang-format-14','-i','-style=file',*ranges,path],check=True)
           PY
           git diff --check
           (cd thirdparty/tiff-4.0.3 && CFLAGS=-fPIC CXXFLAGS=-fPIC ./configure --disable-jbig && make -j2) > /tmp/tiff.log 2>&1 || { tail -60 /tmp/tiff.log; exit 1; }
@@ -66,27 +64,27 @@ jobs:
         run: |
           cmake --build toonz/build --target amlevel_test amfx_test tnztools tnzstdfx glbmodelfx_test threepointlightfx_test transform3dfx_test --parallel 2 > /tmp/native-build.log 2>&1 || { tail -120 /tmp/native-build.log; exit 1; }
           echo 'Native production libraries and regression executables compiled.'
-      - name: Trace renderer-wrapper requirements in standalone level test
+      - name: Trace remaining native test failure
         env:
           QT_QPA_PLATFORM: offscreen
         run: |
           test -x toonz/build/bin/amlevel_test
-          gdb --batch --quiet -ex run -ex 'bt 12' --args toonz/build/bin/amlevel_test || true
-      - name: Initialize the production renderer session in the native test
-        env:
-          CCACHE_DIR: /home/runner/.ccache
-        run: |
-          python3 /tmp/repair-test-session.py
-          clang-format-14 -i -style=file toonz/sources/am/tests/amlevel_test.cpp
-          cmake --build toonz/build --target amlevel_test --parallel 2 > /tmp/test-build.log 2>&1 || { tail -80 /tmp/test-build.log; exit 1; }
-      - name: Run native acceptance tests
+          gdb --batch --quiet -ex run -ex 'bt 20' --args toonz/build/bin/amlevel_test || true
+      - name: Run every native acceptance test
         env:
           QT_QPA_PLATFORM: offscreen
         run: |
-          ctest --test-dir toonz/build --output-on-failure -R '^(amlevel|amfx)$' --repeat until-fail:3
-          toonz/build/bin/glbmodelfx_test
-          toonz/build/bin/threepointlightfx_test
-          toonz/build/bin/transform3dfx_test
+          python3 - <<'PY'
+          import subprocess,sys
+          tests=[['ctest','--test-dir','toonz/build','--output-on-failure','-R','^(amlevel|amfx)$','--repeat','until-fail:3']]
+          tests += [['toonz/build/bin/'+name+'_test'] for name in ['glbmodelfx','threepointlightfx','transform3dfx']]
+          failed=[]
+          for args in tests:
+              result=subprocess.run(args)
+              print('NATIVE_RESULT',args,result.returncode,flush=True)
+              if result.returncode:failed.append(args)
+          sys.exit(bool(failed))
+          PY
       - name: Prepare verified commit without updating a branch
         env:
           GH_TOKEN: ${{ github.token }}
