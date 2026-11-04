@@ -38,6 +38,19 @@ Vec transform(Vec p, const ModelTransform &t) {
   p               = {cz * p.x - sz * p.y, sz * p.x + cz * p.y, p.z};
   return {p.x + t.position[0], p.y + t.position[1], p.z + t.position[2]};
 }
+Vec inverseTransform(Vec p, const ModelTransform &t) {
+  const double sx = std::sin(t.rotation[0] * Pi / 180.0);
+  const double cx = std::cos(t.rotation[0] * Pi / 180.0);
+  const double sy = std::sin(t.rotation[1] * Pi / 180.0);
+  const double cy = std::cos(t.rotation[1] * Pi / 180.0);
+  const double sz = std::sin(t.rotation[2] * Pi / 180.0);
+  const double cz = std::cos(t.rotation[2] * Pi / 180.0);
+  p = {p.x - t.position[0], p.y - t.position[1], p.z - t.position[2]};
+  p = {cz * p.x + sz * p.y, -sz * p.x + cz * p.y, p.z};
+  p = {cy * p.x - sy * p.z, p.y, sy * p.x + cy * p.z};
+  p = {p.x, cx * p.y + sx * p.z, -sx * p.y + cx * p.z};
+  return {p.x / t.scale[0], p.y / t.scale[1], p.z / t.scale[2]};
+}
 struct Instance {
   const RenderOptions &o;
   double sx, cx, sy, cy, sz, cz;
@@ -52,8 +65,12 @@ struct Instance {
     p = {cy * p.x + sy * p.z, p.y, -sy * p.x + cy * p.z};
     p = {cz * p.x - sz * p.y, sz * p.x + cz * p.y, p.z};
     p = {p.x + o.position[0], p.y + o.position[1], p.z + o.position[2]};
-    for (const auto &additional : o.transforms) p = transform(p, additional);
-    return {p.x, p.y, p.z - o.cameraDistance};
+    for (const auto &additional : o.transforms)
+      if (!additional.camera) p = transform(p, additional);
+    p.z -= o.cameraDistance;
+    for (const auto &additional : o.transforms)
+      if (additional.camera) p = inverseTransform(p, additional);
+    return p;
   }
 };
 
@@ -485,10 +502,14 @@ RenderScene prepareImagePlane(
   std::array<ProjectedVertex, 4> projected;
   for (int i = 0; i < 4; ++i) {
     Vec p = corners[i];
-    for (const auto &t : transforms) p = transform(p, t);
+    for (const auto &t : transforms)
+      if (!t.camera) p = transform(p, t);
+    p.z -= 10.0;
+    for (const auto &t : transforms)
+      if (t.camera) p = inverseTransform(p, t);
     // Keep geometry behind or crossing the camera out of the rasterizer.
-    if (p.z >= 9.9) return scene;
-    projected[i] = {p.x * 100.0, p.y * 100.0, p.z - 10.0};
+    if (p.z >= -0.1) return scene;
+    projected[i] = {p.x * 100.0, p.y * 100.0, p.z};
   }
   const std::array<std::array<double, 2>, 4> uv{
       {{{0, 0}}, {{1, 0}}, {{1, 1}}, {{0, 1}}}};

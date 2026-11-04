@@ -387,7 +387,7 @@ bool isGlobalKeyFrameWithSameTypeDiffFromLinear(TStageObject *stageObject,
                   ->getKeyframeAt(frame)
                   .m_type)
     return false;
-  if (stageObject->isAMTransformEnabled())
+  if (stageObject->is3DTransformEnabled())
     for (int i = TStageObject::T_RotationX; i < TStageObject::T_ChannelCount;
          ++i)
       if (type != stageObject->getParam(static_cast<TStageObject::Channel>(i))
@@ -446,7 +446,7 @@ bool isGlobalKeyFrameWithSamePrevTypeDiffFromLinear(TStageObject *stageObject,
                   ->getKeyframeAt(frame)
                   .m_prevType)
     return false;
-  if (stageObject->isAMTransformEnabled())
+  if (stageObject->is3DTransformEnabled())
     for (int i = TStageObject::T_RotationX; i < TStageObject::T_ChannelCount;
          ++i)
       if (type != stageObject->getParam(static_cast<TStageObject::Channel>(i))
@@ -4347,7 +4347,7 @@ void CellArea::onStepChanged(QAction *act) {
                  stageObject->getParam(TStageObject::T_ShearY));
   }
 
-  if (stageObject->isAMTransformEnabled()) {
+  if (stageObject->is3DTransformEnabled()) {
     for (int i = TStageObject::T_RotationX; i < TStageObject::T_ChannelCount;
          ++i) {
       param = stageObject->getParam(static_cast<TStageObject::Channel>(i));

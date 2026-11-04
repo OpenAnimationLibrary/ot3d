@@ -971,7 +971,7 @@ void PegbarChannelField::onChange(TMeasuredValue *fld, bool addToUndo) {
   if (!m_tool->isEnabled()) return;
   auto *stageObject =
       m_tool->getXsheet()->getStageObject(m_tool->getObjectId());
-  const bool isModel = stageObject->isAMTransformEnabled();
+  const bool isModel = stageObject->is3DTransformEnabled();
   if (TStageObject::isAMChannel(m_actionId) && !isModel) return;
   auto *globalProperty = dynamic_cast<TBoolProperty *>(
       m_tool->getProperties(0)->getProperty("Global Key"));

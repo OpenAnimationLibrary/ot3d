@@ -438,6 +438,39 @@ Matrix multiply(const Matrix &a, const Matrix &b) {
       for (int k = 0; k < 4; ++k) m[4 * r + c] += a[4 * r + k] * b[4 * k + c];
   return m;
 }
+Matrix inverse(const Matrix &m) {
+  for (double v : m)
+    if (!std::isfinite(v)) fail("non-finite camera pose");
+  if (m[12] != 0 || m[13] != 0 || m[14] != 0 || m[15] != 1)
+    fail("camera pose must be affine");
+  const double a = m[0], b = m[1], c = m[2];
+  const double d = m[4], e = m[5], f = m[6];
+  const double g = m[8], h = m[9], i = m[10];
+  const double det =
+      a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
+  const double norm = std::max({std::abs(a), std::abs(b), std::abs(c)}) *
+                      std::max({std::abs(d), std::abs(e), std::abs(f)}) *
+                      std::max({std::abs(g), std::abs(h), std::abs(i)});
+  if (!std::isfinite(det) || !(norm > 0) || !std::isfinite(norm) ||
+      std::abs(det) <= 1e-12 * norm)
+    fail("singular camera pose");
+  Matrix r = identity();
+  r[0]     = (e * i - f * h) / det;
+  r[1]     = (c * h - b * i) / det;
+  r[2]     = (b * f - c * e) / det;
+  r[4]     = (f * g - d * i) / det;
+  r[5]     = (a * i - c * g) / det;
+  r[6]     = (c * d - a * f) / det;
+  r[8]     = (d * h - e * g) / det;
+  r[9]     = (b * g - a * h) / det;
+  r[10]    = (a * e - b * d) / det;
+  for (int row = 0; row < 3; ++row)
+    r[row * 4 + 3] =
+        -(r[row * 4] * m[3] + r[row * 4 + 1] * m[7] + r[row * 4 + 2] * m[11]);
+  for (double v : r)
+    if (!std::isfinite(v)) fail("invalid inverse camera pose");
+  return r;
+}
 Matrix translation(double x, double y, double z) {
   auto m = identity();
   m[3]   = x;
@@ -514,6 +547,15 @@ Mesh projected(const Mesh &mesh, double cx, double cy, double cz, double focus,
           {{{polygon[0], polygon[i], polygon[i + 1]}}, t.color, t.patch});
   }
   return out;
+}
+Mesh projected(const Mesh &mesh, const Matrix &cameraToWorld,
+               const Matrix &imageToStage, double focus, double nearPlane) {
+  // Reuse the proven near-plane clipper with the optical origin moved to the
+  // legacy focus coordinate; projection still happens only after view rotation.
+  const auto view = multiply(translation(0, 0, focus), inverse(cameraToWorld));
+  return transformed(
+      projected(transformed(mesh, view), 0, 0, 0, focus, nearPlane),
+      imageToStage);
 }
 std::vector<std::array<float, 4>> rasterize(const Mesh &mesh, int width,
                                             int height) {

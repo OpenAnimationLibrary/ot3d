@@ -2623,7 +2623,7 @@ class Transform3DFxGadget final : public FxGadget {
   TDoubleParamP m_position[3];
   TDoubleParamP m_rotation[3];
   TDoubleParamP m_scale[3];
-  TIntEnumParamP m_mode;
+  TIntEnumParamP m_mode, m_target;
 
   enum Handle { XAxis = 0, YAxis, ZAxis, Center, None } m_handle = None;
 
@@ -2636,6 +2636,7 @@ class Transform3DFxGadget final : public FxGadget {
   static constexpr double PositionToCanvas = 100.0;
 
   int mode() const { return m_mode->getValue(); }
+  bool cameraTarget() const { return m_target && m_target->getValue() == 1; }
   TPointD center() const {
     return TPointD(getValue(m_position[0]) * PositionToCanvas,
                    getValue(m_position[1]) * PositionToCanvas);
@@ -2690,11 +2691,19 @@ public:
     }
     m_mode = TIntEnumParamP(concept.m_params[9]);
     m_mode->addObserver(this);
+    if (concept.m_params.size() == 11) {
+      m_target = TIntEnumParamP(concept.m_params[10]);
+      m_target->addObserver(this);
+    }
   }
 
-  ~Transform3DFxGadget() override { m_mode->removeObserver(this); }
+  ~Transform3DFxGadget() override {
+    m_mode->removeObserver(this);
+    if (m_target) m_target->removeObserver(this);
+  }
 
   void draw(bool picking) override {
+    if (cameraTarget()) return;
     setPixelSize();
     const double unit     = getPixelSize();
     const double length   = 64.0 * unit;
@@ -2766,6 +2775,10 @@ public:
   }
 
   void leftButtonDown(const TPointD &pos, const TMouseEvent &) override {
+    if (cameraTarget()) {
+      m_handle = None;
+      return;
+    }
     m_handle = static_cast<Handle>(m_selected);
     if (m_handle == None) return;
     m_clickedPos    = pos;
@@ -2779,7 +2792,7 @@ public:
   }
 
   void leftButtonDrag(const TPointD &pos, const TMouseEvent &event) override {
-    if (m_handle == None) return;
+    if (cameraTarget() || m_handle == None) return;
     const TPointD delta   = pos - m_clickedPos;
     const int currentMode = mode();
 
@@ -3094,7 +3107,7 @@ FxGadget *FxGadgetController::allocateGadget(const TParamUIConcept &uiConcept) {
   }
 
   case TParamUIConcept::TRANSFORM_3D: {
-    assert(uiConcept.m_params.size() == 10);
+    assert(uiConcept.m_params.size() == 10 || uiConcept.m_params.size() == 11);
     gadget = new Transform3DFxGadget(this, uiConcept);
     break;
   }

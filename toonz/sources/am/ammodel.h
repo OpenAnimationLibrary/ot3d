@@ -80,6 +80,8 @@ Mesh previewMesh(const Document &document, std::size_t model = 0,
                  unsigned subdivisions = 6, const Limits &limits = Limits());
 Matrix identity();
 Matrix multiply(const Matrix &a, const Matrix &b);
+// Finite affine matrices only. Throws for a singular camera pose.
+Matrix inverse(const Matrix &matrix);
 Matrix translation(double x, double y, double z);
 Matrix scaling(double x, double y, double z);
 Matrix rotation(double xDegrees, double yDegrees, double zDegrees);
@@ -90,6 +92,12 @@ Mesh transformed(const Mesh &mesh, const Matrix &matrix);
 // distance for screen-space depth testing.
 Mesh projected(const Mesh &mesh, double cameraX, double cameraY, double cameraZ,
                double focus = 1000.0, double nearPlane = 1.0);
+// Optical camera pose, looking along local -Z. imageToStage embeds the
+// legacy output-plane affine so the downstream OT camera affine is applied
+// exactly once. It must preserve depth (the Z coordinate).
+Mesh projected(const Mesh &mesh, const Matrix &cameraToWorld,
+               const Matrix &imageToStage, double focus = 1000.0,
+               double nearPlane = 1.0);
 // Tile-local triangle rasterization. Larger z is closer. Transparent
 // background. Capacity and finite-coordinate validation are applied before
 // writing pixels.

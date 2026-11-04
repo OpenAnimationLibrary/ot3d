@@ -1,6 +1,7 @@
 <fxlayout>
   <page name="Transform">
-    <label>"Model-space transform for a compatible 3D source. Select the Edit Tool to manipulate the active gizmo in the canvas."</label>
+    <label>"Geometry transforms the input model. Camera adjusts the input camera in its local axes, before projection; it does not change the scene camera or model data. Camera mode uses the numeric controls."</label>
+    <control>target</control>
     <control>gizmoMode</control>
     <separator label="Position"/>
     <control>positionX</control>

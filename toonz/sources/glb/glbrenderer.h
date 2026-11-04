@@ -42,10 +42,13 @@ struct ModelTransform {
   std::array<double, 3> position{};
   std::array<double, 3> rotation{};  // Degrees, applied X then Y then Z.
   std::array<double, 3> scale{{1.0, 1.0, 1.0}};
+  // Camera-local pose delta, composed after the source camera pose. Geometry
+  // transforms remain in source order; camera deltas are inverted for viewing.
+  bool camera = false;
 
   bool operator==(const ModelTransform &other) const {
     return position == other.position && rotation == other.rotation &&
-           scale == other.scale;
+           scale == other.scale && camera == other.camera;
   }
 };
 

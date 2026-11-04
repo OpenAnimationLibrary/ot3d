@@ -80,3 +80,12 @@ render cancellation use the normal FX framework paths.
    model; verify lighting follows the transformed face geometry.
 6. Save/reopen, duplicate the node, save/load a preset, and test 8-bit, 16-bit and
    floating-point output. Confirm the GLB file remains unchanged.
+
+## Camera target (OT3D)
+
+The Target selector defaults to Geometry for existing scenes. Camera instead
+composes a local pose adjustment on the source camera and applies its inverse
+before projection. It works on native model, GLB and Image Plane source paths;
+no global stage-camera state is modified. Camera mode uses the keyable numeric
+controls and hides the model-origin canvas gizmo. See
+[Spatial camera controls](ot3d/SPATIAL_CAMERA.md) for units and current boundaries.

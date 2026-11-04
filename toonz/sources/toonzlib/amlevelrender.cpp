@@ -18,6 +18,54 @@
 #include <limits>
 #include <stdexcept>
 
+namespace {
+struct ModelCamera {
+  otam::Matrix pose         = otam::translation(0, 0, 1000);
+  otam::Matrix imageToStage = otam::identity();
+};
+ModelCamera modelCamera(TXsheet *xsheet, double frame, bool preview) {
+  const auto id =
+      preview ? xsheet->getStageObjectTree()->getCurrentPreviewCameraId()
+              : xsheet->getStageObjectTree()->getCurrentCameraId();
+  auto *camera          = xsheet->getStageObject(id);
+  const double distance = 1000.0 + camera->getZ(frame);
+  if (!std::isfinite(distance) || distance <= 0)
+    throw std::runtime_error(
+        "Spatial camera must remain in front of its film plane");
+  ModelCamera result;
+  // The historical optical offset belongs to the camera's parent space.
+  // A spatial parent must move the eye with the rig, not rotate the world
+  // around a fixed eye. The animated Z channel itself remains unchanged.
+  const auto parentId = camera->getParent();
+  const auto parent =
+      parentId == TStageObjectId::NoneId
+          ? otam::identity()
+          : xsheet->getStageObject(parentId)->getAMPlacement(frame);
+  const auto opticalOffset = otam::multiply(
+      parent,
+      otam::multiply(otam::translation(0, 0, 1000), otam::inverse(parent)));
+  result.pose  = otam::multiply(opticalOffset, camera->getAMPlacement(frame));
+  const auto a = camera->getPlacement(frame) * TScale(distance / 1000.0);
+  result.imageToStage = {
+      {a.a11, a.a12, 0, a.a13, a.a21, a.a22, 0, a.a23, 0, 0, 1, 0, 0, 0, 0, 1}};
+  return result;
+}
+otam::Matrix modelTransform(const otglb::ModelTransform &t) {
+  for (double v : t.position)
+    if (!std::isfinite(v)) throw std::runtime_error("Invalid 3D position");
+  for (double v : t.rotation)
+    if (!std::isfinite(v)) throw std::runtime_error("Invalid 3D rotation");
+  for (double v : t.scale)
+    if (!std::isfinite(v) || v <= 0)
+      throw std::runtime_error("3D scale must be positive and finite");
+  return otam::multiply(
+      otam::translation(t.position[0], t.position[1], t.position[2]),
+      otam::multiply(
+          otam::rotation(t.rotation[0], t.rotation[1], t.rotation[2]),
+          otam::scaling(t.scale[0], t.scale[1], t.scale[2])));
+}
+}  // namespace
+
 std::shared_ptr<const otam::Mesh> prepareAMLevelGeometry(TXsheet *xsheet,
                                                          int column,
                                                          double frame,
@@ -42,14 +90,8 @@ std::shared_ptr<const otam::Mesh> prepareAMLevelGeometry(TXsheet *xsheet,
          otam::scaling(units * noScale, units * noScale, units * noScale));
   auto result = std::make_shared<otam::Mesh>(otam::transformed(*mesh, matrix));
   if (projectToCamera) {
-    const auto cameraId =
-        previewCamera
-            ? xsheet->getStageObjectTree()->getCurrentPreviewCameraId()
-            : xsheet->getStageObjectTree()->getCurrentCameraId();
-    auto *camera      = xsheet->getStageObject(cameraId);
-    const auto affine = camera->getPlacement(frame);
-    *result =
-        otam::projected(*result, affine.a13, affine.a23, camera->getZ(frame));
+    const auto camera = modelCamera(xsheet, frame, previewCamera);
+    *result = otam::projected(*result, camera.pose, camera.imageToStage);
   }
   return result;
 }
@@ -60,7 +102,7 @@ std::shared_ptr<const otam::Mesh> prepareAMLevelGeometry(TXsheet *xsheet,
 class AMLevelRenderFx final : public TRasterFx, public T3DRenderSource {
   FX_DECLARATION(AMLevelRenderFx)
   std::shared_ptr<const otam::Mesh> m_geometry;
-  otam::Vec3 m_camera{{0, 0, 0}};
+  ModelCamera m_camera;
   bool m_project         = false;
   TPixel32 m_colorFilter = TPixel32::Black;
   std::string m_key;
@@ -68,7 +110,7 @@ class AMLevelRenderFx final : public TRasterFx, public T3DRenderSource {
 public:
   AMLevelRenderFx() { enableComputeInFloat(true); }
   void setGeometry(std::shared_ptr<const otam::Mesh> geometry,
-                   bool project = false, otam::Vec3 camera = {{0, 0, 0}}) {
+                   bool project = false, ModelCamera camera = ModelCamera()) {
     m_geometry = std::move(geometry);
     m_project  = project;
     m_camera   = camera;
@@ -81,8 +123,10 @@ public:
         hash.addData(reinterpret_cast<const char *>(triangle.color.data()),
                      int(3 * sizeof(float)));
       }
-    hash.addData(reinterpret_cast<const char *>(m_camera.data()),
-                 int(3 * sizeof(double)));
+    hash.addData(reinterpret_cast<const char *>(m_camera.pose.data()),
+                 int(16 * sizeof(double)));
+    hash.addData(reinterpret_cast<const char *>(m_camera.imageToStage.data()),
+                 int(16 * sizeof(double)));
     hash.addData(m_project ? "world" : "projected");
     m_key = hash.result().toHex().toStdString();
   }
@@ -109,16 +153,21 @@ public:
       const TRenderSettings * = nullptr) const override {
     if (!m_geometry || (canceled && *canceled)) return {};
     otam::Mesh mesh = *m_geometry;
+    auto cameraPose = m_camera.pose;
     if (transforms)
       for (const auto &t : *transforms) {
         if (canceled && *canceled) return {};
-        // Additional FX transforms are applied in order, before projection.
-        const auto matrix = otam::multiply(
-            otam::translation(t.position[0], t.position[1], t.position[2]),
-            otam::multiply(
-                otam::rotation(t.rotation[0], t.rotation[1], t.rotation[2]),
-                otam::scaling(t.scale[0], t.scale[1], t.scale[2])));
-        mesh = otam::transformed(mesh, matrix);
+        const auto matrix = modelTransform(t);
+        if (t.camera) {
+          if (!m_project)
+            throw std::runtime_error(
+                "Camera transforms require unprojected model geometry");
+          // Camera-local deltas compose in source-to-output order. Their
+          // inverse is applied to geometry, never a negated model transform.
+          cameraPose = otam::multiply(cameraPose, matrix);
+        } else {
+          mesh = otam::transformed(mesh, matrix);
+        }
       }
     if (lighting) {
       if (!std::isfinite(lighting->ambient) || lighting->ambient < 0 ||
@@ -126,6 +175,8 @@ public:
         throw std::runtime_error("Invalid A:M preview lighting");
       for (auto &triangle : mesh.triangles) {
         if (canceled && *canceled) return {};
+        // Preserve the native preview's world-space light directions. Camera
+        // motion changes the eye/facing, not the authored lighting rig.
         const auto &a = triangle.vertices[0];
         const auto &b = triangle.vertices[1];
         const auto &c = triangle.vertices[2];
@@ -136,9 +187,9 @@ public:
         const double length =
             std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
         if (length < 1e-15) continue;
-        const otam::Vec3 view{{m_camera[0] - (a[0] + b[0] + c[0]) / 3,
-                               m_camera[1] - (a[1] + b[1] + c[1]) / 3,
-                               1000 + m_camera[2] - (a[2] + b[2] + c[2]) / 3}};
+        const otam::Vec3 view{{cameraPose[3] - (a[0] + b[0] + c[0]) / 3,
+                               cameraPose[7] - (a[1] + b[1] + c[1]) / 3,
+                               cameraPose[11] - (a[2] + b[2] + c[2]) / 3}};
         const double facing = n[0] * view[0] + n[1] * view[1] + n[2] * view[2];
         for (double &v : n) v /= facing < 0 ? -length : length;
         std::array<double, 3> energy{
@@ -166,7 +217,7 @@ public:
       }
     }
     if (m_project)
-      mesh = otam::projected(mesh, m_camera[0], m_camera[1], m_camera[2]);
+      mesh = otam::projected(mesh, cameraPose, m_camera.imageToStage);
     auto scene        = std::make_shared<otglb::RenderScene>();
     scene->warnings   = mesh.warnings;
     scene->colorScale = {{m_colorFilter.r / 255.f, m_colorFilter.g / 255.f,
@@ -262,14 +313,9 @@ TRasterFx *makeAMLevelRenderFx(TXsheet *xsheet, int column, double frame,
                                bool previewCamera) {
   auto geometry = prepareAMLevelGeometry(xsheet, column, frame, false);
   if (!geometry) return nullptr;
-  const auto id =
-      previewCamera ? xsheet->getStageObjectTree()->getCurrentPreviewCameraId()
-                    : xsheet->getStageObjectTree()->getCurrentCameraId();
-  auto *camera      = xsheet->getStageObject(id);
-  const auto affine = camera->getPlacement(frame);
-  auto fx           = std::make_unique<AMLevelRenderFx>();
+  auto fx = std::make_unique<AMLevelRenderFx>();
   fx->setGeometry(std::move(geometry), true,
-                  {{affine.a13, affine.a23, camera->getZ(frame)}});
+                  modelCamera(xsheet, frame, previewCamera));
   return fx.release();
 }
 bool setAMLevelColorFilter(TRasterFx *fx, const TPixel32 &color) {

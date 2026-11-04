@@ -103,6 +103,52 @@ int main() {
     crossing.triangles[0].vertices[0][2] = 1100;
     check(otam::projected(crossing, 0, 0, 0).triangles.size() == 2,
           "near clipping lost visible part");
+    // Full optical camera pose: inverse TRS, clipping after rotation, and
+    // exact historical framing with zero out-of-plane angles.
+    const auto pose = otam::multiply(
+        otam::translation(30, -40, 1100),
+        otam::multiply(otam::rotation(23, -31, 17), otam::scaling(2, 3, 0.5)));
+    const auto inv  = otam::inverse(pose);
+    const auto unit = otam::multiply(inv, pose);
+    for (int k = 0; k < 16; ++k) near(unit[k], otam::identity()[k]);
+    rejects([&] { otam::inverse(otam::scaling(1, 0, 1)); });
+    const auto cameraMesh =
+        otam::transformed(mesh, otam::translation(0, 0, -1000));
+    auto cameraProjection = otam::projected(otam::transformed(cameraMesh, pose),
+                                            pose, otam::identity());
+    check(cameraProjection.triangles.size() == mesh.triangles.size(),
+          "camera lost front-facing geometry");
+    for (std::size_t t = 0; t < mesh.triangles.size(); ++t)
+      for (int v = 0; v < 3; ++v) {
+        near(cameraProjection.triangles[t].vertices[v][0],
+             mesh.triangles[t].vertices[v][0]);
+        near(cameraProjection.triangles[t].vertices[v][1],
+             mesh.triangles[t].vertices[v][1]);
+      }
+    const auto planar = otam::multiply(
+        otam::translation(12, -17, 0),
+        otam::multiply(otam::rotation(0, 0, 37), otam::scaling(2, 3, 1)));
+    const auto oldMesh = otam::transformed(mesh, otam::translation(0, 0, 230));
+    const auto oldProjection = otam::projected(oldMesh, 12, -17, 100);
+    cameraProjection         = otam::projected(
+                oldMesh, otam::multiply(otam::translation(0, 0, 1100), planar),
+                otam::multiply(planar, otam::scaling(1.1, 1.1, 1)));
+    for (std::size_t t = 0; t < oldProjection.triangles.size(); ++t)
+      for (int v = 0; v < 3; ++v)
+        for (int k = 0; k < 3; ++k)
+          near(cameraProjection.triangles[t].vertices[v][k],
+               oldProjection.triangles[t].vertices[v][k]);
+    const auto back = otam::multiply(otam::translation(0, 0, 1000),
+                                     otam::rotation(0, 180, 0));
+    check(otam::projected(mesh, back, otam::identity()).triangles.empty(),
+          "back-facing camera rendered behind its eye");
+    auto eyeCrossing = cameraMesh;
+    eyeCrossing.triangles.resize(1);
+    eyeCrossing.triangles[0].vertices[0][2] = 10;
+    check(otam::projected(otam::transformed(eyeCrossing, pose), pose,
+                          otam::identity())
+                  .triangles.size() == 2,
+          "rotated camera clipped away the visible part of a triangle");
     auto pixels = otam::rasterize(
         otam::transformed(mesh, otam::multiply(otam::translation(4, 4, 0),
                                                otam::scaling(3, 3, 1))),

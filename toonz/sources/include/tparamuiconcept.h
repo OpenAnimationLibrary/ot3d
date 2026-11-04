@@ -77,7 +77,8 @@ public:
     PARALLELOGRAM,
 
     // A mode-switchable 3D translation, rotation and scale gizmo.
-    // { [9 TDoubleParamP], TIntEnumParamP }
+    // { [9 TDoubleParamP, TIntEnumParamP mode], TIntEnumParamP target }
+    // Optional target: 0 = geometry; 1 = camera (no model-origin canvas gizmo).
     TRANSFORM_3D,
 
     TYPESCOUNT
