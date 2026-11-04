@@ -1,0 +1,22 @@
+name: Spatial camera development
+on:
+  push:
+    branches: [maintenance/camera-3d-validation]
+    paths: [.github/workflows/camera_3d_validation.yml]
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: 90a36968a101e238d974c4d949a0fad5eb154f82
+          persist-credentials: false
+      - run: git archive --format=zip HEAD -o camera-base.zip
+      - uses: actions/upload-artifact@v6
+        with:
+          name: camera-development-base
+          path: camera-base.zip
+          retention-days: 2
