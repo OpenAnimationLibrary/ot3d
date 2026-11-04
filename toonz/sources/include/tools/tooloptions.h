@@ -68,6 +68,7 @@ class PaletteController;
 class ClickableLabel;
 
 class QLabel;
+class QToolButton;
 class QPushButton;
 class QPropertyAnimation;
 class QFrame;
@@ -225,6 +226,7 @@ class ArrowToolOptionsBox final : public ToolOptionsBox {
   // Rotation
   ClickableLabel *m_rotationLabel;
   PegbarChannelField *m_rotationField;
+  QToolButton *m_amRotationButton;
   ClickableLabel *m_amRotationXLabel;
   PegbarChannelField *m_amRotationXField;
   ClickableLabel *m_amRotationYLabel;

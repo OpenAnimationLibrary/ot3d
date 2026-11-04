@@ -55,6 +55,7 @@
 #include <QToolBar>
 #include <QDockWidget>
 #include <QHBoxLayout>
+#include <QGridLayout>
 #include <QComboBox>
 #include <QLabel>
 #include <QPushButton>
@@ -64,6 +65,11 @@
 #include <QPropertyAnimation>
 #include <QEasingCurve>
 #include <QStackedWidget>
+#include <QMenu>
+#include <QWidgetAction>
+#include "toonz/txshcell.h"
+#include "toonz/txshleveltypes.h"
+#include "toonz/txshcolumn.h"
 
 TEnv::IntVar ArrowGlobalKeyFrame("EditToolGlobalKeyFrame", 0);
 
@@ -492,6 +498,38 @@ ArrowToolOptionsBox::ArrowToolOptionsBox(
   m_amCenterZField->setVisible(false);
   m_amCenterZLabel->setVisible(false);
 
+  m_amRotationButton = new QToolButton(this);
+  m_amRotationButton->setText(tr("3D Rotation"));
+  m_amRotationButton->setToolTip(
+      tr("Rotate the model about X, Y or Z. The standard canvas rotation "
+         "remains Z."));
+  m_amRotationButton->setPopupMode(QToolButton::InstantPopup);
+  auto *rotationMenu   = new QMenu(m_amRotationButton);
+  auto *rotationPanel  = new QWidget(rotationMenu);
+  auto *rotationLayout = new QGridLayout(rotationPanel);
+  auto *rotationAction = new QWidgetAction(rotationMenu);
+  rotationAction->setDefaultWidget(rotationPanel);
+  rotationMenu->addAction(rotationAction);
+  m_amRotationButton->setMenu(rotationMenu);
+  const TStageObject::Channel rotationChannels[] = {TStageObject::T_RotationX,
+                                                    TStageObject::T_RotationY,
+                                                    TStageObject::T_Angle};
+  const char *rotationNames[]                    = {"X", "Y", "Z"};
+  for (int axis = 0; axis != 3; ++axis) {
+    auto *label = new ClickableLabel(
+        tr("%1 (degrees):").arg(rotationNames[axis]), rotationPanel);
+    auto *field = new PegbarChannelField(m_tool, rotationChannels[axis],
+                                         "field", frameHandle, objHandle,
+                                         xshHandle, rotationPanel);
+    field->setMinimumWidth(90);
+    rotationLayout->addWidget(label, axis, 0);
+    rotationLayout->addWidget(field, axis, 1);
+    connectLabelAndField(label, field);
+    connect(rotationMenu, &QMenu::aboutToShow, field,
+            [field]() { field->updateStatus(); });
+  }
+  m_amRotationButton->hide();
+
   /* --- Scale --- */
   m_globalScaleField =
       new PegbarChannelField(m_tool, TStageObject::T_Scale, "field",
@@ -625,6 +663,7 @@ ArrowToolOptionsBox::ArrowToolOptionsBox(
   QHBoxLayout *mainLay = m_layout;
   {
     mainLay->addWidget(m_currentStageObjectCombo, 0);
+    mainLay->addWidget(m_amRotationButton, 0);
     mainLay->addWidget(m_chooseActiveAxisCombo, 0);
 
     // Pick combobox only available on "All" axis mode
@@ -965,7 +1004,19 @@ bool ArrowToolOptionsBox::isCurrentObjectSplined() const {
 void ArrowToolOptionsBox::updateStatus() {
   auto *object =
       m_xshHandle->getXsheet()->getStageObject(m_objHandle->getObjectId());
-  const bool model = object && object->isAMTransformEnabled();
+  // Derive the capability from the actual column as well as the stored flag.
+  // Undo/column restoration can replace a stage object after cells were loaded.
+  const auto objectId = m_objHandle->getObjectId();
+  auto *column        = objectId.isColumn()
+                            ? m_xshHandle->getXsheet()->getColumn(objectId.getIndex())
+                            : nullptr;
+  auto *cells         = column ? column->getCellColumn() : nullptr;
+  int first = 0, last = -1;
+  const bool model = cells && cells->getRange(first, last) > 0 &&
+                     !cells->getCell(first).isEmpty() &&
+                     cells->getCell(first).m_level->getType() == AM_XSHLEVEL;
+  if (object && objectId.isColumn()) object->enableAMTransform(model);
+  m_amRotationButton->setVisible(model);
   m_amRotationXLabel->setVisible(model);
   m_amRotationXField->setVisible(model);
   m_amRotationXField->setEnabled(model);

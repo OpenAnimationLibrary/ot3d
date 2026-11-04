@@ -410,4 +410,4 @@ endif()
 target_link_libraries(toonzlib OpenEXR::OpenEXR)
 
 # Native A:M parsing and shared spatial evaluation, without SDK runtime.
-target_link_libraries(toonzlib otam)
+target_link_libraries(toonzlib otam otglb)

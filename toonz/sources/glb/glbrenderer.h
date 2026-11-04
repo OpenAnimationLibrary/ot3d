@@ -92,6 +92,10 @@ struct ColorPixel {
   float r = 0, g = 0, b = 0, alpha = 0;  // Premultiplied sRGB.
 };
 struct RenderScene {
+  // Screen-style RGB tint and opacity, applied once after coverage sampling.
+  // Default is identity. Native model columns use this instead of a raster
+  // wrapper which would prevent downstream geometry transforms/lighting.
+  std::array<float, 4> colorScale{{0, 0, 0, 1}};
   std::vector<RenderTriangle> triangles;
   std::array<double, 4> bounds{};  // x0, y0, x1, y1 in the fixed image plane.
   std::vector<std::string> warnings;

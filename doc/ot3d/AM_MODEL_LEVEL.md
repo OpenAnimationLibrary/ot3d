@@ -145,3 +145,32 @@ scaling (100%/150%). Hooks/five-point and rigged files must show explicit limits
 This remains a **draft experimental feature**, not full native project compliance
 or a production-ready surface evaluator. Older OpenToonz builds do not understand
 `amModelLevel` or the new transform tags; backward round-trip is unsupported.
+
+## Native model FX and accessible XYZ rotation
+
+For an A:M model column, the Animate Tool offers a **3D Rotation** button next
+to the object selector. Its popup exposes X, Y and Z in degrees using the
+existing keyed/undoable channel fields. The ordinary canvas rotation gesture
+still edits Z; this does not add a three-axis canvas manipulator. Ordinary 2D
+columns do not show the model-only control.
+
+Connect the native model column directly to **3D Transform** or **Three Point
+Lighting**, or use **Model -> 3D Transform -> Three Point Lighting**. View FX
+results through Preview/final rendering. The lighting node is a raster output,
+not a geometry source for a later 3D Transform. Unsupported ordinary drawing
+connections are rejected before modifying the connection or undo history.
+The optional connection policy does not change the existing TFxPort vtable.
+
+The render tree retains an immutable world-space preview mesh until downstream
+3D transforms and lighting have been applied, then projects through the native
+camera mapping. Column tint and opacity remain available without hiding the 3D
+source behind a raster-only wrapper. FX translation values operate in stage
+coordinates; column transforms retain their existing units. Rendering uses the
+same bounded tile rasterizer as the other 3D sources. No source .mdl data is
+rewritten. Lighting here is simple two-sided diffuse shading of the experimental
+preview patches, not A:M materials, normals, decals or faithful surface shading.
+
+The native `amfx` regression covers both direct connections, a transform/light
+chain, out-of-plane X/Y rotation, unsupported connection preservation, pixels,
+lighting, clone/opacity behavior, render-tree construction, cancellation and
+empty exposures. Interactive acceptance is still required in a platform build.

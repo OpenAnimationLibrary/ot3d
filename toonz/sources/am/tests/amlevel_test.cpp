@@ -17,6 +17,8 @@
 #include "tstream.h"
 #include "ttile.h"
 #include "traster.h"
+#include "trenderer.h"
+#include "tthread.h"
 #include <QGuiApplication>
 #include <QUrl>
 #include <QTemporaryDir>
@@ -38,9 +40,32 @@ QByteArray readFile(const QString &path) {
   check(f.open(QIODevice::ReadOnly), "read fixture");
   return f.readAll();
 }
+// TRasterFx::compute requires a renderer installed on the calling thread,
+// including its resource-cache and frame lifetime. Match the swatch renderer.
+class NativeRenderSession {
+  TRenderer m_renderer;
+  unsigned long m_id;
+
+public:
+  NativeRenderSession() : m_renderer(1), m_id(TRenderer::buildRenderId()) {
+    m_renderer.enablePrecomputing(false);
+    m_renderer.install(m_id);
+    m_renderer.declareRenderStart(m_id);
+    m_renderer.declareFrameStart(0);
+  }
+  ~NativeRenderSession() {
+    m_renderer.declareFrameEnd(0);
+    m_renderer.declareRenderEnd(m_id);
+    m_renderer.uninstall();
+  }
+  NativeRenderSession(const NativeRenderSession &)            = delete;
+  NativeRenderSession &operator=(const NativeRenderSession &) = delete;
+};
 }  // namespace
 int main(int argc, char **argv) {
   QGuiApplication app(argc, argv);
+  TThread::init();
+  TRenderer::initialize();
   try {
     QTemporaryDir temp;
     check(temp.isValid(), "temporary directory");
@@ -97,7 +122,8 @@ int main(int argc, char **argv) {
       } catch (const TException &) {
         failed = true;
       }
-      check(failed && scene.getLevelSet()->getLevelCount() == castCount,
+      check(failed, "invalid or missing model load did not report an error");
+      check(scene.getLevelSet()->getLevelCount() == castCount,
             "failed model load left a phantom Scene Cast resource");
     }
     auto sourceMesh = level->mesh();
@@ -192,7 +218,10 @@ int main(int argc, char **argv) {
     TRaster32P raster(128, 128);
     TTile tile(raster, TPointD(-64, -64));
     TRenderSettings settings;
-    fx->compute(tile, 0, settings);
+    {
+      NativeRenderSession renderSession;
+      fx->compute(tile, 0, settings);
+    }
     check(raster->pixels(64)[64].m == 255,
           "model final-render adapter did not draw");
     level->save();

@@ -911,9 +911,8 @@ PlacedFx FxBuilder::makePF(TLevelColumnFx *lcfx) {
     // The shared snapshot already includes the model's full 3D placement and
     // per-vertex camera perspective. Do not apply the old planar column affine
     // a second time. FxBuilder applies the camera's final affine once later.
-    auto geometry = prepareAMLevelGeometry(m_xsh, pf.m_columnIndex, m_frame,
-                                           true, m_isPreview);
-    pf.m_fx       = makeAMLevelRenderFx(std::move(geometry));
+    pf.m_fx =
+        makeAMLevelRenderFx(m_xsh, pf.m_columnIndex, m_frame, m_isPreview);
     pf.m_aff      = TAffine();
     columnVisible =
         true;  // Near-plane clipping is per triangle, not per origin.
@@ -995,7 +994,12 @@ PlacedFx FxBuilder::makePF(TLevelColumnFx *lcfx) {
         colorScale.m = (typename TPixel32::Channel)((int)colorScale.m *
                                                     (int)column->getOpacity() /
                                                     TPixel32::maxChannelValue);
-        pf.m_fx      = TFxUtil::makeColumnColorFilter(pf.m_fx, colorScale);
+        // Keep model geometry available to downstream 3D FX; a raster-only
+        // wrapper here would discard the native source contract.
+        if (!amModel ||
+            !setAMLevelColorFilter(
+                dynamic_cast<TRasterFx *>(pf.m_fx.getPointer()), colorScale))
+          pf.m_fx = TFxUtil::makeColumnColorFilter(pf.m_fx, colorScale);
       }
     }
 

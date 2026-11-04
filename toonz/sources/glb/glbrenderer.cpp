@@ -447,6 +447,15 @@ std::vector<ColorPixel> renderTile(const RenderScene &scene, const RenderTile &t
       output[i].b += c.b * 0.25f;
       output[i].alpha += c.alpha * 0.25f;
     }
+  if (scene.colorScale != std::array<float, 4>{{0, 0, 0, 1}}) {
+    const auto &f = scene.colorScale;
+    for (auto &p : output) {
+      p.r = ((1 - f[0]) * p.r + f[0] * p.alpha) * f[3];
+      p.g = ((1 - f[1]) * p.g + f[1] * p.alpha) * f[3];
+      p.b = ((1 - f[2]) * p.b + f[2] * p.alpha) * f[3];
+      p.alpha *= f[3];
+    }
+  }
   return output;
 }
 

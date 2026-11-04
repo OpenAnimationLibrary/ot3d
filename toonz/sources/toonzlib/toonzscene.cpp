@@ -279,7 +279,10 @@ static void deleteAllUntitledScenes() {
 // ToonzScene
 
 ToonzScene::ToonzScene()
-    : m_contentHistory(0), m_isUntitled(true), m_isLoading(false) {
+    : m_contentHistory(0)
+    , m_isUntitled(true)
+    , m_standAlone(false)
+    , m_isLoading(false) {
   m_childStack = new ChildStack(this);
   m_properties = new TSceneProperties();
   m_levelSet   = new TLevelSet();
