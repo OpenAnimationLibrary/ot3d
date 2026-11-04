@@ -14,7 +14,7 @@ jobs:
         with:
           ref: 13c7c54f18bbceabb272a5bb108e2170f60e932d
           persist-credentials: false
-      - name: Apply reviewed integration patch and follow-up
+      - name: Apply reviewed integration patch and follow-ups
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -28,12 +28,13 @@ jobs:
           assert hashlib.sha256(patch).hexdigest()=='ed7fce334302a4816bac9d2ff1d54681fb1b06410f4273d4b1319e8118469222'
           subprocess.run(['git','apply','--ignore-space-change','--check','-'],input=patch,check=True)
           subprocess.run(['git','apply','--ignore-space-change','-'],input=patch,check=True)
-          subprocess.run(['python3','-'],input=blob('1b5f7e28ba1ba21446a36a9a37424b25165e1ad1'),check=True)
+          for sha in ['1b5f7e28ba1ba21446a36a9a37424b25165e1ad1','d1a0bbbe8e6eb74e81229ec144775831e5f7155b']:
+              subprocess.run(['python3','-'],input=blob(sha),check=True)
           PY
       - name: Install native build dependencies
         run: |
           sudo apt-get update -qq > /tmp/apt-update.log 2>&1
-          sudo apt-get install -y build-essential cmake pkg-config ninja-build ccache clang clang-format-14 libboost-all-dev qtbase5-dev qt5-qmake qtscript5-dev qttools5-dev qttools5-dev-tools qtmultimedia5-dev qtwayland5 libqt5svg5-dev libqt5opengl5-dev libqt5multimedia5-plugins libqt5serialport5-dev libsuperlu-dev liblz4-dev libusb-1.0-0-dev liblzo2-dev libpng-dev libjpeg-dev libglew-dev freeglut3-dev libfreetype6-dev libjson-c-dev libmypaint-dev libopencv-dev libturbojpeg-dev libomp-dev > /tmp/apt-install.log 2>&1 || { tail -60 /tmp/apt-install.log; exit 1; }
+          sudo apt-get install -y build-essential cmake pkg-config ninja-build ccache clang clang-format-14 gdb libboost-all-dev qtbase5-dev qt5-qmake qtscript5-dev qttools5-dev qttools5-dev-tools qtmultimedia5-dev qtwayland5 libqt5svg5-dev libqt5opengl5-dev libqt5multimedia5-plugins libqt5serialport5-dev libsuperlu-dev liblz4-dev libusb-1.0-0-dev liblzo2-dev libpng-dev libjpeg-dev libglew-dev freeglut3-dev libfreetype6-dev libjson-c-dev libmypaint-dev libopencv-dev libturbojpeg-dev libomp-dev > /tmp/apt-install.log 2>&1 || { tail -60 /tmp/apt-install.log; exit 1; }
       - uses: actions/cache/restore@v5
         with:
           path: /home/runner/.ccache
@@ -56,31 +57,42 @@ jobs:
           PY
           git diff --check
           (cd thirdparty/tiff-4.0.3 && CFLAGS=-fPIC CXXFLAGS=-fPIC ./configure --disable-jbig && make -j2) > /tmp/tiff.log 2>&1 || { tail -60 /tmp/tiff.log; exit 1; }
-          cmake -S toonz/sources -B toonz/build -G Ninja -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DWITH_TRANSLATION=OFF -DBUILD_AM_TESTS=ON -DBUILD_AM_LEVEL_TESTS=ON > /tmp/configure.log 2>&1 || { tail -90 /tmp/configure.log; exit 1; }
-      - name: Diagnose the existing failed-load assertion
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          p=Path('toonz/sources/am/tests/amlevel_test.cpp')
-          s=p.read_text();Path('/tmp/amlevel-before-diagnostic.cpp').write_text(s)
-          needle='      check(failed && scene.getLevelSet()->getLevelCount() == castCount,'
-          assert s.count(needle)==1
-          s=s.replace(needle,'      std::cerr << "FAILED_LOAD_PROBE " << path.toStdString() << " threw=" << failed << " expected=" << castCount << " actual=" << scene.getLevelSet()->getLevelCount() << " type=" << int(TFileType::getInfo(TFilePath(path))) << "\\n";\n'+needle)
-          p.write_text(s)
-          PY
+          cmake -S toonz/sources -B toonz/build -G Ninja -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DWITH_TRANSLATION=OFF -DBUILD_AM_TESTS=ON -DBUILD_AM_LEVEL_TESTS=ON -DBUILD_GLB_FX_TESTS=ON > /tmp/configure.log 2>&1 || { tail -90 /tmp/configure.log; exit 1; }
       - name: Build production libraries and native regressions
         env:
           CCACHE_DIR: /home/runner/.ccache
         run: |
-          cmake --build toonz/build --target amlevel_test amfx_test tnztools tnzstdfx --parallel 2 > /tmp/native-build.log 2>&1 || { tail -120 /tmp/native-build.log; exit 1; }
+          cmake --build toonz/build --target amlevel_test amfx_test tnztools tnzstdfx glbmodelfx_test threepointlightfx_test transform3dfx_test --parallel 2 > /tmp/native-build.log 2>&1 || { tail -120 /tmp/native-build.log; exit 1; }
           echo 'Native production libraries and regression executables compiled.'
+      - name: Trace renderer-wrapper requirements in standalone level test
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: gdb --batch --quiet -ex run -ex 'bt 12' --args toonz/build/am/amlevel_test || true
+      - name: Use the direct raster entry point without a renderer session
+        env:
+          CCACHE_DIR: /home/runner/.ccache
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('toonz/sources/am/tests/amlevel_test.cpp');s=p.read_text()
+          old='fx->compute(tile, 0, settings);'
+          assert s.count(old)==1
+          p.write_text(s.replace(old,'// This standalone test has no renderer/resource-cache session.\n    fx->doCompute(tile, 0, settings);'))
+          PY
+          clang-format-14 -i -style=file toonz/sources/am/tests/amlevel_test.cpp
+          cmake --build toonz/build --target amlevel_test --parallel 2 > /tmp/test-build.log 2>&1 || { tail -80 /tmp/test-build.log; exit 1; }
       - name: Run native acceptance tests
-        run: ctest --test-dir toonz/build --output-on-failure -R '^(amlevel|amfx)$'
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          ctest --test-dir toonz/build --output-on-failure -R '^(amlevel|amfx)$' --repeat until-fail:3
+          toonz/build/stdfx/glbmodelfx_test
+          toonz/build/stdfx/threepointlightfx_test
+          toonz/build/stdfx/transform3dfx_test
       - name: Prepare verified commit without updating a branch
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cp /tmp/amlevel-before-diagnostic.cpp toonz/sources/am/tests/amlevel_test.cpp
           python3 - <<'PY'
           import json,os,subprocess,urllib.request
           from pathlib import Path
@@ -91,6 +103,7 @@ jobs:
               with urllib.request.urlopen(req,timeout=60) as r:return json.load(r)
           assert api('/git/ref/heads/feature/am-model-level-3d-transforms')['object']['sha']==parent,'PR head changed'
           subprocess.run(['git','add','toonz/sources','.github/workflows/workflow_linux.yml','doc/ot3d/AM_MODEL_LEVEL.md'],check=True)
+          subprocess.run(['git','diff','--cached','--check'],check=True)
           changed=subprocess.check_output(['git','diff','--cached','--name-only'],text=True).splitlines()
           extra={'.github/workflows/workflow_linux.yml','doc/ot3d/AM_MODEL_LEVEL.md'}
           assert all(p in extra or (p.startswith('toonz/sources/') and p.endswith(('.cpp','.h','CMakeLists.txt'))) for p in changed),changed
