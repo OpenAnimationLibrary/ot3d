@@ -1,0 +1,104 @@
+name: A:M FX acceptance preparation
+on:
+  push:
+    branches: [maintenance/am-fx-acceptance]
+    paths: [.github/workflows/am_fx_acceptance.yml]
+permissions:
+  contents: write
+jobs:
+  native:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: 13c7c54f18bbceabb272a5bb108e2170f60e932d
+          persist-credentials: false
+      - name: Apply reviewed integration patch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import base64,gzip,hashlib,json,os,subprocess,urllib.request
+          url='https://api.github.com/repos/OpenAnimationLibrary/ot3d/git/blobs/4045443b329c4245dcc3ba369e765ce3f5e459da'
+          req=urllib.request.Request(url,headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json'})
+          with urllib.request.urlopen(req) as r: blob=json.load(r)
+          patch=gzip.decompress(base64.b64decode(blob['content']))
+          assert hashlib.sha256(patch).hexdigest()=='ed7fce334302a4816bac9d2ff1d54681fb1b06410f4273d4b1319e8118469222'
+          subprocess.run(['git','apply','--ignore-space-change','--check','-'],input=patch,check=True)
+          subprocess.run(['git','apply','--ignore-space-change','-'],input=patch,check=True)
+          PY
+      - name: Install native build dependencies
+        run: |
+          sudo apt-get update -qq > /tmp/apt-update.log 2>&1
+          sudo apt-get install -y build-essential cmake pkg-config ninja-build ccache clang clang-format-14 libboost-all-dev qtbase5-dev qt5-qmake qtscript5-dev qttools5-dev qttools5-dev-tools qtmultimedia5-dev qtwayland5 libqt5svg5-dev libqt5opengl5-dev libqt5multimedia5-plugins libqt5serialport5-dev libsuperlu-dev liblz4-dev libusb-1.0-0-dev liblzo2-dev libpng-dev libjpeg-dev libglew-dev freeglut3-dev libfreetype6-dev libjson-c-dev libmypaint-dev libopencv-dev libturbojpeg-dev libomp-dev > /tmp/apt-install.log 2>&1 || { tail -60 /tmp/apt-install.log; exit 1; }
+      - uses: actions/cache/restore@v5
+        with:
+          path: /home/runner/.ccache
+          key: Linux-clang-${{ github.sha }}
+          restore-keys: |
+            Linux-clang-
+      - name: Format and configure native acceptance targets
+        run: |
+          python3 - <<'PY'
+          import re,subprocess
+          subprocess.run(['git','add','toonz/sources'],check=True)
+          for path in subprocess.check_output(['git','diff','--cached','--name-only'],text=True).splitlines():
+              if not path.endswith(('.cpp','.h')): continue
+              diff=subprocess.check_output(['git','diff','--cached','--unified=0','--',path],text=True)
+              ranges=[]
+              for start,count in re.findall(r'^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@',diff,re.M):
+                  count=int(count or 1)
+                  if count: ranges.append(f'--lines={start}:{int(start)+count-1}')
+              if ranges: subprocess.run(['clang-format-14','-i','-style=file',*ranges,path],check=True)
+          PY
+          git diff --check
+          (cd thirdparty/tiff-4.0.3 && CFLAGS=-fPIC CXXFLAGS=-fPIC ./configure --disable-jbig && make -j2) > /tmp/tiff.log 2>&1 || { tail -60 /tmp/tiff.log; exit 1; }
+          cmake -S toonz/sources -B toonz/build -G Ninja -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DWITH_TRANSLATION=OFF -DBUILD_AM_TESTS=ON -DBUILD_AM_LEVEL_TESTS=ON > /tmp/configure.log 2>&1 || { tail -90 /tmp/configure.log; exit 1; }
+      - name: Diagnose the existing failed-load assertion
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('toonz/sources/am/tests/amlevel_test.cpp')
+          s=p.read_text();Path('/tmp/amlevel-before-diagnostic.cpp').write_text(s)
+          needle='      check(failed && scene.getLevelSet()->getLevelCount() == castCount,'
+          assert s.count(needle)==1
+          s=s.replace(needle,'      std::cerr << "FAILED_LOAD_PROBE " << path.toStdString() << " threw=" << failed << " expected=" << castCount << " actual=" << scene.getLevelSet()->getLevelCount() << " type=" << int(TFileType::getInfo(TFilePath(path))) << "\\n";\n'+needle)
+          p.write_text(s)
+          PY
+      - name: Build production libraries and native regressions
+        env:
+          CCACHE_DIR: /home/runner/.ccache
+        run: |
+          cmake --build toonz/build --target amlevel_test amfx_test tnztools tnzstdfx --parallel 2 > /tmp/native-build.log 2>&1 || { tail -120 /tmp/native-build.log; exit 1; }
+          echo 'Native production libraries and regression executables compiled.'
+      - name: Run native acceptance tests
+        run: ctest --test-dir toonz/build --output-on-failure -R '^(amlevel|amfx)$'
+      - name: Prepare verified commit without updating a branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp /tmp/amlevel-before-diagnostic.cpp toonz/sources/am/tests/amlevel_test.cpp
+          python3 - <<'PY'
+          import json,os,subprocess,urllib.request
+          from pathlib import Path
+          parent='13c7c54f18bbceabb272a5bb108e2170f60e932d'
+          base='https://api.github.com/repos/OpenAnimationLibrary/ot3d'
+          def api(path,data=None):
+              req=urllib.request.Request(base+path,data=None if data is None else json.dumps(data).encode(),headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json','Content-Type':'application/json'},method='GET' if data is None else 'POST')
+              with urllib.request.urlopen(req,timeout=60) as r:return json.load(r)
+          assert api('/git/ref/heads/feature/am-model-level-3d-transforms')['object']['sha']==parent,'PR head changed'
+          subprocess.run(['git','add','toonz/sources'],check=True)
+          changed=subprocess.check_output(['git','diff','--cached','--name-only'],text=True).splitlines()
+          assert all(p.startswith('toonz/sources/') and p.endswith(('.cpp','.h','CMakeLists.txt')) for p in changed),changed
+          entries=[]
+          for p in changed:
+              blob=api('/git/blobs',{'content':Path(p).read_text(),'encoding':'utf-8'})
+              entries.append({'path':p,'type':'blob','mode':'100644','sha':blob['sha']})
+          tree=api('/git/trees',{'base_tree':api('/git/commits/'+parent)['tree']['sha'],'tree':entries})
+          commit=api('/git/commits',{'message':'Integrate native A:M columns with 3D FX and expose compact XYZ rotation controls','tree':tree['sha'],'parents':[parent]})
+          print('PREPARED_COMMIT',commit['sha'])
+          print('PREPARED_TREE',tree['sha'])
+          print('FILES',changed)
+          print('No branch reference updated.')
+          PY
