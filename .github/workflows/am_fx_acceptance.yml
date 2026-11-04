@@ -20,6 +20,7 @@ jobs:
         run: |
           python3 - <<'PY'
           import base64,gzip,hashlib,json,os,subprocess,urllib.request
+          from pathlib import Path
           def blob(sha):
               url='https://api.github.com/repos/OpenAnimationLibrary/ot3d/git/blobs/'+sha
               req=urllib.request.Request(url,headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json'})
@@ -30,6 +31,13 @@ jobs:
           subprocess.run(['git','apply','--ignore-space-change','-'],input=patch,check=True)
           for sha in ['1b5f7e28ba1ba21446a36a9a37424b25165e1ad1','d1a0bbbe8e6eb74e81229ec144775831e5f7155b','d088ce85564e941e6b6ae7d89c7727045fec0d7d']:
               subprocess.run(['python3','-'],input=blob(sha),check=True)
+          p=Path('toonz/sources/am/tests/amlevel_test.cpp')
+          s=p.read_text()
+          assert s.count('#include "trenderer.h"')==1
+          assert s.count('  TRenderer::initialize();')==1
+          s=s.replace('#include "trenderer.h"','#include "trenderer.h"\n#include "tthread.h"')
+          s=s.replace('  TRenderer::initialize();','  TThread::init();\n  TRenderer::initialize();')
+          p.write_text(s)
           PY
       - name: Install native build dependencies
         run: |
@@ -64,7 +72,7 @@ jobs:
         run: |
           cmake --build toonz/build --target amlevel_test amfx_test tnztools tnzstdfx glbmodelfx_test threepointlightfx_test transform3dfx_test --parallel 2 > /tmp/native-build.log 2>&1 || { tail -120 /tmp/native-build.log; exit 1; }
           echo 'Native production libraries and regression executables compiled.'
-      - name: Trace remaining native test failure
+      - name: Trace native test with complete renderer initialization
         env:
           QT_QPA_PLATFORM: offscreen
         run: |
