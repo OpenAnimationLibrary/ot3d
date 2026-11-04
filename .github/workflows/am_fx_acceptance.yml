@@ -20,6 +20,7 @@ jobs:
         run: |
           python3 - <<'PY'
           import base64,gzip,hashlib,json,os,subprocess,urllib.request
+          from pathlib import Path
           def blob(sha):
               url='https://api.github.com/repos/OpenAnimationLibrary/ot3d/git/blobs/'+sha
               req=urllib.request.Request(url,headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json'})
@@ -30,6 +31,7 @@ jobs:
           subprocess.run(['git','apply','--ignore-space-change','-'],input=patch,check=True)
           for sha in ['1b5f7e28ba1ba21446a36a9a37424b25165e1ad1','d1a0bbbe8e6eb74e81229ec144775831e5f7155b']:
               subprocess.run(['python3','-'],input=blob(sha),check=True)
+          Path('/tmp/repair-test-session.py').write_bytes(blob('d088ce85564e941e6b6ae7d89c7727045fec0d7d'))
           PY
       - name: Install native build dependencies
         run: |
@@ -67,18 +69,14 @@ jobs:
       - name: Trace renderer-wrapper requirements in standalone level test
         env:
           QT_QPA_PLATFORM: offscreen
-        run: gdb --batch --quiet -ex run -ex 'bt 12' --args toonz/build/am/amlevel_test || true
-      - name: Use the direct raster entry point without a renderer session
+        run: |
+          test -x toonz/build/bin/amlevel_test
+          gdb --batch --quiet -ex run -ex 'bt 12' --args toonz/build/bin/amlevel_test || true
+      - name: Initialize the production renderer session in the native test
         env:
           CCACHE_DIR: /home/runner/.ccache
         run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          p=Path('toonz/sources/am/tests/amlevel_test.cpp');s=p.read_text()
-          old='fx->compute(tile, 0, settings);'
-          assert s.count(old)==1
-          p.write_text(s.replace(old,'// This standalone test has no renderer/resource-cache session.\n    fx->doCompute(tile, 0, settings);'))
-          PY
+          python3 /tmp/repair-test-session.py
           clang-format-14 -i -style=file toonz/sources/am/tests/amlevel_test.cpp
           cmake --build toonz/build --target amlevel_test --parallel 2 > /tmp/test-build.log 2>&1 || { tail -80 /tmp/test-build.log; exit 1; }
       - name: Run native acceptance tests
@@ -86,9 +84,9 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         run: |
           ctest --test-dir toonz/build --output-on-failure -R '^(amlevel|amfx)$' --repeat until-fail:3
-          toonz/build/stdfx/glbmodelfx_test
-          toonz/build/stdfx/threepointlightfx_test
-          toonz/build/stdfx/transform3dfx_test
+          toonz/build/bin/glbmodelfx_test
+          toonz/build/bin/threepointlightfx_test
+          toonz/build/bin/transform3dfx_test
       - name: Prepare verified commit without updating a branch
         env:
           GH_TOKEN: ${{ github.token }}
