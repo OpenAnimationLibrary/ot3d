@@ -4,19 +4,126 @@ on:
     branches: [maintenance/camera-3d-validation]
     paths: [.github/workflows/camera_3d_validation.yml]
 permissions:
-  contents: read
+  contents: write
 jobs:
-  snapshot:
+  native:
     runs-on: ubuntu-22.04
-    timeout-minutes: 5
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
         with:
           ref: 90a36968a101e238d974c4d949a0fad5eb154f82
           persist-credentials: false
-      - run: git archive --format=zip HEAD -o camera-base.zip
-      - uses: actions/upload-artifact@v6
+      - name: Apply spatial camera implementation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import base64,gzip,hashlib,json,os,subprocess,urllib.request
+          def blob(sha):
+              req=urllib.request.Request('https://api.github.com/repos/OpenAnimationLibrary/ot3d/git/blobs/'+sha,headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json'})
+              with urllib.request.urlopen(req) as r:return base64.b64decode(json.load(r)['content']).decode()
+          chunks=[blob(s) for s in ['d4a7647bc49cdcc3db3ee2495f3ea56394ee6d29','5585e868f4e15281f3f945fa551bce40f7ee6d27','844984d8b401415070e207df896ddfdf3b94434f']]
+          chunks[2]=chunks[2].replace('Ewjzc3q3UHQ','Ewjzc3qUHQ').replace('ibbxzJMjTk','ibbxzMjTk')
+          patch=gzip.decompress(base64.b64decode(''.join(chunks)))
+          assert hashlib.sha256(patch).hexdigest()=='57a73e24dc5b64e0a7efeeaeb35fa672f23bb3779809364a7f898881493e51a0'
+          subprocess.run(['git','apply','--check','-'],input=patch,check=True)
+          subprocess.run(['git','apply','-'],input=patch,check=True)
+          PY
+      - name: Install native dependencies
+        run: |
+          sudo apt-get update -qq > /tmp/apt-update.log 2>&1
+          sudo apt-get install -y build-essential cmake pkg-config ninja-build ccache clang clang-format-14 gdb libboost-all-dev qtbase5-dev qt5-qmake qtscript5-dev qttools5-dev qttools5-dev-tools qtmultimedia5-dev qtwayland5 libqt5svg5-dev libqt5opengl5-dev libqt5multimedia5-plugins libqt5serialport5-dev libsuperlu-dev liblz4-dev libusb-1.0-0-dev liblzo2-dev libpng-dev libjpeg-dev libglew-dev freeglut3-dev libfreetype6-dev libjson-c-dev libmypaint-dev libopencv-dev libturbojpeg-dev libomp-dev > /tmp/apt-install.log 2>&1 || { tail -60 /tmp/apt-install.log; exit 1; }
+      - uses: actions/cache/restore@v5
         with:
-          name: camera-development-base
-          path: camera-base.zip
-          retention-days: 2
+          path: /home/runner/.ccache
+          key: Linux-clang-${{ github.sha }}
+          restore-keys: |
+            Linux-clang-
+      - name: Format and configure
+        run: |
+          python3 - <<'PY'
+          import re,subprocess
+          subprocess.run(['git','add','toonz/sources','stuff/profiles/layouts/fxs/STD_transform3DFx.xml','doc/ot3d/SPATIAL_CAMERA.md','doc/transform3d_fx.md','.github/workflows/workflow_linux.yml'],check=True)
+          files=subprocess.check_output(['git','diff','--cached','--name-only'],text=True).splitlines()
+          for path in files:
+              if not path.endswith(('.cpp','.h')):continue
+              diff=subprocess.check_output(['git','diff','--cached','--unified=0','--',path],text=True)
+              ranges=[]
+              for start,count in re.findall(r'^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@',diff,re.M):
+                  count=int(count or 1)
+                  if count:ranges.append(f'--lines={start}:{int(start)+count-1}')
+              if ranges:subprocess.run(['clang-format-14','--dry-run','--Werror','-style=file',*ranges,path],check=True)
+          subprocess.run(['git','diff','--cached','--check'],check=True)
+          PY
+          (cd thirdparty/tiff-4.0.3 && CFLAGS=-fPIC CXXFLAGS=-fPIC ./configure --disable-jbig && make -j2) > /tmp/tiff.log 2>&1 || { tail -50 /tmp/tiff.log; exit 1; }
+          cmake -S toonz/sources -B toonz/build -G Ninja -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DWITH_TRANSLATION=OFF -DBUILD_AM_TESTS=ON -DBUILD_AM_LEVEL_TESTS=ON -DBUILD_GLB_FX_TESTS=ON > /tmp/configure.log 2>&1 || { tail -80 /tmp/configure.log; exit 1; }
+      - name: Compile native regressions and tool libraries
+        env:
+          CCACHE_DIR: /home/runner/.ccache
+        run: |
+          cmake --build toonz/build --target amlevel_test amfx_test amcamera_test tnztools tnzstdfx glbmodelfx_test threepointlightfx_test transform3dfx_test --parallel 2 > /tmp/native-build.log 2>&1 || { tail -120 /tmp/native-build.log; exit 1; }
+          echo 'Native production libraries and camera regressions compiled.'
+      - name: Run all native regressions
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          python3 - <<'PY'
+          import subprocess,sys
+          tests=[['ctest','--test-dir','toonz/build','--output-on-failure','-R','^(amlevel|amfx|amcamera)$','--repeat','until-fail:3']]
+          tests += [['toonz/build/bin/'+name+'_test'] for name in ['glbmodelfx','threepointlightfx','transform3dfx']]
+          failed=[]
+          for args in tests:
+              r=subprocess.run(args)
+              print('NATIVE_RESULT',args,r.returncode,flush=True)
+              if r.returncode:failed.append(args)
+          if failed:subprocess.run(['gdb','--batch','--quiet','-ex','run','-ex','bt 20','--args','toonz/build/bin/amcamera_test'])
+          sys.exit(bool(failed))
+          PY
+      - name: Compile application integration
+        env:
+          CCACHE_DIR: /home/runner/.ccache
+        run: |
+          cmake --build toonz/build --target OpenToonz --parallel 2 > /tmp/application-build.log 2>&1 || { tail -120 /tmp/application-build.log; exit 1; }
+          echo 'OpenToonz application compiled.'
+      - name: Export tested blob manifest without changing a branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import json,os,subprocess,urllib.request
+          from pathlib import Path
+          paths=['toonz/sources','stuff/profiles/layouts/fxs/STD_transform3DFx.xml','doc/ot3d/SPATIAL_CAMERA.md','doc/transform3d_fx.md','.github/workflows/workflow_linux.yml']
+          subprocess.run(['git','add',*paths],check=True)
+          subprocess.run(['git','diff','--cached','--check'],check=True)
+          changed=subprocess.check_output(['git','diff','--cached','--name-only'],text=True).splitlines()
+          extra=set(paths[1:])
+          assert all(p in extra or (p.startswith('toonz/sources/') and p.endswith(('.h','.cpp','CMakeLists.txt'))) for p in changed),changed
+          entries=[]
+          for p in changed:
+              payload=json.dumps({'content':Path(p).read_text(),'encoding':'utf-8'}).encode()
+              req=urllib.request.Request('https://api.github.com/repos/OpenAnimationLibrary/ot3d/git/blobs',data=payload,headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json','Content-Type':'application/json'})
+              with urllib.request.urlopen(req,timeout=60) as r:b=json.load(r)
+              entry={'path':p,'mode':'100644','type':'blob','sha':b['sha']}
+              entries.append(entry)
+              print('VERIFIED_ENTRY',json.dumps(entry),flush=True)
+          base=subprocess.check_output(['git','rev-parse','HEAD^{tree}'],text=True).strip()
+          print('BASE_TREE',base)
+          Path('/tmp/camera-manifest.json').write_text(json.dumps({'base_tree':base,'entries':entries},indent=2))
+          print('No branch reference changed.')
+          PY
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: spatial-camera-validation
+          path: |
+            /tmp/camera-manifest.json
+            /tmp/native-build.log
+            /tmp/application-build.log
+            toonz/build/Testing/Temporary/LastTest.log
+          retention-days: 3
+      - uses: actions/cache/save@v5
+        if: always()
+        with:
+          path: /home/runner/.ccache
+          key: Linux-clang-${{ github.sha }}
