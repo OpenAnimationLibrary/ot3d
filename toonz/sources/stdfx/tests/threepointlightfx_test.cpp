@@ -46,6 +46,60 @@ void zeroSecondaryLights(ThreePointLightFx &fx) {
   param<TDoubleParam>(fx, "fillIntensity")->setValue(0, 0.0);
   param<TDoubleParam>(fx, "rimIntensity")->setValue(0, 0.0);
 }
+
+TFxP makeKey(TFx *source, const TPixel32 &color, double master) {
+  TFxP owner  = new ThreePointLightFx;
+  auto &light = *static_cast<ThreePointLightFx *>(owner.getPointer());
+  light.getInputPort(0)->setFx(source);
+  zeroSecondaryLights(light);
+  param<TDoubleParam>(light, "masterIntensity")->setValue(0, master);
+  param<TDoubleParam>(light, "keyAzimuth")->setValue(0, 0.0);
+  param<TDoubleParam>(light, "keyElevation")->setValue(0, 0.0);
+  param<TPixelParam>(light, "keyColor")->setValue(0, color);
+  return owner;
+}
+
+void testLightingChain(ToonzScene &scene, TFx *column) {
+  const auto red   = makeKey(column, TPixel32(255, 0, 0, 255), 25.0);
+  const auto green = makeKey(red.getPointer(), TPixel32(0, 255, 0, 255), 50.0);
+  const auto blue = makeKey(green.getPointer(), TPixel32(0, 0, 255, 255), 12.5);
+  auto &first     = *static_cast<ThreePointLightFx *>(red.getPointer());
+  auto &second    = *static_cast<ThreePointLightFx *>(green.getPointer());
+  auto &last      = *static_cast<ThreePointLightFx *>(blue.getPointer());
+
+  const auto redOnly = center(first);
+  const auto pair    = center(second);
+  const auto all     = center(last);
+  check(redOnly.r > 130 && redOnly.r < 145 && redOnly.g == 0 &&
+            redOnly.b == 0 && pair.m == 255 && pair.r == redOnly.r &&
+            pair.g > 180 && pair.g < 195 && pair.b == 0,
+        "two rigs did not contribute with independent master intensities");
+  check(all.m == 255 && all.r == pair.r && all.g == pair.g && all.b > 90 &&
+            all.b < 105 && center(first) == redOnly,
+        "third rig changed the other lights or contaminated the shared source");
+
+  param<TDoubleParam>(second, "ambient")->setValue(0, 10.0);
+  const auto withAmbient = center(last);
+  check(withAmbient.r > all.r && withAmbient.g > all.g && withAmbient.b > all.b,
+        "middle rig ambient did not contribute");
+  param<TDoubleParam>(second, "masterIntensity")->setValue(0, 0.0);
+  const auto muted = center(last);
+  check(muted.m == 255 && muted.r == all.r && muted.g == 0 && muted.b == all.b,
+        "muting the middle rig affected other rigs or left ambient light");
+
+  TRectD box;
+  TRenderSettings settings;
+  check(last.doGetBBox(0, box, settings) && !box.isEmpty(),
+        "chained light nodes lost model bounds");
+  const auto built = buildSceneFx(&scene, 0.0, blue, false);
+  check(bool(built), "scene expansion lost the chain");
+  const TFxP clone = built->clone(true);
+  auto *cloned     = dynamic_cast<ThreePointLightFx *>(clone.getPointer());
+  check(cloned && center(*cloned) == muted,
+        "scene expansion or cloning changed the chained render");
+  check(!buildSceneFx(&scene, 1.0, blue, false),
+        "chained lights ignored the GLB exposure range");
+}
 }
 
 int main(int argc, char **argv) {
@@ -98,7 +152,9 @@ int main(int argc, char **argv) {
           "downstream light mutated GLB Model settings");
     port->setFx(nullptr); check(!port->source() && columnFx->getOutputConnectionCount() == 0 && center(light).m == 0,
                                 "disconnect did not release column or clear output");
-    std::cout << "PASS: Three-Point Light persistence-safe GLB port, sources, scene expansion, clone and render\n"; return 0;
+    testLightingChain(scene, columnFx);
+    std::cout << "PASS: Three-Point Light sources, chaining, and rendering\n";
+    return 0;
   } catch (const TException &) { std::cerr << "FAIL threepointlightfx: unexpected FX exception\n"; return 1; }
     catch (const std::exception &error) { std::cerr << "FAIL threepointlightfx: " << error.what() << '\n'; return 1; }
 }
