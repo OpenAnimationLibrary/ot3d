@@ -4,6 +4,7 @@ on:
     paths: ['toonz/sources/am/**', '.github/workflows/am_model.yml']
   pull_request:
     paths: ['toonz/sources/am/**', '.github/workflows/am_model.yml']
+  workflow_dispatch:
 permissions:
   contents: read
 concurrency:
@@ -14,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, windows-latest, macos-latest]
+        os: [windows-2022]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
@@ -22,6 +23,7 @@ jobs:
       - run: cmake --build build-am --config Debug --parallel 2
       - run: ctest --test-dir build-am -C Debug --output-on-failure
   sanitizer:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v6

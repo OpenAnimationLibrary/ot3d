@@ -13,12 +13,12 @@ permissions:
 
 jobs:
   document:
-    runs-on: ubuntu-22.04
+    runs-on: windows-2022
     steps:
       - uses: actions/checkout@v6
       - name: Configure standalone document service
         run: cmake -S toonz/sources/exr -B exr-build -DCMAKE_BUILD_TYPE=Release
       - name: Build
-        run: cmake --build exr-build --parallel 2
+        run: cmake --build exr-build --config Release --parallel 2
       - name: Test
-        run: ctest --test-dir exr-build --output-on-failure
+        run: ctest --test-dir exr-build -C Release --output-on-failure
