@@ -4,23 +4,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: ${{ github.head_ref != '' }}
 
+# Automatic platform checks are paused while Windows is the primary target.
 on:
-  push:
-    paths:
-      - '**/*'                                  # Include all files in the repository
-      - '!appveyor.yml'                         # Ignore changes in AppVeyor
-      - '!README.md'                            # Exclude README
-      - '!doc/**'                               # Exclude documentation
-      - '!**/.github/**'                        # Exclude everything in .github folder
-      - '.github/workflows/workflow_macos.yml'  # Include MacOs workflow file
-  pull_request:
-    paths:
-      - '**/*'
-      - '!appveyor.yml'
-      - '!README.md'
-      - '!doc/**'
-      - '!**/.github/**'
-      - '.github/workflows/workflow_macos.yml'
+  workflow_dispatch:
 
 jobs:
   macOS:
