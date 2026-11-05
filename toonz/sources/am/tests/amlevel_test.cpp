@@ -32,7 +32,7 @@ namespace {
 void check(bool result, const char *message) {
   if (!result) throw std::runtime_error(message);
 }
-void near(double a, double b) {
+void nearlyEqual(double a, double b) {
   check(std::abs(a - b) < 1e-7, "coordinate/parameter mismatch");
 }
 QByteArray readFile(const QString &path) {
@@ -142,7 +142,7 @@ int main(int argc, char **argv) {
     check(first->isFullKeyframe(0), "AM global key omitted a channel");
     check(first->getParam(TStageObject::T_CenterZ)->isKeyframe(0),
           "pivot missing from global key");
-    near(second->getParam(TStageObject::T_RotationX)->getValue(0), 0);
+    nearlyEqual(second->getParam(TStageObject::T_RotationX)->getValue(0), 0);
     const auto a = prepareAMLevelGeometry(xsheet, 0, 0, false);
     const auto b = prepareAMLevelGeometry(xsheet, 1, 0, false);
     check(a && b && a->triangles.size() == b->triangles.size(),
@@ -150,9 +150,9 @@ int main(int argc, char **argv) {
     const double units  = Stage::inch / 2.54;
     const auto original = sourceMesh->triangles[0].vertices[0];
     const auto rotated  = a->triangles[0].vertices[0];
-    near(rotated[0], original[0] * units);
-    near(rotated[1], 0);
-    near(rotated[2], original[1] * units);
+    nearlyEqual(rotated[0], original[0] * units);
+    nearlyEqual(rotated[1], 0);
+    nearlyEqual(rotated[2], original[1] * units);
     check(level->mesh() == sourceMesh,
           "instance animation modified shared geometry");
     const auto savedKey = first->getKeyframe(0);
@@ -160,7 +160,7 @@ int main(int argc, char **argv) {
     check(!first->getParam(TStageObject::T_RotationX)->isKeyframe(0),
           "key deletion omitted Rx");
     first->setKeyframeWithoutUndo(0, savedKey);
-    near(first->getParam(TStageObject::T_RotationX)->getValue(0), 90);
+    nearlyEqual(first->getParam(TStageObject::T_RotationX)->getValue(0), 90);
     // Existing 2D levels retain their planar behavior and global key contents.
     TXshSimpleLevelP drawing = new TXshSimpleLevel;
     drawing->setType(PLI_XSHLEVEL);
@@ -174,8 +174,8 @@ int main(int argc, char **argv) {
     const TPointD old = legacy->getPlacement(0) * TPointD(1, 2);
     legacy->getParam(TStageObject::T_RotationX)->setValue(0, 67);
     const TPointD unchanged = legacy->getPlacement(0) * TPointD(1, 2);
-    near(old.x, unchanged.x);
-    near(old.y, unchanged.y);
+    nearlyEqual(old.x, unchanged.x);
+    nearlyEqual(old.y, unchanged.y);
     legacy->getParam(TStageObject::T_RotationX)->deleteKeyframe(0);
     legacy->setKeyframeWithoutUndo(0);
     check(!legacy->getParam(TStageObject::T_RotationX)->isKeyframe(0),
@@ -205,9 +205,10 @@ int main(int argc, char **argv) {
         restored->getStageObject(TStageObjectId::ColumnId(0));
     check(restoredObject->isAMTransformEnabled(),
           "spatial capability lost on reopen");
-    near(restoredObject->getParam(TStageObject::T_RotationX)->getValue(0), 90);
-    near(restoredObject->getParam(TStageObject::T_RotationX)->getValue(10),
-         180);
+    nearlyEqual(
+        restoredObject->getParam(TStageObject::T_RotationX)->getValue(0), 90);
+    nearlyEqual(
+        restoredObject->getParam(TStageObject::T_RotationX)->getValue(10), 180);
     check(!restored->getStageObject(TStageObjectId::ColumnId(2))
                ->isAMTransformEnabled(),
           "2D level changed on reopen");

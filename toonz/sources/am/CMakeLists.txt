@@ -31,6 +31,8 @@ endif()
 
 if(BUILD_AM_LEVEL_TESTS AND NOT AM_STANDALONE)
     add_executable(amfx_test tests/amfx_test.cpp)
+    # The test compiles the FX implementations directly into its executable.
+    target_compile_definitions(amfx_test PRIVATE TNZSTDFX_EXPORTS)
     target_link_libraries(amfx_test PRIVATE toonzlib toonzqt Qt5::Widgets)
     add_test(NAME amfx COMMAND amfx_test)
     ot_configure_native_test_runtime(amfx)
@@ -39,6 +41,7 @@ endif()
 
 if(BUILD_AM_LEVEL_TESTS AND NOT AM_STANDALONE)
     add_executable(amcamera_test tests/amcamera_test.cpp)
+    target_compile_definitions(amcamera_test PRIVATE TNZSTDFX_EXPORTS)
     target_link_libraries(amcamera_test PRIVATE toonzlib toonzqt Qt5::Widgets)
     add_test(NAME amcamera COMMAND amcamera_test)
     ot_configure_native_test_runtime(amcamera)

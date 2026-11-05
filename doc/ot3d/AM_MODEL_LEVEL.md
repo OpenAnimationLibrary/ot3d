@@ -142,8 +142,8 @@ undo/redo and Function Editor, then switch to vector/raster/Toonz Raster levels
 and verify unchanged controls/rendering. Record A:M version, GPU, driver and
 scaling (100%/150%). Hooks/five-point and rigged files must show explicit limits.
 
-This remains a **draft experimental feature**, not full native project compliance
-or a production-ready surface evaluator. Older OpenToonz builds do not understand
+This is an experimental native model level with an approximate surface preview.
+Older OpenToonz builds do not understand
 `amModelLevel` or the new transform tags; backward round-trip is unsupported.
 
 ## Native model FX and accessible XYZ rotation

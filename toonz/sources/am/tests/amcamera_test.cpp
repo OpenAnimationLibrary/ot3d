@@ -27,7 +27,7 @@ namespace {
 void check(bool ok, const char *message) {
   if (!ok) throw std::runtime_error(message);
 }
-void near(double a, double b) {
+void nearlyEqual(double a, double b) {
   if (std::abs(a - b) > 1e-7) {
     std::cerr << "coordinates: " << a << " vs " << b << '\n';
     throw std::runtime_error("camera coordinate mismatch");
@@ -48,16 +48,18 @@ void equal(const otam::Mesh &a, const otam::Mesh &b) {
   for (std::size_t i = 0; i < a.triangles.size(); ++i)
     for (int v = 0; v < 3; ++v)
       for (int k = 0; k < 3; ++k)
-        near(a.triangles[i].vertices[v][k], b.triangles[i].vertices[v][k]);
+        nearlyEqual(a.triangles[i].vertices[v][k],
+                    b.triangles[i].vertices[v][k]);
 }
 void equal(const otam::Mesh &a, const otglb::RenderScene &b) {
   check(a.triangles.size() == b.triangles.size(),
         "camera FX triangle count changed");
   for (std::size_t i = 0; i < a.triangles.size(); ++i)
     for (int v = 0; v < 3; ++v) {
-      near(a.triangles[i].vertices[v][0], b.triangles[i].vertices[v].x);
-      near(a.triangles[i].vertices[v][1], b.triangles[i].vertices[v].y);
-      near(a.triangles[i].vertices[v][2], b.triangles[i].vertices[v].depth);
+      nearlyEqual(a.triangles[i].vertices[v][0], b.triangles[i].vertices[v].x);
+      nearlyEqual(a.triangles[i].vertices[v][1], b.triangles[i].vertices[v].y);
+      nearlyEqual(a.triangles[i].vertices[v][2],
+                  b.triangles[i].vertices[v].depth);
     }
 }
 class RenderSession {
@@ -160,8 +162,8 @@ int main(int argc, char **argv) {
           "legacy roll changed shading topology");
     for (std::size_t i = 0; i < oldShading->triangles.size(); ++i)
       for (int k = 0; k < 3; ++k)
-        near(oldShading->triangles[i].color[k],
-             rolledShading->triangles[i].color[k]);
+        nearlyEqual(oldShading->triangles[i].color[k],
+                    rolledShading->triangles[i].color[k]);
     set(camera, TStageObject::T_Angle, 0);
     set(camera, TStageObject::T_ScaleX, 1);
     // A camera rigged to a spatial model follows the parent's optical eye.
@@ -198,7 +200,7 @@ int main(int argc, char **argv) {
     set(fx, "rotationX", 1);
     set(fx, "rotationY", 2);
     equal(*rotated, *fx.get3DRenderScene(0, nullptr));
-    near(camera->getParam(TStageObject::T_RotationY)->getValue(0), 0);
+    nearlyEqual(camera->getParam(TStageObject::T_RotationY)->getValue(0), 0);
     auto *snapshotSource =
         dynamic_cast<T3DRenderSource *>(snapshot.getPointer());
     check(snapshotSource, "snapshot source interface");
@@ -213,8 +215,8 @@ int main(int argc, char **argv) {
     set(fx, "rotationY", 0);
     set(fx, "positionX", 10);
     const auto shifted = fx.get3DRenderScene(0, nullptr);
-    near(shifted->triangles[0].vertices[0].x,
-         baseline->triangles[0].vertices[0][0] - 10);
+    nearlyEqual(shifted->triangles[0].vertices[0].x,
+                baseline->triangles[0].vertices[0][0] - 10);
     TFxP geometryOwner = new Transform3DFx;
     auto &geometry = *static_cast<Transform3DFx *>(geometryOwner.getPointer());
     geometry.getInputPort(0)->setFx(&fx);
@@ -256,7 +258,7 @@ int main(int argc, char **argv) {
     check(!camera->getParam(TStageObject::T_RotationX)->isKeyframe(0),
           "camera key deletion omitted Rx");
     camera->setKeyframeWithoutUndo(0, key);
-    near(camera->getParam(TStageObject::T_RotationX)->getValue(0), 1);
+    nearlyEqual(camera->getParam(TStageObject::T_RotationX)->getValue(0), 1);
 
     // Keep a real camera-target FX in the persisted graph.
     sheet->getFxDag()->getInternalFxs()->addFx(&fx);
@@ -276,8 +278,10 @@ int main(int argc, char **argv) {
     auto *restoredCamera = restored->getStageObject(cameraId);
     check(restoredCamera->is3DTransformEnabled(),
           "camera capability lost on reopen");
-    near(restoredCamera->getParam(TStageObject::T_RotationX)->getValue(0), 1);
-    near(restoredCamera->getParam(TStageObject::T_RotationX)->getValue(10), 3);
+    nearlyEqual(
+        restoredCamera->getParam(TStageObject::T_RotationX)->getValue(0), 1);
+    nearlyEqual(
+        restoredCamera->getParam(TStageObject::T_RotationX)->getValue(10), 3);
     check(restoredCamera->isFullKeyframe(0), "camera keys lost on reopen");
     bool restoredCameraTarget = false;
     auto *restoredFxs         = restored->getFxDag()->getInternalFxs();
