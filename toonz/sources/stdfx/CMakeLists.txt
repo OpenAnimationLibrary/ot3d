@@ -170,6 +170,7 @@ set(SOURCES
     targetspotfx.cpp
     texturefx.cpp
     threepointlightfx.cpp
+    merge3dfx.cpp
     tilefx.cpp
     tonecurvefx.cpp
     transform3dfx.cpp

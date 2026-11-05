@@ -2,12 +2,21 @@
 // linking tnzstdfx, matching the GLB Model framework-test pattern.
 #include "../glbmodelfx.cpp"
 #include "../threepointlightfx.cpp"
+#include "../merge3dfx.cpp"
+#include "../transform3dfx.cpp"
 #include "../../glb/tests/glbfixture.h"
 #include "tparamcontainer.h"
 #include "toonz/scenefx.h"
 #include "toonz/toonzscene.h"
 #include "toonz/txsheet.h"
 #include "toonz/txshzeraryfxcolumn.h"
+#include "toonz/fxdag.h"
+#include "toonz/tcolumnfxset.h"
+#include "toonz/tstageobject.h"
+#include "tfxutil.h"
+#include "tstream.h"
+#include "trenderer.h"
+#include "tthread.h"
 
 #include <QCoreApplication>
 #include <QFile>
@@ -37,7 +46,8 @@ void writeModel(const QString &path) {
   check(file.open(QIODevice::WriteOnly), "cannot create GLB fixture");
   check(file.write(reinterpret_cast<const char *>(bytes.data()), bytes.size()) == qint64(bytes.size()), "incomplete GLB fixture write");
 }
-TPixel32 center(ThreePointLightFx &fx) {
+template <class FX>
+TPixel32 center(FX &fx) {
   TRaster32P raster(80, 80); TTile tile; tile.setRaster(raster); tile.m_pos = TPointD(-40, -40);
   TRenderSettings settings; settings.m_affine = TScale(.2); fx.doCompute(tile, 0, settings); return raster->pixels(40)[40];
 }
@@ -115,10 +125,174 @@ void testLightingChain(ToonzScene &scene, TFx *column) {
             front.b == muted.b && front.m == muted.m,
         "moving one rig did not isolate its contribution in a mixed chain");
 }
+
+bool renderMergeOutput(ToonzScene &scene) {
+  const TFxP output = buildSceneFx(&scene, scene.getXsheet(), 0, 1, false);
+  TRenderSettings settings;
+  auto *rasterFx = dynamic_cast<TRasterFx *>(output.getPointer());
+  check(rasterFx, "Xsheet rejected lit merge");
+  TRaster32P raster(128, 128);
+  TTile tile(raster, TPointD(-64, -64));
+  TRenderer renderer(1);
+  renderer.enablePrecomputing(false);
+  const auto id = TRenderer::buildRenderId();
+  renderer.install(id);
+  renderer.declareRenderStart(id);
+  renderer.declareFrameStart(0);
+  rasterFx->compute(tile, 0, settings);
+  renderer.declareFrameEnd(0);
+  renderer.declareRenderEnd(id);
+  renderer.uninstall();
+  bool red = false;
+  for (int y = 0; y < 128; ++y)
+    for (int x = 0; x < 128; ++x) {
+      const auto p = raster->pixels(y)[x];
+      red |= p.m && p.r > 0 && p.g == 0 && p.b == 0;
+    }
+  return red;
+}
+
+void testMerge(const QString &path, const QString &saved) {
+  ToonzScene scene;
+  TFx *columns[2];
+  for (int i = 0; i < 2; ++i) {
+    TFxP source = new GlbModelFx;
+    auto &model = *static_cast<GlbModelFx *>(source.getPointer());
+    param<TStringParam>(model, "modelFile")->setValue(path.toStdWString());
+    param<TIntEnumParam>(model, "colorMode")->setValue(1);
+    param<TDoubleParam>(model, "positionX")->setValue(0, i ? .8 : -.8);
+    TXshZeraryFxColumnP column = new TXshZeraryFxColumn(1);
+    column->getZeraryColumnFx()->setZeraryFx(&model);
+    scene.getXsheet()->insertColumn(i, column.getPointer());
+    columns[i] = column->getFx();
+  }
+  TFxP mergeOwner = new Merge3DFx;
+  auto &merge     = *static_cast<Merge3DFx *>(mergeOwner.getPointer());
+  TFxP ordinary   = new OrdinaryRasterFx;
+  check(merge.getFxType() == "STD_merge3DFx", "merge registration");
+  check(canConnectFxPort(merge.getInputPort(0), columns[0]) &&
+            !canConnectFxPort(merge.getInputPort(0), ordinary.getPointer()),
+        "merge port policy");
+  merge.getInputPort(0)->setFx(columns[0]);
+  merge.getInputPort(1)->setFx(columns[1]);
+  const auto key = makeKey(&merge, TPixel32(255, 0, 0, 255), 100);
+  auto &light    = *static_cast<ThreePointLightFx *>(key.getPointer());
+  auto layers = light.get3DRenderScene(0, nullptr, nullptr, nullptr, nullptr);
+  check(layers && layers->layers.size() == 2 && !layers->empty(),
+        "lighting lost merged sources");
+  for (const auto &layer : layers->layers)
+    check(layer.scene->triangles[0].color[0] > .99 &&
+              layer.scene->triangles[0].color[1] == 0,
+          "shared lighting failed to reach both branches");
+  const auto branchRig = makeKey(columns[0], TPixel32(255, 0, 0, 255), 25);
+  merge.getInputPort(0)->setFx(branchRig.getPointer());
+  param<TPixelParam>(light, "keyColor")->setValue(0, TPixel32(0, 255, 0, 255));
+  const auto branchLit =
+      light.get3DRenderScene(0, nullptr, nullptr, nullptr, nullptr);
+  check(branchLit->layers[0].scene->triangles[0].color[0] == 0 &&
+            branchLit->layers[1].scene->triangles[0].color[0] > .5 &&
+            branchLit->layers[0].scene->triangles[0].color[1] > .99 &&
+            branchLit->layers[1].scene->triangles[0].color[1] > .99,
+        "branch-specific and shared rigs did not accumulate independently");
+  merge.getInputPort(0)->setFx(columns[0]);
+  param<TPixelParam>(light, "keyColor")->setValue(0, TPixel32(255, 0, 0, 255));
+  TFxP nestedOwner = new Merge3DFx;
+  auto &nested     = *static_cast<Merge3DFx *>(nestedOwner.getPointer());
+  nested.getInputPort(0)->setFx(&merge);
+  light.getInputPort(0)->setFx(&nested);
+  const auto nestedLit =
+      light.get3DRenderScene(0, nullptr, nullptr, nullptr, nullptr);
+  check(nestedLit && nestedLit->layers.size() == 1 &&
+            nestedLit->layers[0].scene->layers.size() == 2,
+        "nested merge or empty input discarded grouped sources");
+  light.getInputPort(0)->setFx(&merge);
+  TFxP transformOwner = new Transform3DFx;
+  auto &transform = *static_cast<Transform3DFx *>(transformOwner.getPointer());
+  transform.getInputPort(0)->setFx(&light);
+  param<TDoubleParam>(transform, "positionY")->setValue(0, .25);
+  const auto moved = transform.get3DRenderScene(0, nullptr);
+  check(moved && moved->layers.size() == 2 &&
+            moved->bounds[1] > layers->bounds[1],
+        "group transform did not reach both branches");
+  TRenderSettings settings;
+  TRectD box;
+  check(light.doGetBBox(0, box, settings) && !box.isEmpty(),
+        "group light bounds");
+  auto *sheet = scene.getXsheet();
+  sheet->getStageObject(TStageObjectId::ColumnId(1))
+      ->getParam(TStageObject::T_X)
+      ->setValue(0, .5);
+  auto *dag = sheet->getFxDag();
+  dag->getInternalFxs()->addFx(&merge);
+  dag->getInternalFxs()->addFx(&light);
+  for (auto *column : columns) dag->removeFromXsheet(column);
+  dag->addToXsheet(&light);
+  check(renderMergeOutput(scene),
+        "lit merge did not connect directly to Xsheet");
+  const TFxP built = buildSceneFx(&scene, 0.0, key, false);
+  auto *builtLight = dynamic_cast<ThreePointLightFx *>(built.getPointer());
+  check(builtLight, "group render-tree expansion");
+  const auto placed =
+      builtLight->get3DRenderScene(0, nullptr, nullptr, nullptr, &settings);
+  check(placed && placed->layers.size() == 2 &&
+            placed->layers[0].affine[2] > 1 && placed->layers[1].affine[2] == 0,
+        "independent column placement was lost or flattened");
+  const TFxP copy = built->clone(true);
+  check(center(*static_cast<ThreePointLightFx *>(copy.getPointer())) ==
+            center(*builtLight),
+        "cloning discarded group placement");
+  // The lit merge is a normal raster source at the 2D boundary: Over -> Xsheet.
+  TFxP over = TFx::create("overFx");
+  over->connect("Source1", &light);
+  over->connect("Source2", columns[0]);
+  dag->getInternalFxs()->addFx(over.getPointer());
+  dag->removeFromXsheet(&light);
+  dag->addToXsheet(over.getPointer());
+  check(renderMergeOutput(scene),
+        "lit merge did not render through standard Over and Xsheet");
+  {
+    TOStream stream{TFilePath(saved)};
+    stream << sheet;
+  }
+  TPersist *persist = nullptr;
+  {
+    TIStream stream{TFilePath(saved)};
+    stream >> persist;
+  }
+  std::unique_ptr<TPersist> owner(persist);
+  auto *restored = dynamic_cast<TXsheet *>(persist);
+  check(restored, "group scene persistence");
+  bool found = false;
+  auto *fxs  = restored->getFxDag()->getInternalFxs();
+  for (int i = 0; i < fxs->getFxCount(); ++i)
+    if (auto *fx = dynamic_cast<Merge3DFx *>(fxs->getFx(i))) {
+      found = fx->getInputPort("Foreground")->getFx() &&
+              fx->getInputPort("Background")->getFx();
+    }
+  check(found, "saved merge lost its inputs");
+  sheet->getColumn(0)->setPreviewVisible(false);
+  const TFxP hidden = buildSceneFx(&scene, 0.0, key, false);
+  const auto visible =
+      static_cast<ThreePointLightFx *>(hidden.getPointer())
+          ->get3DRenderScene(0, nullptr, nullptr, nullptr, &settings);
+  check(visible && visible->layers.size() == 1,
+        "hidden source survived group expansion");
+  const TFxP emptyFrame = buildSceneFx(&scene, 1.0, key, false);
+  const auto empty =
+      emptyFrame
+          ? static_cast<ThreePointLightFx *>(emptyFrame.getPointer())
+                ->get3DRenderScene(1, nullptr, nullptr, nullptr, &settings)
+          : nullptr;
+  check(!empty || empty->empty(), "merge ignored exposure range");
+  int canceled = 1;
+  check(!merge.get3DRenderScene(0, &canceled), "merge cancellation ignored");
+}
 }
 
 int main(int argc, char **argv) {
   QCoreApplication app(argc, argv); QTemporaryDir directory;
+  TThread::init();
+  TRenderer::initialize();
   try {
     check(directory.isValid(), "temporary directory unavailable");
     const QString path = directory.filePath("three-point.glb"); writeModel(path); ToonzScene scene;
@@ -168,6 +342,7 @@ int main(int argc, char **argv) {
     port->setFx(nullptr); check(!port->source() && columnFx->getOutputConnectionCount() == 0 && center(light).m == 0,
                                 "disconnect did not release column or clear output");
     testLightingChain(scene, columnFx);
+    testMerge(path, directory.filePath("merge.xml"));
     std::cout << "PASS: Three-Point Light sources, chaining, and rendering\n";
     return 0;
   } catch (const TException &) { std::cerr << "FAIL threepointlightfx: unexpected FX exception\n"; return 1; }

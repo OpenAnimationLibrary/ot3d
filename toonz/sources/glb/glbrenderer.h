@@ -109,6 +109,11 @@ struct RenderTriangle {
 struct ColorPixel {
   float r = 0, g = 0, b = 0, alpha = 0;  // Premultiplied sRGB.
 };
+struct RenderScene;
+struct RenderLayer {
+  std::shared_ptr<const RenderScene> scene;
+  std::array<double, 6> affine{{1, 0, 0, 0, 1, 0}};
+};
 struct RenderScene {
   // Screen-style RGB tint and opacity, applied once after coverage sampling.
   // Default is identity. Native model columns use this instead of a raster
@@ -120,6 +125,10 @@ struct RenderScene {
   bool wireframe = false;
   int textureWidth = 0, textureHeight = 0;
   std::shared_ptr<const std::vector<ColorPixel>> texture;
+  // Back-to-front source layers. Each retains its own camera/depth, texture,
+  // wireframe and color filter. Groups contain layers instead of triangles.
+  std::vector<RenderLayer> layers;
+  bool empty() const { return triangles.empty() && layers.empty(); }
 };
 struct RenderTile {
   int width = 0, height = 0;

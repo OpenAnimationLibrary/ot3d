@@ -198,6 +198,7 @@
     STD_imagePlaneFx
     STD_transform3DFx
     STD_threePointLightFx
+    STD_merge3DFx
   </3D>
   <Utility>
     STD_openExrAovFx

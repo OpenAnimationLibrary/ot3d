@@ -208,7 +208,7 @@ public:
     try {
       const auto rendered =
           get3DRenderGeometry(frame, info.m_isCanceled, nullptr, &info);
-      if (!rendered || rendered->triangles.empty()) return false;
+      if (!rendered || rendered->empty()) return false;
       const auto &b = rendered->bounds;
       bbox = TRectD(b[0], b[1], b[2], b[3]);
       return true;
@@ -240,7 +240,7 @@ public:
     try {
       const auto rendered =
           get3DRenderScene(frame, info.m_isCanceled, nullptr, nullptr, &info);
-      if (!rendered || rendered->triangles.empty()) return;
+      if (!rendered || rendered->empty()) return;
 
       otglb::RenderTile request;
       request.width = tile.getRaster()->getLx();
