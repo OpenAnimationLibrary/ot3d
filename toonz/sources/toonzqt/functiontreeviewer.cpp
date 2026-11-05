@@ -265,7 +265,7 @@ void FunctionTreeModel::ChannelGroup::setChildrenAllActive(bool active) {
 StageObjectChannelGroup::StageObjectChannelGroup(TStageObject *stageObject)
     : m_stageObject(stageObject)
     , m_plasticGroup()
-    , m_amChannels(stageObject->isAMTransformEnabled()) {
+    , m_amChannels(stageObject->is3DTransformEnabled()) {
   m_stageObject->addRef();
 }
 
@@ -962,7 +962,7 @@ void FunctionTreeModel::refreshStageObjects(TXsheet *xsh) {
     // making each channel of pegbar
     for (j = 0; j < jCount; ++j) {
       if (TStageObject::isAMChannel((TStageObject::Channel)channelIds[j]) &&
-          !stageObject->isAMTransformEnabled())
+          !stageObject->is3DTransformEnabled())
         continue;
       TDoubleParam *param =
           stageObject->getParam((TStageObject::Channel)channelIds[j]);

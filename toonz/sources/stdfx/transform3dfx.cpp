@@ -43,10 +43,11 @@ class Transform3DFx final : public TStandardRasterFx, public T3DRenderSource {
   TDoubleParamP m_positionX, m_positionY, m_positionZ;
   TDoubleParamP m_rotationX, m_rotationY, m_rotationZ;
   TDoubleParamP m_scaleX, m_scaleY, m_scaleZ;
-  TIntEnumParamP m_gizmoMode;
+  TIntEnumParamP m_gizmoMode, m_target;
 
   otglb::ModelTransform transform(double frame) const {
     otglb::ModelTransform result;
+    result.camera   = m_target->getValue() == 1;
     result.position = {{m_positionX->getValue(frame),
                         m_positionY->getValue(frame),
                         m_positionZ->getValue(frame)}};
@@ -91,7 +92,8 @@ public:
       , m_scaleX(100.0)
       , m_scaleY(100.0)
       , m_scaleZ(100.0)
-      , m_gizmoMode(new TIntEnumParam(0, "Translate")) {
+      , m_gizmoMode(new TIntEnumParam(0, "Translate"))
+      , m_target(new TIntEnumParam(0, "Geometry")) {
     addInputPort("Source", m_source);
 
     bindParam(this, "positionX", m_positionX);
@@ -104,6 +106,8 @@ public:
     bindParam(this, "scaleY", m_scaleY);
     bindParam(this, "scaleZ", m_scaleZ);
     bindParam(this, "gizmoMode", m_gizmoMode);
+    bindParam(this, "target", m_target);
+    m_target->addItem(1, "Camera");
 
     m_gizmoMode->addItem(1, "Rotate");
     m_gizmoMode->addItem(2, "Scale");
@@ -138,12 +142,15 @@ public:
   }
 
   void getParamUIs(TParamUIConcept *&concepts, int &length) override {
+    // Keep a stable concept and pass the live target. The gadget observes it
+    // so Camera/Geometry toggles and Undo update visibility without
+    // reselection.
     concepts             = new TParamUIConcept[length = 1];
     concepts[0].m_type   = TParamUIConcept::TRANSFORM_3D;
     concepts[0].m_label  = "3D Transform";
     concepts[0].m_params = {m_positionX, m_positionY, m_positionZ, m_rotationX,
                             m_rotationY, m_rotationZ, m_scaleX,    m_scaleY,
-                            m_scaleZ,    m_gizmoMode};
+                            m_scaleZ,    m_gizmoMode, m_target};
   }
 
   bool doGetBBox(double frame, TRectD &bbox,

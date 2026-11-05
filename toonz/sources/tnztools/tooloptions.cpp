@@ -470,38 +470,39 @@ ArrowToolOptionsBox::ArrowToolOptionsBox(
   m_amRotationXField =
       new PegbarChannelField(m_tool, TStageObject::T_RotationX, "m_amRotationX",
                              frameHandle, objHandle, xshHandle, this);
-  m_amRotationXField->setToolTip(
-      tr("A:M local X rotation (degrees). Rotation order: X, then Y, then Z."));
+  m_amRotationXField->setToolTip(tr(
+      "Object local X rotation (degrees). Rotation order: X, then Y, then Z."));
   m_amRotationXField->setVisible(false);
   m_amRotationXLabel->setVisible(false);
   m_amRotationYLabel = new ClickableLabel(tr("Ry:"), this);
   m_amRotationYField =
       new PegbarChannelField(m_tool, TStageObject::T_RotationY, "m_amRotationY",
                              frameHandle, objHandle, xshHandle, this);
-  m_amRotationYField->setToolTip(tr("A:M local Y rotation (degrees)."));
+  m_amRotationYField->setToolTip(tr("Object local Y rotation (degrees)."));
   m_amRotationYField->setVisible(false);
   m_amRotationYLabel->setVisible(false);
   m_amScaleZLabel = new ClickableLabel(tr("Z:"), this);
   m_amScaleZField =
       new PegbarChannelField(m_tool, TStageObject::T_ScaleZ, "m_amScaleZ",
                              frameHandle, objHandle, xshHandle, this);
-  m_amScaleZField->setToolTip(
-      tr("A:M local Z scale; Global scale also applies."));
+  m_amScaleZField->setToolTip(tr(
+      "Model Z scale includes Global scale; camera Z scale is independent."));
   m_amScaleZField->setVisible(false);
   m_amScaleZLabel->setVisible(false);
   m_amCenterZLabel = new ClickableLabel(tr("Z:"), this);
   m_amCenterZField =
       new PegbarChannelField(m_tool, TStageObject::T_CenterZ, "m_amCenterZ",
                              frameHandle, objHandle, xshHandle, this);
-  m_amCenterZField->setToolTip(
-      tr("A:M local pivot Z. X/Y pivot keeps the existing Center behavior."));
+  m_amCenterZField->setToolTip(tr(
+      "Object local pivot Z. X/Y pivot keeps the existing Center behavior."));
   m_amCenterZField->setVisible(false);
   m_amCenterZLabel->setVisible(false);
 
   m_amRotationButton = new QToolButton(this);
   m_amRotationButton->setText(tr("3D Rotation"));
   m_amRotationButton->setToolTip(
-      tr("Rotate the model about X, Y or Z. The standard canvas rotation "
+      tr("Rotate the model or camera about X, Y or Z. The standard canvas "
+         "rotation "
          "remains Z."));
   m_amRotationButton->setPopupMode(QToolButton::InstantPopup);
   auto *rotationMenu   = new QMenu(m_amRotationButton);
@@ -1016,26 +1017,27 @@ void ArrowToolOptionsBox::updateStatus() {
                      !cells->getCell(first).isEmpty() &&
                      cells->getCell(first).m_level->getType() == AM_XSHLEVEL;
   if (object && objectId.isColumn()) object->enableAMTransform(model);
-  m_amRotationButton->setVisible(model);
-  m_amRotationXLabel->setVisible(model);
-  m_amRotationXField->setVisible(model);
-  m_amRotationXField->setEnabled(model);
+  const bool spatial = model || objectId.isCamera();
+  m_amRotationButton->setVisible(spatial);
+  m_amRotationXLabel->setVisible(spatial);
+  m_amRotationXField->setVisible(spatial);
+  m_amRotationXField->setEnabled(spatial);
   m_amRotationXField->updateStatus();
-  m_amRotationYLabel->setVisible(model);
-  m_amRotationYField->setVisible(model);
-  m_amRotationYField->setEnabled(model);
+  m_amRotationYLabel->setVisible(spatial);
+  m_amRotationYField->setVisible(spatial);
+  m_amRotationYField->setEnabled(spatial);
   m_amRotationYField->updateStatus();
-  m_amScaleZLabel->setVisible(model);
-  m_amScaleZField->setVisible(model);
-  m_amScaleZField->setEnabled(model);
+  m_amScaleZLabel->setVisible(spatial);
+  m_amScaleZField->setVisible(spatial);
+  m_amScaleZField->setEnabled(spatial);
   m_amScaleZField->updateStatus();
-  m_amCenterZLabel->setVisible(model);
-  m_amCenterZField->setVisible(model);
-  m_amCenterZField->setEnabled(model);
+  m_amCenterZLabel->setVisible(spatial);
+  m_amCenterZField->setVisible(spatial);
+  m_amCenterZField->setEnabled(spatial);
   m_amCenterZField->updateStatus();
-  m_rotationLabel->setText(model ? tr("Rz:") : tr("Rotation:"));
-  m_scaleHLabel->setText(model ? tr("X:") : tr("H:"));
-  m_scaleVLabel->setText(model ? tr("Y:") : tr("V:"));
+  m_rotationLabel->setText(spatial ? tr("Rz:") : tr("Rotation:"));
+  m_scaleHLabel->setText(spatial ? tr("X:") : tr("H:"));
+  m_scaleVLabel->setText(spatial ? tr("Y:") : tr("V:"));
   // General
   m_chooseActiveAxisCombo->updateStatus();
   m_pickCombo->updateStatus();

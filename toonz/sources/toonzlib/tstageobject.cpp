@@ -439,22 +439,22 @@ TStageObject::TStageObject(TStageObjectTree *tree, TStageObjectId id)
   m_sheary->setMeasureName("shear");
   m_sheary->addObserver(this);
 
-  m_amRotationX->setName("AM Rotation X");
+  m_amRotationX->setName("Rotation X");
   m_amRotationX->setMeasureName("angle");
   m_amRotationX->addObserver(this);
   m_tree->setGrammar(m_amRotationX);
 
-  m_amRotationY->setName("AM Rotation Y");
+  m_amRotationY->setName("Rotation Y");
   m_amRotationY->setMeasureName("angle");
   m_amRotationY->addObserver(this);
   m_tree->setGrammar(m_amRotationY);
 
-  m_amScaleZ->setName("AM Scale Z");
+  m_amScaleZ->setName("Scale Z");
   m_amScaleZ->setMeasureName("scale");
   m_amScaleZ->addObserver(this);
   m_tree->setGrammar(m_amScaleZ);
 
-  m_amCenterZ->setName("AM Pivot Z");
+  m_amCenterZ->setName("Pivot Z");
   m_amCenterZ->setMeasureName("length");
   m_amCenterZ->addObserver(this);
   m_tree->setGrammar(m_amCenterZ);
@@ -861,7 +861,7 @@ bool TStageObject::is52FullKeyframe(int frame) const {
 //-----------------------------------------------------------------------------
 
 bool TStageObject::isFullKeyframe(int frame) const {
-  if (m_amTransformEnabled &&
+  if (is3DTransformEnabled() &&
       !(m_amRotationX->isKeyframe(frame) && m_amRotationY->isKeyframe(frame) &&
         m_amScaleZ->isKeyframe(frame) && m_amCenterZ->isKeyframe(frame)))
     return false;
@@ -989,7 +989,7 @@ void TStageObject::setKeyframeWithoutUndo(int frame) {
   setkey(m_scale, frame);
   setkey(m_shearx, frame);
   setkey(m_sheary, frame);
-  if (m_amTransformEnabled) {
+  if (is3DTransformEnabled()) {
     setkey(m_amRotationX, frame);
     setkey(m_amRotationY, frame);
     setkey(m_amScaleZ, frame);
@@ -1598,7 +1598,7 @@ void TStageObject::updateKeyframes(LazyData &ld) const {
   params.push_back(m_scale.getPointer());
   params.push_back(m_shearx.getPointer());
   params.push_back(m_sheary.getPointer());
-  if (m_amTransformEnabled) {
+  if (is3DTransformEnabled()) {
     params.push_back(m_amRotationX.getPointer());
     params.push_back(m_amRotationY.getPointer());
     params.push_back(m_amScaleZ.getPointer());
@@ -2260,7 +2260,7 @@ void TStageObject::enableAMTransform(bool enabled) {
 std::array<double, 16> TStageObject::getAMPlacement(double t) {
   const double frame = paramsTime(t);
   otam::Matrix local;
-  if (!m_amTransformEnabled) {
+  if (!is3DTransformEnabled()) {
     // Existing 2D ancestors keep their exact planar placement, with separate Z.
     const TAffine a = getLocalPlacement(frame);
     local           = {{a.a11, a.a12, 0, a.a13, a.a21, a.a22, 0, a.a23, 0, 0, 1,
@@ -2268,7 +2268,7 @@ std::array<double, 16> TStageObject::getAMPlacement(double t) {
   } else {
     if ((m_status & STATUS_MASK) == IK)
       throw std::runtime_error(
-          "A:M model columns do not support the legacy 2D IK placement");
+          "Spatial objects do not support the legacy 2D IK placement");
     const double sc = m_scale->getValue(frame);
     double angle    = m_rot->getValue(frame);
     TPointD position(m_x->getValue(frame) * Stage::inch,
@@ -2298,7 +2298,8 @@ std::array<double, 16> TStageObject::getAMPlacement(double t) {
                      shear,
                      otam::multiply(otam::scaling(sc * m_scalex->getValue(frame),
                                                   sc * m_scaley->getValue(frame),
-                                                  sc * m_amScaleZ->getValue(frame)),
+                                                  (m_id.isCamera() ? 1.0 : sc) *
+                                                      m_amScaleZ->getValue(frame)),
                                     otam::translation(-center.x, -center.y,
                                                       -m_amCenterZ->getValue(frame) *
                                                           Stage::inch)))));

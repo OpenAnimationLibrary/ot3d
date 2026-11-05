@@ -298,6 +298,72 @@ int main() {
       check(renderTile(s, tile(), &canceled).empty(), "Render cancellation ignored");
       a.scenes.clear(); check(prepareRender(a, {}).triangles.empty(), "Mesh-only asset invented instances");
     });
+    run("camera target uses inverse pose and does not transform the model", [] {
+      const auto a = triangle();
+      ModelTransform camera;
+      camera.camera   = true;
+      camera.position = {{2, 0, 0}};
+      RenderOptions o;
+      o.transforms       = {camera};
+      const auto shifted = prepareRender(a, o);
+      near(shifted.bounds[0], -300);
+      near(shifted.bounds[2], -100);
+      RenderOptions geometry        = o;
+      geometry.transforms[0].camera = false;
+      check(!(o == geometry),
+            "camera target omitted from render cache identity");
+      near(prepareRender(a, geometry).bounds[0], 100);
+      ModelTransform move;
+      move.position = {{2, 0, 0}};
+      o.transforms  = {move, camera};
+      equal(renderTile(prepareRender(a, o), tile()),
+            renderTile(prepareRender(a, {}), tile()));
+      camera.position = {{0, 0, 0}};
+      camera.rotation = {{0, 180, 0}};
+      o.transforms    = {camera};
+      check(prepareRender(a, o).triangles.empty(),
+            "camera did not clip geometry behind it");
+      camera.rotation = {{13, 21, 32}};
+      camera.scale    = {{2, 3, 4}};
+      o.transforms    = {camera};
+      o.farClip       = 10000;
+      auto scene      = prepareRender(a, o);
+      check(!scene.triangles.empty(),
+            "rotated camera lost all visible geometry");
+      // Undo camera Z/Y/X rotation, then scale. Independent numeric oracle.
+      double x = -1, y = -1, z = -10;
+      const double rad = 3.14159265358979323846 / 180;
+      auto rotate      = [&](double &u, double &v, double angle) {
+        double first = u;
+        u            = std::cos(angle) * u + std::sin(angle) * v;
+        v            = -std::sin(angle) * first + std::cos(angle) * v;
+      };
+      rotate(x, y, 32 * rad);
+      rotate(z, x, 21 * rad);
+      rotate(y, z, 13 * rad);
+      near(scene.triangles[0].vertices[0].x, x / 2 * 100);
+      near(scene.triangles[0].vertices[0].y, y / 3 * 100);
+      near(scene.triangles[0].vertices[0].depth, z / 4);
+      camera.scale[1] = 0;
+      o.transforms    = {camera};
+      rejects([&] { prepareRender(a, o); });
+    });
+    run("camera target affects image plane view while preserving texture", [] {
+      auto pixels =
+          std::make_shared<std::vector<ColorPixel>>(4, ColorPixel{1, 0, 0, 1});
+      ModelTransform camera;
+      camera.camera      = true;
+      camera.position[0] = 1;
+      const auto plane   = prepareImagePlane(2, 2, pixels, {camera});
+      check(plane.texture == pixels && plane.triangles.size() == 2,
+            "camera discarded texture");
+      near(plane.bounds[0], -101);
+      near(plane.bounds[2], -99);
+      camera.position[0] = 0;
+      camera.rotation[1] = 180;
+      check(prepareImagePlane(2, 2, pixels, {camera}).triangles.empty(),
+            "plane behind camera survived");
+    });
     std::cout << passed << " renderer groups passed\n";
     return 0;
   } catch (const std::exception &e) {

@@ -79,7 +79,7 @@ int main(int argc, char **argv) {
     check(transform.getInputPortCount() == 1 &&
               transform.getInputPortName(0) == "Source",
           "3D Transformer persistence port must be Source");
-    check(transform.getParams()->getParamCount() == 10,
+    check(transform.getParams()->getParamCount() == 11,
           "unexpected 3D Transformer parameter count");
     for (const char *name : {"positionX", "positionY", "positionZ", "rotationX",
                              "rotationY", "rotationZ"})
@@ -94,7 +94,7 @@ int main(int argc, char **argv) {
     transform.getParamUIs(concepts, conceptCount);
     check(conceptCount == 1 &&
               concepts[0].m_type == TParamUIConcept::TRANSFORM_3D &&
-              concepts[0].m_params.size() == 10,
+              concepts[0].m_params.size() == 11,
           "3D Transformer did not publish its canvas gizmo");
     delete[] concepts;
 
@@ -169,6 +169,36 @@ int main(int argc, char **argv) {
     check(cloned && cloned->getInputPort("Source") && rendered(*cloned),
           "recursive clone lost the 3D source or transform");
 
+    // Camera is an explicit opt-in; legacy nodes default to Geometry.
+    check(param<TIntEnumParam>(transform, "target")->getValue() == 0,
+          "old transform default changed");
+    param<TIntEnumParam>(transform, "target")->setValue(1);
+    param<TDoubleParam>(transform, "positionX")->setValue(0, 2);
+    scene = rendered(transform);
+    checkNear(scene->bounds[0], -300);
+    checkNear(scene->bounds[2], -100);
+    concepts     = nullptr;
+    conceptCount = 99;
+    transform.getParamUIs(concepts, conceptCount);
+    check(concepts && conceptCount == 1 && concepts[0].m_params.size() == 11,
+          "camera target visibility binding missing");
+    auto *liveTarget =
+        dynamic_cast<TIntEnumParam *>(concepts[0].m_params[10].getPointer());
+    check(liveTarget == param<TIntEnumParam>(transform, "target") &&
+              liveTarget->getValue() == 1,
+          "gizmo did not retain the live camera target");
+    liveTarget->setValue(0);
+    check(param<TIntEnumParam>(transform, "target")->getValue() == 0,
+          "geometry target did not update the existing concept");
+    liveTarget->setValue(1);
+    delete[] concepts;
+    TFxP cameraCloneOwner = transform.clone(true);
+    auto *cameraClone =
+        dynamic_cast<Transform3DFx *>(cameraCloneOwner.getPointer());
+    check(cameraClone &&
+              param<TIntEnumParam>(*cameraClone, "target")->getValue() == 1,
+          "clone lost camera target");
+    checkNear(rendered(*cameraClone)->bounds[0], -300);
     std::cout
         << "PASS: 3D Transformer parameters, canvas concept, source "
            "validation, nonuniform transforms, chaining, clone and render\n";

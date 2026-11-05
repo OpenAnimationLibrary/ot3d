@@ -362,8 +362,12 @@ with the frame.
   bool getKeyframeSpan(int row, int &r0, double &ease0, int &r1,
                        double &ease1) const;
 
-  // Only native A:M columns opt in. The ordinary TAffine path is unchanged.
+  // Native model columns opt in; cameras always expose spatial channels.
+  // The ordinary TAffine path and ordinary drawing columns are unchanged.
   bool isAMTransformEnabled() const { return m_amTransformEnabled; }
+  bool is3DTransformEnabled() const {
+    return m_amTransformEnabled || m_id.isCamera();
+  }
   void enableAMTransform(bool enabled);
   std::array<double, 16> getAMPlacement(double frame);
   static bool isAMChannel(Channel channel) { return channel >= T_RotationX; }
