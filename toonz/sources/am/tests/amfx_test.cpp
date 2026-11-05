@@ -14,6 +14,14 @@
 #include "toonz/fxcommand.h"
 #include "toonz/fxdag.h"
 #include "toonz/tcolumnfxset.h"
+#include "toonz/sceneproperties.h"
+#include "toonz/txshchildlevel.h"
+#include "toonz/txshzeraryfxcolumn.h"
+#include "toonz/tstageobject.h"
+#include "toutputproperties.h"
+#include "trenderer.h"
+#include "tthread.h"
+#include "tstream.h"
 #include "tparamcontainer.h"
 #include <QGuiApplication>
 #include <QTemporaryDir>
@@ -36,9 +44,129 @@ double coverage(const TRaster32P &raster) {
     for (int x = 0; x < raster->getLx(); ++x) result += raster->pixels(y)[x].m;
   return result;
 }
+double brightness(const TRaster32P &raster) {
+  double result = 0;
+  for (int y = 0; y < raster->getLy(); ++y)
+    for (int x = 0; x < raster->getLx(); ++x) {
+      const auto p = raster->pixels(y)[x];
+      result += p.r + p.g + p.b;
+    }
+  return result;
+}
+TRaster32P render(ToonzScene &scene, const TRenderSettings &settings) {
+  const TFxP tree =
+      buildSceneFx(&scene, scene.getXsheet(), 0, TOutputProperties::AllLevels,
+                   1, false, settings);
+  auto *fx = dynamic_cast<TRasterFx *>(tree.getPointer());
+  require(fx, "missing scene render tree");
+  TRaster32P raster(128, 128);
+  TTile tile(raster, TPointD(-64, -64));
+  TRenderer renderer(1);
+  renderer.enablePrecomputing(false);
+  const auto id = TRenderer::buildRenderId();
+  renderer.install(id);
+  renderer.declareRenderStart(id);
+  renderer.declareFrameStart(0);
+  fx->compute(tile, 0, settings);
+  renderer.declareFrameEnd(0);
+  renderer.declareRenderEnd(id);
+  renderer.uninstall();
+  return raster;
+}
+void testRenderModes(ToonzScene &scene, TXshLevel *level, const QString &path) {
+  auto *sheet  = scene.getXsheet();
+  auto *column = sheet->getColumn(0)->getFx();
+  TRenderSettings normal, dark, flat;
+  dark.m_disableDefaultLighting = true;
+  flat                          = dark;
+  flat.m_flatRender             = true;
+  require(!normal.m_flatRender && !normal.m_disableDefaultLighting &&
+              !(normal == dark) && !(dark == flat) &&
+              normal.toString() != dark.toString() &&
+              dark.toString() != flat.toString(),
+          "render modes share a cache identity or changed legacy defaults");
+  const auto base  = render(scene, normal);
+  const auto black = render(scene, dark);
+  require(coverage(base) > 0 && brightness(base) > 0 &&
+              coverage(black) == coverage(base) && brightness(black) == 0,
+          "native model without a rig must render opaque black");
+  TFxP owner  = new ThreePointLightFx;
+  auto &light = *static_cast<ThreePointLightFx *>(owner.getPointer());
+  light.getInputPort(0)->setFx(column);
+  sheet->getFxDag()->getInternalFxs()->addFx(&light);
+  sheet->getFxDag()->removeFromXsheet(column);
+  sheet->getFxDag()->addToXsheet(&light);
+  require(brightness(render(scene, dark)) > 0,
+          "default lighting switch disabled an explicit native rig");
+  set(light, "masterIntensity", 0);
+  require(brightness(render(scene, normal)) == 0,
+          "connected lighting FX did not affect normal output");
+  require(brightness(render(scene, flat)) == brightness(base),
+          "flat render failed to bypass the FX graph and lighting");
+  // An output disconnection must not hide the source canvas in flat mode.
+  sheet->getFxDag()->getOutputFx(0)->getInputPort(0)->setFx(nullptr);
+  require(brightness(render(scene, flat)) == brightness(base),
+          "flat render depended on a connected output FX");
+  sheet->getColumn(0)->setPreviewVisible(false);
+  require(coverage(render(scene, flat)) == 0,
+          "flat render included a hidden source column");
+  sheet->getColumn(0)->setPreviewVisible(true);
+  auto *object = sheet->getStageObject(TStageObjectId::ColumnId(0));
+  object->getParam(TStageObject::T_X)->setValue(0, 10);
+  require(coverage(render(scene, flat)) == 0,
+          "flat render discarded stage placement");
+  object->getParam(TStageObject::T_X)->setValue(0, 0);
+  // Settings must be independent for output and preview and survive reopening.
+  scene.getProperties()->getOutputProperties()->setRenderSettings(flat);
+  scene.getProperties()->getPreviewProperties()->setRenderSettings(dark);
+  {
+    TOStream out{TFilePath(path)};
+    scene.getProperties()->saveData(out);
+  }
+  TSceneProperties restored;
+  {
+    TIStream in{TFilePath(path)};
+    restored.loadData(in, false);
+  }
+  const auto &out     = restored.getOutputProperties()->getRenderSettings();
+  const auto &preview = restored.getPreviewProperties()->getRenderSettings();
+  require(out.m_flatRender && out.m_disableDefaultLighting &&
+              !preview.m_flatRender && preview.m_disableDefaultLighting,
+          "output/preview render modes did not survive persistence");
+  // A nested xsheet inherits the flat composition policy.
+  ToonzScene nestedScene;
+  TXshChildLevelP child = new TXshChildLevel;
+  child->setScene(&nestedScene);
+  require(child->getXsheet()->setCell(0, 0, TXshCell(level, TFrameId(1))),
+          "nested model exposure");
+  child->getXsheet()->getFxDag()->getOutputFx(0)->getInputPort(0)->setFx(
+      nullptr);
+  require(nestedScene.getXsheet()->setCell(
+              0, 0, TXshCell(child.getPointer(), TFrameId(1))),
+          "nested exposure");
+  require(brightness(render(nestedScene, flat)) > 0,
+          "flat policy was lost in a nested xsheet");
+  ToonzScene imageScene;
+  TFxP image = TFx::create("colorCardFx");
+  require(image, "image source unavailable");
+  auto *color =
+      dynamic_cast<TPixelParam *>(image->getParams()->getParam("color"));
+  require(color, "image color parameter unavailable");
+  color->setValue(0, TPixel32::Red);
+  TXshZeraryFxColumnP imageColumn = new TXshZeraryFxColumn(1);
+  imageColumn->getZeraryColumnFx()->setZeraryFx(image.getPointer());
+  imageScene.getXsheet()->insertColumn(0, imageColumn.getPointer());
+  const auto imageBase = brightness(render(imageScene, normal));
+  require(imageBase > 0 && brightness(render(imageScene, dark)) == imageBase &&
+              brightness(render(imageScene, flat)) == imageBase,
+          "render modes changed unlit image source colors");
+  scene.getProperties()->getOutputProperties()->setRenderSettings(normal);
+}
 }  // namespace
 int main(int argc, char **argv) {
   QGuiApplication app(argc, argv);
+  TThread::init();
+  TRenderer::initialize();
   try {
     QTemporaryDir temp;
     require(temp.isValid(), "temporary directory");
@@ -174,6 +302,7 @@ int main(int argc, char **argv) {
             "cancellation not honored");
     require(!transform.get3DRenderScene(1, nullptr),
             "empty exposure rendered a stale model");
+    testRenderModes(scene, level, temp.filePath("render-settings.xml"));
     std::cout << "A:M native FX connections, transforms, lighting, filters and "
                  "render tree passed\n";
     return 0;

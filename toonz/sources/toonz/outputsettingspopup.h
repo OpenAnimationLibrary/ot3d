@@ -59,6 +59,8 @@ class OutputSettingsPopup : public DVGui::Dialog {
   QComboBox *m_resampleBalanceOm;
   QComboBox *m_channelWidthOm;
   DVGui::CheckBox *m_linearColorSpaceChk;
+  DVGui::CheckBox *m_flatRenderChk;
+  DVGui::CheckBox *m_disableDefaultLightingChk;
   DVGui::DoubleLineEdit *m_colorSpaceGammaFld;
   DVGui::DoubleLineEdit *m_gammaFld;
   QComboBox *m_dominantFieldOm;
@@ -119,6 +121,7 @@ protected slots:
   void onResampleChanged(int type);
   void onChannelWidthChanged(int type);
   void onLinearColorSpaceClicked(bool checked);
+  void onRenderModeChanged();
   void onColorSpaceGammaEdited();
   void onGammaFldEditFinished();
   void onDominantFieldChanged(int type);

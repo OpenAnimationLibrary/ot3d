@@ -701,7 +701,9 @@ void TRasterFx::dryCompute(TRectD &rect, double frame,
   std::string alias = getAlias(frame, info) + "[" + ::traduce(info.m_affine) +
                       "][" + std::to_string(info.m_bpp) + "][" +
                       std::to_string(info.m_linearColorSpace) + "][" +
-                      std::to_string(info.m_colorSpaceGamma) + "]";
+                      std::to_string(info.m_colorSpaceGamma) + "][" +
+                      std::to_string(info.m_flatRender) + "][" +
+                      std::to_string(info.m_disableDefaultLighting) + "]";
 
   int renderStatus =
       TRenderer::instance().getRenderStatus(TRenderer::renderId());
@@ -930,7 +932,9 @@ void TRasterFx::compute(TTile &tile, double frame,
   std::string alias = getAlias(frame, info) + "[" + ::traduce(info.m_affine) +
                       "][" + std::to_string(info.m_bpp) + "][" +
                       std::to_string(computeInLinear) + "][" +
-                      std::to_string(info.m_colorSpaceGamma) + "]";
+                      std::to_string(info.m_colorSpaceGamma) + "][" +
+                      std::to_string(info.m_flatRender) + "][" +
+                      std::to_string(info.m_disableDefaultLighting) + "]";
 
   // Extract the interesting tile from requested one
   TTile interestingTile;
@@ -1171,6 +1175,8 @@ TRenderSettings::TRenderSettings()
     , m_userCachable(true)
     , m_isCanceled(NULL)
     , m_getFullSizeBBox(false)
+    , m_flatRender(false)
+    , m_disableDefaultLighting(false)
     , m_linearColorSpace(false)
     , m_colorSpaceGamma(2.2) {}
 
@@ -1192,7 +1198,8 @@ std::string TRenderSettings::toString() const {
       "," + std::to_string(m_affine.a23) + ";" + std::to_string(m_maxTileSize) +
       ";" + std::to_string(m_isSwatch) + ";" + std::to_string(m_userCachable) +
       ";" + std::to_string(m_linearColorSpace) + ";" +
-      std::to_string(m_colorSpaceGamma) + ";{";
+      std::to_string(m_colorSpaceGamma) + ";" + std::to_string(m_flatRender) +
+      ";" + std::to_string(m_disableDefaultLighting) + ";{";
   if (!m_data.empty()) {
     ss += m_data[0]->toString();
     for (int i = 1; i < (int)m_data.size(); i++)
@@ -1217,6 +1224,8 @@ bool TRenderSettings::operator==(const TRenderSettings &rhs) const {
       m_mark != rhs.m_mark || m_isSwatch != rhs.m_isSwatch ||
       m_userCachable != rhs.m_userCachable ||
       m_linearColorSpace != rhs.m_linearColorSpace ||
+      m_flatRender != rhs.m_flatRender ||
+      m_disableDefaultLighting != rhs.m_disableDefaultLighting ||
       m_colorSpaceGamma != rhs.m_colorSpaceGamma)
     return false;
 

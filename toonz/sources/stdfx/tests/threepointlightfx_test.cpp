@@ -37,9 +37,12 @@ void writeModel(const QString &path) {
   check(file.open(QIODevice::WriteOnly), "cannot create GLB fixture");
   check(file.write(reinterpret_cast<const char *>(bytes.data()), bytes.size()) == qint64(bytes.size()), "incomplete GLB fixture write");
 }
-TPixel32 center(ThreePointLightFx &fx) {
+template <class FX>
+TPixel32 center(FX &fx, TRenderSettings settings = TRenderSettings()) {
   TRaster32P raster(80, 80); TTile tile; tile.setRaster(raster); tile.m_pos = TPointD(-40, -40);
-  TRenderSettings settings; settings.m_affine = TScale(.2); fx.doCompute(tile, 0, settings); return raster->pixels(40)[40];
+  settings.m_affine = TScale(.2);
+  fx.doCompute(tile, 0, settings);
+  return raster->pixels(40)[40];
 }
 void zeroSecondaryLights(ThreePointLightFx &fx) {
   param<TDoubleParam>(fx, "ambient")->setValue(0, 0.0);
@@ -115,6 +118,29 @@ void testLightingChain(ToonzScene &scene, TFx *column) {
             front.b == muted.b && front.m == muted.m,
         "moving one rig did not isolate its contribution in a mixed chain");
 }
+
+void testRenderModes(GlbModelFx &model, TFx *column) {
+  TRenderSettings dark;
+  dark.m_disableDefaultLighting = true;
+  param<TIntEnumParam>(model, "lighting")->setValue(1);
+  const auto black = center(model, dark);
+  check(black == TPixel32::Black,
+        "disabling default lighting did not override the GLB headlight");
+  const auto red = makeKey(column, TPixel32(255, 0, 0, 255), 100);
+  auto &light    = *static_cast<ThreePointLightFx *>(red.getPointer());
+  const auto lit = center(light, dark);
+  check(lit.m == 255 && lit.r > 245 && lit.g == 0 && lit.b == 0,
+        "disabling default lighting suppressed an explicit rig");
+  auto flat         = dark;
+  flat.m_flatRender = true;
+  const auto unlit  = center(model, flat);
+  check(unlit.m == 255 && unlit.r > 245 && unlit.g > 245 && unlit.b > 245 &&
+            center(light, flat) == unlit,
+        "flat render did not override default and explicit GLB lighting");
+  check(center(model, dark) == black,
+        "changing GLB render modes reused the flat projection");
+  param<TIntEnumParam>(model, "lighting")->setValue(0);
+}
 }
 
 int main(int argc, char **argv) {
@@ -168,6 +194,7 @@ int main(int argc, char **argv) {
     port->setFx(nullptr); check(!port->source() && columnFx->getOutputConnectionCount() == 0 && center(light).m == 0,
                                 "disconnect did not release column or clear output");
     testLightingChain(scene, columnFx);
+    testRenderModes(model, columnFx);
     std::cout << "PASS: Three-Point Light sources, chaining, and rendering\n";
     return 0;
   } catch (const TException &) { std::cerr << "FAIL threepointlightfx: unexpected FX exception\n"; return 1; }

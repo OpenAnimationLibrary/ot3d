@@ -150,8 +150,13 @@ public:
   std::shared_ptr<const otglb::RenderScene> get3DRenderScene(
       double, const int *canceled, const otglb::LightingRig *lighting = nullptr,
       const std::vector<otglb::ModelTransform> *transforms = nullptr,
-      const TRenderSettings * = nullptr) const override {
+      const TRenderSettings *settings = nullptr) const override {
     if (!m_geometry || (canceled && *canceled)) return {};
+    const otglb::LightingRig dark;
+    if (settings && settings->m_flatRender)
+      lighting = nullptr;
+    else if (settings && settings->m_disableDefaultLighting && !lighting)
+      lighting = &dark;
     otam::Mesh mesh = *m_geometry;
     auto cameraPose = m_camera.pose;
     if (transforms)

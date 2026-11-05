@@ -17,6 +17,7 @@
 
 class TXsheet;
 class ToonzScene;
+class TRenderSettings;
 
 /*
   NOTE:  The following functions are DEPRECATED, but still in use throughout
@@ -26,6 +27,9 @@ class ToonzScene;
 
 DVAPI TFxP buildSceneFx(ToonzScene *scene, TXsheet *xsh, double row,
                         int whichLevels, int shrink, bool isPreview);
+DVAPI TFxP buildSceneFx(ToonzScene *scene, TXsheet *xsh, double row,
+                        int whichLevels, int shrink, bool isPreview,
+                        const TRenderSettings &settings);
 DVAPI TFxP buildSceneFx(ToonzScene *scene, double row, int shrink,
                         bool isPreview);
 DVAPI TFxP buildSceneFx(ToonzScene *scene, TXsheet *xsh, double row, int shrink,
