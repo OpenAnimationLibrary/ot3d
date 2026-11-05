@@ -1,6 +1,6 @@
 <fxlayout>
   <page name="Lighting">
-    <label>"Camera-relative three-point diffuse lighting for a GLB Model source. Shadows and PBR/specular response are not part of this first version."</label>
+    <label>"Diffuse lighting for a GLB or native A:M model. Chain lighting nodes to combine their rigs."</label>
     <separator label="Global"/>
     <control>masterIntensity</control>
     <control>ambient</control>
@@ -19,5 +19,13 @@
     <control>rimIntensity</control>
     <control>rimAzimuth</control>
     <control>rimElevation</control>
+  </page>
+  <page name="Placement">
+    <label>"In Positional mode, XYZ moves the whole rig in the model source's 3D space. Radius sets the distance from the rig center to each light."</label>
+    <control>lightMode</control>
+    <control>rigPositionX</control>
+    <control>rigPositionY</control>
+    <control>rigPositionZ</control>
+    <control>rigRadius</control>
   </page>
 </fxlayout>

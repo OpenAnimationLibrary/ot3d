@@ -99,6 +99,21 @@ void testLightingChain(ToonzScene &scene, TFx *column) {
         "scene expansion or cloning changed the chained render");
   check(!buildSceneFx(&scene, 1.0, blue, false),
         "chained lights ignored the GLB exposure range");
+
+  auto *mode = param<TIntEnumParam>(second, "lightMode");
+  check(mode->getValue() == 0, "existing lights must default to directional");
+  mode->setValue(1);
+  param<TDoubleParam>(second, "ambient")->setValue(0, 0.0);
+  param<TDoubleParam>(second, "masterIntensity")->setValue(0, 50.0);
+  param<TDoubleParam>(second, "rigRadius")->setValue(0, 2.0);
+  auto *z = param<TDoubleParam>(second, "rigPositionZ");
+  z->setValue(0, 0.0);
+  const auto front = center(last);
+  z->setValue(0, -4.0);
+  const auto rear = center(last);
+  check(front.g > 170 && rear == muted && front.r == muted.r &&
+            front.b == muted.b && front.m == muted.m,
+        "moving one rig did not isolate its contribution in a mixed chain");
 }
 }
 

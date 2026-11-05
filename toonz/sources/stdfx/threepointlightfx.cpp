@@ -1,6 +1,7 @@
 #include "stdfx.h"
 #include "t3dsource.h"
 #include "tfxparam.h"
+#include "tnotanimatableparam.h"
 #include "tparamset.h"
 
 #include <algorithm>
@@ -53,6 +54,8 @@ class ThreePointLightFx final : public TStandardRasterFx,
   FX_PLUGIN_DECLARATION(ThreePointLightFx)
 
   T3DSourcePort m_source;
+  TIntEnumParamP m_lightMode;
+  TDoubleParamP m_rigX, m_rigY, m_rigZ, m_rigRadius;
   TDoubleParamP m_masterIntensity, m_ambient;
   TDoubleParamP m_keyAzimuth, m_keyElevation, m_keyIntensity;
   TPixelParamP m_keyColor;
@@ -61,11 +64,11 @@ class ThreePointLightFx final : public TStandardRasterFx,
   TDoubleParamP m_rimAzimuth, m_rimElevation, m_rimIntensity;
   TPixelParamP m_rimColor;
 
-  otglb::DirectionalLight light(double frame, const TDoubleParamP &azimuth,
-                                const TDoubleParamP &elevation,
-                                const TDoubleParamP &intensity,
-                                const TPixelParamP &color) const {
-    otglb::DirectionalLight result;
+  otglb::DiffuseLight light(double frame, const TDoubleParamP &azimuth,
+                            const TDoubleParamP &elevation,
+                            const TDoubleParamP &intensity,
+                            const TPixelParamP &color) const {
+    otglb::DiffuseLight result;
     result.direction = lightDirection(azimuth->getValue(frame),
                                       elevation->getValue(frame));
     result.intensity = intensity->getValue(frame) / 100.0;
@@ -83,12 +86,30 @@ class ThreePointLightFx final : public TStandardRasterFx,
                                   m_fillIntensity, m_fillColor));
     result.lights.push_back(light(frame, m_rimAzimuth, m_rimElevation,
                                   m_rimIntensity, m_rimColor));
+    if (m_lightMode->getValue() == 1) {
+      const double radius = m_rigRadius->getValue(frame);
+      const std::array<double, 3> center{{m_rigX->getValue(frame),
+                                          m_rigY->getValue(frame),
+                                          m_rigZ->getValue(frame)}};
+      for (auto &light : result.lights) {
+        otglb::PointPlacement point;
+        point.radius = radius;
+        for (int axis = 0; axis < 3; ++axis)
+          point.position[axis] = center[axis] + radius * light.direction[axis];
+        light.point = point;
+      }
+    }
     return result;
   }
 
 public:
   ThreePointLightFx()
-      : m_masterIntensity(100.0)
+      : m_lightMode(new TIntEnumParam(0, "Directional"))
+      , m_rigX(0.0)
+      , m_rigY(0.0)
+      , m_rigZ(0.0)
+      , m_rigRadius(10.0)
+      , m_masterIntensity(100.0)
       , m_ambient(10.0)
       , m_keyAzimuth(-45.0)
       , m_keyElevation(35.0)
@@ -108,6 +129,14 @@ public:
     // identifier whitespace-free; the schematic can describe the source type
     // separately from this persistence key.
     addInputPort("GLB", m_source);
+
+    m_lightMode->addItem(1, "Positional");
+    m_rigRadius->setValueRange(0.001, 100000.0);
+    bindParam(this, "lightMode", m_lightMode);
+    bindParam(this, "rigPositionX", m_rigX);
+    bindParam(this, "rigPositionY", m_rigY);
+    bindParam(this, "rigPositionZ", m_rigZ);
+    bindParam(this, "rigRadius", m_rigRadius);
 
     bindParam(this, "masterIntensity", m_masterIntensity);
     bindParam(this, "ambient", m_ambient);

@@ -173,6 +173,7 @@ public:
       if (!std::isfinite(lighting->ambient) || lighting->ambient < 0 ||
           !std::isfinite(lighting->master) || lighting->master < 0)
         throw std::runtime_error("Invalid A:M preview lighting");
+      for (const auto &light : lighting->lights) light.validate();
       for (auto &triangle : mesh.triangles) {
         if (canceled && *canceled) return {};
         // Preserve the native preview's world-space light directions. Camera
@@ -187,28 +188,20 @@ public:
         const double length =
             std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
         if (length < 1e-15) continue;
-        const otam::Vec3 view{{cameraPose[3] - (a[0] + b[0] + c[0]) / 3,
-                               cameraPose[7] - (a[1] + b[1] + c[1]) / 3,
-                               cameraPose[11] - (a[2] + b[2] + c[2]) / 3}};
+        const otam::Vec3 center{{(a[0] + b[0] + c[0]) / 3,
+                                 (a[1] + b[1] + c[1]) / 3,
+                                 (a[2] + b[2] + c[2]) / 3}};
+        const otam::Vec3 view{{cameraPose[3] - center[0],
+                               cameraPose[7] - center[1],
+                               cameraPose[11] - center[2]}};
         const double facing = n[0] * view[0] + n[1] * view[1] + n[2] * view[2];
         for (double &v : n) v /= facing < 0 ? -length : length;
         std::array<double, 3> energy{
             {lighting->ambient, lighting->ambient, lighting->ambient}};
         for (const auto &light : lighting->lights) {
-          const auto &d  = light.direction;
-          const double l = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
-          if (!(l > 0) || !std::isfinite(l) ||
-              !std::isfinite(light.intensity) || light.intensity < 0)
-            throw std::runtime_error(
-                "Invalid A:M preview light direction/intensity");
-          const double diffuse =
-              std::max(0.0, (n[0] * d[0] + n[1] * d[1] + n[2] * d[2]) / l) *
-              light.intensity;
-          for (int k = 0; k < 3; ++k) {
-            if (!std::isfinite(light.color[k]))
-              throw std::runtime_error("Invalid A:M preview light color");
+          const double diffuse = light.diffuse(n, center);
+          for (int k = 0; k < 3; ++k)
             energy[k] += diffuse * otglb::srgbToLinear(light.color[k]);
-          }
         }
         for (int k = 0; k < 3; ++k)
           triangle.color[k] =

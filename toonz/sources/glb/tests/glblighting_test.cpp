@@ -50,9 +50,9 @@ otglb::Asset triangleAsset() {
   return asset;
 }
 
-std::array<float, 3> color(const otglb::LightingRig &rig) {
+std::array<float, 3> color(const otglb::LightingRig &rig,
+                           otglb::RenderOptions options = {}) {
   auto asset = triangleAsset();
-  otglb::RenderOptions options;
   options.materialColors = true;
   options.useLightingRig = true;
   options.lighting = rig;
@@ -71,7 +71,7 @@ int main() {
     otglb::LightingRig rig;
     rig.ambient = 0.0;
     rig.master = 1.0;
-    otglb::DirectionalLight key;
+    otglb::DiffuseLight key;
     key.direction = {{0.0, 0.0, 1.0}};
     key.color = {{1.0f, 1.0f, 1.0f}};
     key.intensity = 1.0;
@@ -100,7 +100,33 @@ int main() {
     lit = color(rig);
     near(lit[0], otglb::linearToSrgb(0.5f));
 
-    std::cout << "5 passed, 0 failed\n";
+    rig.ambient      = 0.0;
+    rig.master       = 1.0;
+    key.intensity    = 0.5;
+    key.point        = otglb::PointPlacement{{{0.0, -1.0 / 3.0, 2.0}}, 2.0};
+    rig.lights       = {key};
+    const auto front = color(rig);
+    near(front[0], otglb::linearToSrgb(0.5f));
+
+    otglb::RenderOptions camera;
+    otglb::ModelTransform cameraMove;
+    cameraMove.camera      = true;
+    cameraMove.rotation[1] = 15.0;
+    cameraMove.scale[0]    = 1.5;
+    camera.transforms.push_back(cameraMove);
+    near(color(rig, camera)[0], front[0]);
+
+    const auto original              = rig;
+    rig.lights[0].point->position[2] = 4.0;
+    require(!(rig == original),
+            "moving a point light did not invalidate the rig");
+    near(color(rig)[0], otglb::linearToSrgb(0.2f));
+    rig.lights[0].point->position[2] = -2.0;
+    near(color(rig)[0], 0.0f);
+    rig.lights[0].point->position[2] = 0.0;
+    near(color(rig)[0], 0.0f);
+
+    std::cout << "Directional and positional diffuse lighting passed\n";
     return 0;
   } catch (const std::exception &error) {
     std::cerr << "FAIL glblighting: " << error.what() << '\n';
