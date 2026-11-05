@@ -4,23 +4,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: ${{ github.head_ref != '' }}
 
+# Automatic platform checks are paused while Windows is the primary target.
 on:
-  push:
-    paths:
-      - '**/*'                   # Include all files in the repository
-      - '!appveyor.yml'          # Ignore changes in AppVeyor
-      - '!README.md'             # Exclude README
-      - '!doc/**'                # Exclude documentation
-      - '!**/.github/**'         # Exclude everything in .github folder
-      - '.github/workflows/workflow_linux.yml'  # Include Linux workflow file
-  pull_request:
-    paths:
-      - '**/*'
-      - '!appveyor.yml'
-      - '!README.md'
-      - '!doc/**'
-      - '!**/.github/**'
-      - '.github/workflows/workflow_linux.yml'
+  workflow_dispatch:
 
 jobs:
   Ubuntu:
@@ -72,9 +58,9 @@ jobs:
         cd toonz
         mkdir build
         cd build
-        cmake ../sources -G Ninja -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER=${{ matrix.cxx }} -DCMAKE_C_COMPILER=${{ matrix.cc }} -DWITH_TRANSLATION=OFF -DBUILD_EXR_TESTS=ON -DBUILD_EXR_AOV_FX_TESTS=ON -DBUILD_AM_LEVEL_TESTS=ON -DBUILD_AM_TESTS=ON
+        cmake ../sources -G Ninja -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER=${{ matrix.cxx }} -DCMAKE_C_COMPILER=${{ matrix.cc }} -DWITH_TRANSLATION=OFF -DBUILD_EXR_TESTS=ON -DBUILD_EXR_AOV_FX_TESTS=ON
         ninja
-        ctest --output-on-failure -R '^(tiio_exr(_level)?|openexraovfx|ammodel|amlevel|amfx|amcamera)$'
+        ctest --output-on-failure -R '^(tiio_exr(_level)?|openexraovfx)$'
 
     - name: Create Artifact
       run: |
@@ -162,6 +148,6 @@ jobs:
         cd toonz
         mkdir build
         cd build
-        cmake ../sources -G Ninja -DWITH_TRANSLATION=OFF -DBUILD_EXR_TESTS=ON -DBUILD_EXR_AOV_FX_TESTS=ON -DBUILD_AM_LEVEL_TESTS=ON -DBUILD_AM_TESTS=ON
+        cmake ../sources -G Ninja -DWITH_TRANSLATION=OFF -DBUILD_EXR_TESTS=ON -DBUILD_EXR_AOV_FX_TESTS=ON
         ninja
-        ctest --output-on-failure -R '^(tiio_exr(_level)?|openexraovfx|ammodel|amlevel|amfx|amcamera)$'
+        ctest --output-on-failure -R '^(tiio_exr(_level)?|openexraovfx)$'

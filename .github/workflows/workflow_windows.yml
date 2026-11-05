@@ -108,7 +108,7 @@ jobs:
           mkdir build
           cd build
 
-          cmake ..\sources -G "%MSVCVERSION%" -Ax64 -DQT_PATH="%QT_PATH%" -DBOOST_ROOT="%BOOST_ROOT%" -DOpenCV_DIR="%OpenCV_DIR%" -DWITH_WINTAB=Y -DBUILD_EXR_TESTS=ON -DBUILD_EXR_AOV_FX_TESTS=ON -DBUILD_GLB_FX_TESTS=ON
+          cmake ..\sources -G "%MSVCVERSION%" -Ax64 -DQT_PATH="%QT_PATH%" -DBOOST_ROOT="%BOOST_ROOT%" -DOpenCV_DIR="%OpenCV_DIR%" -DWITH_WINTAB=Y -DBUILD_EXR_TESTS=ON -DBUILD_EXR_AOV_FX_TESTS=ON -DBUILD_GLB_FX_TESTS=ON -DBUILD_AM_LEVEL_TESTS=ON
         shell: cmd
 
       - name: Build and test OpenEXR image I/O and level source
@@ -144,6 +144,16 @@ jobs:
           RelWithDebInfo\glbmodelfx_test.exe
           if %errorlevel% neq 0 exit /b %errorlevel%
           RelWithDebInfo\threepointlightfx_test.exe
+          if %errorlevel% neq 0 exit /b %errorlevel%
+
+      - name: Build and test native A:M levels and spatial FX
+        shell: cmd
+        run: |
+          cd toonz\build
+          cmake --build . --config RelWithDebInfo --target amlevel_test amfx_test amcamera_test --parallel
+          if %errorlevel% neq 0 exit /b %errorlevel%
+          set "PATH=%QT_PATH%\bin;%GITHUB_WORKSPACE%\thirdparty\glut\3.7.6\lib;%GITHUB_WORKSPACE%\thirdparty\glew\glew-1.9.0\bin\64bit;%GITHUB_WORKSPACE%\thirdparty\libmypaint\dist\64;C:\tools\opencv\build\x64\vc16\bin;%PATH%"
+          ctest -C RelWithDebInfo --output-on-failure -R "^(amlevel|amfx|amcamera)$"
           if %errorlevel% neq 0 exit /b %errorlevel%
 
       # Build Opentoonz using MSBuild
@@ -195,6 +205,9 @@ jobs:
           if %errorlevel% neq 0 exit /b %errorlevel%
           del glbmodelfx_test.exe
           del threepointlightfx_test.exe
+          del amlevel_test.exe
+          del amfx_test.exe
+          del amcamera_test.exe
 
       # Create artifact from the build
       - name: Create Artifact
