@@ -153,6 +153,8 @@ public:
   // box instead of the bounding box. It takes effect only for Toonz Raster /
   // Raster levels. Currently used only in Tile Fx Iwa. (see iwa_tilefx.cpp)
   bool m_getFullSizeBBox;
+  bool m_flatRender;  //!< Compose source columns without FX or 3D lighting.
+  bool m_disableDefaultLighting;  //!< 3D surfaces require an explicit rig.
 
   /*-- camera size --*/
   TRectD m_cameraBox;

@@ -602,6 +602,7 @@ public:
   int m_whichLevels;
   bool m_isPreview;
   bool m_expandXSheet;
+  TRenderSettings m_renderSettings;
 
   // in the makePF() methods m_particleDescendentCount>0 iff the TFx* is an
   // ancestor
@@ -617,7 +618,8 @@ public:
 
 public:
   FxBuilder(ToonzScene *scene, TXsheet *xsh, double frame, int whichLevels,
-            bool isPreview = false, bool expandXSheet = true);
+            bool isPreview = false, bool expandXSheet = true,
+            const TRenderSettings *settings = nullptr);
 
   TFxP buildFx();
   TFxP buildFx(const TFxP &root, BSFX_Transforms_Enum transforms);
@@ -638,13 +640,19 @@ public:
 //===================================================================
 
 FxBuilder::FxBuilder(ToonzScene *scene, TXsheet *xsh, double frame,
-                     int whichLevels, bool isPreview, bool expandXSheet)
+                     int whichLevels, bool isPreview, bool expandXSheet,
+                     const TRenderSettings *settings)
     : m_scene(scene)
     , m_xsh(xsh)
     , m_frame(frame)
     , m_whichLevels(whichLevels)
     , m_isPreview(isPreview)
     , m_expandXSheet(expandXSheet)
+    , m_renderSettings(
+          settings ? *settings
+                   : (isPreview ? scene->getProperties()->getPreviewProperties()
+                                : scene->getProperties()->getOutputProperties())
+                         ->getRenderSettings())
     , m_particleDescendentCount(0) {
   TStageObjectId cameraId;
   if (m_isPreview)
@@ -661,14 +669,17 @@ FxBuilder::FxBuilder(ToonzScene *scene, TXsheet *xsh, double frame,
 
 TFxP FxBuilder::buildFx() {
   TFx *outputFx = m_xsh->getFxDag()->getOutputFx(0);
-  if (!outputFx || outputFx->getInputPortCount() != 1 ||
-      outputFx->getInputPort(0)->getFx() == 0)
+  if (!m_renderSettings.m_flatRender &&
+      (!outputFx || outputFx->getInputPortCount() != 1 ||
+       outputFx->getInputPort(0)->getFx() == 0))
     return TFxP();
 
-  outputFx->setName(L"OutputFx");
+  if (outputFx) outputFx->setName(L"OutputFx");
 
   assert(m_particleDescendentCount == 0);
-  PlacedFx pf = makePF(outputFx->getInputPort(0)->getFx());
+  PlacedFx pf = m_renderSettings.m_flatRender
+                    ? makePF(m_xsh->getFxDag()->getXsheetFx())
+                    : makePF(outputFx->getInputPort(0)->getFx());
   assert(m_particleDescendentCount == 0);
 
   TAffine cameraFullAff = m_cameraAff * TScale((1000 + m_cameraZ) / 1000);
@@ -757,7 +768,12 @@ PlacedFx FxBuilder::makePF(TFx *fx) {
     return makePF(zcfx);
   else if (TXsheetFx *xsfx = dynamic_cast<TXsheetFx *>(fx))
     return makePF(xsfx);
-  else if (fx->getInputPortCount() == 1)
+  else if (m_renderSettings.m_flatRender && fx->getInputPortCount() > 0) {
+    const int preferred = fx->getPreferredInputPort();
+    return preferred >= 0 && preferred < fx->getInputPortCount()
+               ? makePF(fx->getInputPort(preferred)->getFx())
+               : PlacedFx();
+  } else if (fx->getInputPortCount() == 1)
     return makePFfromUnaryFx(fx);
   else
     return makePFfromGenericFx(fx);
@@ -774,9 +790,19 @@ PlacedFx FxBuilder::makePF(TXsheetFx *fx) {
     return ret;
   }
 
-  // Expand the render-tree from terminal fxs
+  // Flat rendering composes exposed source columns independently of the FX DAG.
+  std::vector<TFx *> sources;
   TFxSet *fxs = m_xsh->getFxDag()->getTerminalFxs();
-  int m       = fxs->getFxCount();
+  if (m_renderSettings.m_flatRender) {
+    for (int column = 0; column < m_xsh->getColumnCount(); ++column) {
+      auto *source = m_xsh->getColumn(column);
+      if (source && source->getFx()) sources.push_back(source->getFx());
+    }
+  } else {
+    for (int i = 0; i < fxs->getFxCount(); ++i)
+      sources.push_back(fxs->getFx(i));
+  }
+  int m = int(sources.size());
   if (m == 0) {
     PlacedFx ret;
     ret.m_isPostXsheetNode = true;
@@ -787,7 +813,7 @@ PlacedFx FxBuilder::makePF(TXsheetFx *fx) {
   int i;
   for (i = 0; i < m; i++) {
     // Expand each terminal fx
-    TFx *fx = fxs->getFx(i);
+    TFx *fx = sources[i];
     assert(fx);
     pfs[i] = makePF(fx);  // Builds the sub-render-trees here
   }
@@ -925,7 +951,8 @@ PlacedFx FxBuilder::makePF(TLevelColumnFx *lcfx) {
     TXsheet *xsh = cell.m_level->getChildLevel()->getXsheet();
 
     // Build the sub-render-tree
-    FxBuilder builder(m_scene, xsh, levelFrame, m_whichLevels, m_isPreview);
+    FxBuilder builder(m_scene, xsh, levelFrame, m_whichLevels, m_isPreview,
+                      true, &m_renderSettings);
 
     // Then, add the TimeShuffleFx
     pf.m_fx = timeShuffle(builder.buildFx(), levelFrame, lcfx->getTimeRegion(),
@@ -1337,7 +1364,16 @@ PlacedFx FxBuilder::makePFfromGenericFx(TFx *fx) {
 
 TFxP buildSceneFx(ToonzScene *scene, TXsheet *xsh, double row, int whichLevels,
                   int shrink, bool isPreview) {
-  FxBuilder builder(scene, xsh, row, whichLevels, isPreview);
+  const auto *properties = isPreview
+                               ? scene->getProperties()->getPreviewProperties()
+                               : scene->getProperties()->getOutputProperties();
+  return buildSceneFx(scene, xsh, row, whichLevels, shrink, isPreview,
+                      properties->getRenderSettings());
+}
+
+TFxP buildSceneFx(ToonzScene *scene, TXsheet *xsh, double row, int whichLevels,
+                  int shrink, bool isPreview, const TRenderSettings &settings) {
+  FxBuilder builder(scene, xsh, row, whichLevels, isPreview, true, &settings);
   TFxP fx = builder.buildFx();
   TStageObjectId cameraId;
   if (isPreview)

@@ -337,6 +337,16 @@ QFrame *OutputSettingsPopup::createPanel(bool isPreview) {
     lay->addWidget(m_colorBox, 0);
     lay->addSpacing(10);
 
+    lay->addWidget(new AnimatedLabel(tr("Render Mode"), this), 0);
+    auto *renderModeBox = new QFrame(this);
+    renderModeBox->setObjectName("OutputSettingsBox");
+    auto *renderModeLayout = new QVBoxLayout(renderModeBox);
+    renderModeLayout->setContentsMargins(5, 5, 5, 5);
+    renderModeLayout->addWidget(m_flatRenderChk);
+    renderModeLayout->addWidget(m_disableDefaultLightingChk);
+    lay->addWidget(renderModeBox, 0);
+    lay->addSpacing(10);
+
     lay->addWidget(m_fileLabel, 0);
     lay->addWidget(m_fileBox, 0);
 
@@ -487,6 +497,16 @@ QFrame *OutputSettingsPopup::createColorSettingsBox(bool isPreview) {
   m_channelWidthOm = new QComboBox();
   // Linear Color Space
   m_linearColorSpaceChk = new DVGui::CheckBox();
+  m_flatRenderChk =
+      new DVGui::CheckBox(tr("Flat Render (No FX or Lighting)"), this);
+  m_disableDefaultLightingChk =
+      new DVGui::CheckBox(tr("Disable Default Lighting"), this);
+  m_flatRenderChk->setToolTip(
+      tr("Render visible source columns with base colors and stage placement, "
+         "bypassing the FX graph and lighting."));
+  m_disableDefaultLightingChk->setToolTip(
+      tr("GLB and A:M models require explicit lighting rigs. Unlit models "
+         "render black. Two-dimensional artwork keeps its source colors."));
   // color space gamma
   m_colorSpaceGammaFld = new DVGui::DoubleLineEdit(this, 2.2);
 
@@ -547,6 +567,10 @@ QFrame *OutputSettingsPopup::createColorSettingsBox(bool isPreview) {
 
   ret = ret && connect(m_colorSpaceGammaFld, SIGNAL(editingFinished()),
                        SLOT(onColorSpaceGammaEdited()));
+  ret = ret && connect(m_flatRenderChk, SIGNAL(clicked(bool)),
+                       SLOT(onRenderModeChanged()));
+  ret = ret && connect(m_disableDefaultLightingChk, SIGNAL(clicked(bool)),
+                       SLOT(onRenderModeChanged()));
   assert(ret);
   return colorSettingsBox;
 }
@@ -931,6 +955,9 @@ void OutputSettingsPopup::updateField() {
 
     if (m_subcameraChk) m_subcameraChk->setCheckState(Qt::Unchecked);
     m_linearColorSpaceChk->setCheckState(Qt::Unchecked);
+    m_flatRenderChk->setChecked(false);
+    m_disableDefaultLightingChk->setChecked(false);
+    m_disableDefaultLightingChk->setEnabled(true);
     m_colorSpaceGammaFld->setText(QString());
     if (m_syncColorSettingsButton)
       m_syncColorSettingsButton->setCheckState(Qt::Unchecked);
@@ -938,6 +965,10 @@ void OutputSettingsPopup::updateField() {
   }
 
   TRenderSettings renderSettings = prop->getRenderSettings();
+  m_flatRenderChk->setChecked(renderSettings.m_flatRender);
+  m_disableDefaultLightingChk->setChecked(
+      renderSettings.m_disableDefaultLighting);
+  m_disableDefaultLightingChk->setEnabled(!renderSettings.m_flatRender);
 
   if (!m_isPreviewSettings) {
     TFilePath path = prop->getPath();
@@ -1447,6 +1478,18 @@ void OutputSettingsPopup::onChannelWidthChanged(int type) {
 }
 //-----------------------------------------------------------------------------
 
+void OutputSettingsPopup::onRenderModeChanged() {
+  if (!getCurrentScene()) return;
+  auto *properties                  = getProperties();
+  auto settings                     = properties->getRenderSettings();
+  settings.m_flatRender             = m_flatRenderChk->isChecked();
+  settings.m_disableDefaultLighting = m_disableDefaultLightingChk->isChecked();
+  properties->setRenderSettings(settings);
+  m_disableDefaultLightingChk->setEnabled(!settings.m_flatRender);
+  if (m_presetCombo) m_presetCombo->setCurrentIndex(0);
+  TApp::instance()->getCurrentScene()->notifySceneChanged();
+}
+
 void OutputSettingsPopup::onLinearColorSpaceClicked(bool checked) {
   if (!getCurrentScene()) return;
   TOutputProperties *prop = getProperties();
@@ -1707,6 +1750,9 @@ void OutputSettingsPopup::onAddPresetButtonPressed() {
   // Linear Color Space & Color Space Gamma
   std::string linearStr = (m_linearColorSpaceChk->isChecked()) ? "1" : "0";
   os.child("linearColorSpace") << linearStr;
+  os.child("flatRender") << (m_flatRenderChk->isChecked() ? 1 : 0);
+  os.child("disableDefaultLighting")
+      << (m_disableDefaultLightingChk->isChecked() ? 1 : 0);
   os.child("colorSpaceGamma") << m_colorSpaceGammaFld->text().toStdString();
 
   // 140503 iwasawa Frame Rate (Scene Settings)
@@ -1831,6 +1877,8 @@ void OutputSettingsPopup::onPresetSelected(const QString &str) {
   // implementation of linear rendering
   rs.m_linearColorSpace = false;
   rs.m_colorSpaceGamma  = 2.2;
+  rs.m_flatRender             = false;
+  rs.m_disableDefaultLighting = false;
 
   while (is.matchTag(tagName)) {
     // Camera
@@ -1939,6 +1987,13 @@ void OutputSettingsPopup::onPresetSelected(const QString &str) {
       std::string linearStr;
       is >> linearStr;
       rs.m_linearColorSpace = (linearStr != "0");
+    } else if (tagName == "flatRender" || tagName == "disableDefaultLighting") {
+      int enabled;
+      is >> enabled;
+      if (tagName == "flatRender")
+        rs.m_flatRender = enabled != 0;
+      else
+        rs.m_disableDefaultLighting = enabled != 0;
     } else if (tagName == "colorSpaceGamma") {
       std::string gamma;
       is >> gamma;

@@ -217,17 +217,25 @@ class GlbModelFx final : public TStandardZeraryFx,
   std::shared_ptr<const otglb::RenderScene> projected(
       double frame, const int *canceled,
       const otglb::LightingRig *lighting                   = nullptr,
-      const std::vector<otglb::ModelTransform> *transforms = nullptr) const {
+      const std::vector<otglb::ModelTransform> *transforms = nullptr,
+      const TRenderSettings *renderSettings                = nullptr) const {
     if (m_modelFile->getValue().empty()) return {};
     auto settings = options(frame);
     QMutexLocker lock(&m_cache->mutex);
     loadLocked();
     applyAnimationLocked(frame, settings);
     applyMaterialsLocked(frame, settings);
-    if (lighting) {
+    if (renderSettings && renderSettings->m_flatRender) {
+      settings.headlight      = false;
+      settings.useLightingRig = false;
+    } else if (lighting) {
       settings.useLightingRig = true;
       settings.lighting = *lighting;
       settings.headlight = false;
+    } else if (renderSettings && renderSettings->m_disableDefaultLighting) {
+      settings.useLightingRig = true;
+      settings.lighting       = {};
+      settings.headlight      = false;
     }
     if (transforms) settings.transforms = *transforms;
     if (!m_cache->projected || !(settings == m_cache->options)) {
@@ -270,8 +278,8 @@ public:
       double frame, const int *canceled,
       const otglb::LightingRig *lighting                   = nullptr,
       const std::vector<otglb::ModelTransform> *transforms = nullptr,
-      const TRenderSettings * = nullptr) const override {
-    return projected(frame, canceled, lighting, transforms);
+      const TRenderSettings *renderSettings = nullptr) const override {
+    return projected(frame, canceled, lighting, transforms, renderSettings);
   }
 
   std::shared_ptr<const otglb::ViewerGeometry> get3DViewerGeometry(
@@ -398,7 +406,8 @@ public:
   bool doGetBBox(double frame, TRectD &bbox, const TRenderSettings &info) override {
     bbox = TRectD();
     try {
-      const auto scene = projected(frame, info.m_isCanceled);
+      const auto scene =
+          projected(frame, info.m_isCanceled, nullptr, nullptr, &info);
       if (!scene || scene->triangles.empty()) return false;
       const auto &b = scene->bounds;
       bbox = TRectD(b[0], b[1], b[2], b[3]);
@@ -428,7 +437,8 @@ public:
   void doCompute(TTile &tile, double frame, const TRenderSettings &info) override {
     tile.getRaster()->clear();
     try {
-      const auto scene = projected(frame, info.m_isCanceled);
+      const auto scene =
+          projected(frame, info.m_isCanceled, nullptr, nullptr, &info);
       if (!scene || scene->triangles.empty()) return;
       otglb::RenderTile request;
       request.width = tile.getRaster()->getLx(); request.height = tile.getRaster()->getLy();
