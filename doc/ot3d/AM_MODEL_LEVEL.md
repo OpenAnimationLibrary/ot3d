@@ -155,10 +155,14 @@ still edits Z; this does not add a three-axis canvas manipulator. Ordinary 2D
 columns do not show the model-only control.
 
 Connect the native model column directly to **3D Transform** or **Three Point
-Lighting**, or use **Model -> 3D Transform -> Three Point Lighting**. View FX
-results through Preview/final rendering. The lighting node is a raster output,
-not a geometry source for a later 3D Transform. Unsupported ordinary drawing
-connections are rejected before modifying the connection or undo history.
+Lighting**, or use **Model -> 3D Transform -> Three Point Lighting**. Chain
+lighting nodes to combine rigs and view the result in Preview or a render.
+Under **Placement**, choose **Positional** and key the XYZ fields to move the
+whole rig in stage coordinates. Radius sets how far the key, fill and rim sit
+from the rig center along their respective azimuth and elevation. Positional
+lights fall off with distance. Directional remains the default for saved scenes.
+Unsupported ordinary drawing connections are rejected before modifying the
+connection or undo history.
 The optional connection policy does not change the existing TFxPort vtable.
 
 The render tree retains an immutable world-space preview mesh until downstream

@@ -144,7 +144,7 @@ int main(int argc, char **argv) {
     set(modelObject, TStageObject::T_RotationY, -12);
     otglb::LightingRig rig;
     rig.ambient = 0.2;
-    otglb::DirectionalLight keyLight;
+    otglb::DiffuseLight keyLight;
     keyLight.direction = {{1, 2, 3}};
     rig.lights.push_back(keyLight);
     auto shaded = [&]() {

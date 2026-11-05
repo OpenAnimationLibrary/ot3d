@@ -117,6 +117,29 @@ int main(int argc, char **argv) {
       }
     require(hasBlack, "lighting did not shade native model geometry");
     set(light, "masterIntensity", 100);
+    auto *lightMode =
+        dynamic_cast<TIntEnumParam *>(light.getParams()->getParam("lightMode"));
+    require(lightMode && lightMode->getValue() == 0,
+            "legacy lighting must default to directional");
+    lightMode->setValue(1);
+    set(light, "ambient", 0);
+    set(light, "fillIntensity", 0);
+    set(light, "rimIntensity", 0);
+    set(light, "keyAzimuth", 0);
+    set(light, "keyElevation", 0);
+    set(light, "rigRadius", 100);
+    set(light, "rigPositionZ", 100);
+    const auto front =
+        light.get3DRenderScene(0, nullptr, nullptr, nullptr, &info);
+    set(light, "rigPositionZ", -200);
+    const auto rear =
+        light.get3DRenderScene(0, nullptr, nullptr, nullptr, &info);
+    require(front && rear && !front->triangles.empty() &&
+                front->triangles.size() == rear->triangles.size() &&
+                front->triangles[0].color[0] > rear->triangles[0].color[0] &&
+                front->bounds == rear->bounds,
+            "moving the rig did not shade the native model independently");
+    lightMode->setValue(0);
     // Immutable render snapshots, cloning and column transparency retain 3D.
     TRasterFxP snapshot = makeAMLevelRenderFx(xsheet, 0, 0);
     require(snapshot && canConnectFxPort(port, snapshot.getPointer()),

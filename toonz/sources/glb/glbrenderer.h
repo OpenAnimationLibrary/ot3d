@@ -2,6 +2,7 @@
 
 #include "glbloader.h"
 #include <memory>
+#include <optional>
 
 namespace otglb {
 
@@ -9,17 +10,31 @@ namespace otglb {
 // resolution and tile size. The FX applies the normal OpenToonz 2D affine.
 constexpr double ProjectionHeight = 1000.0;
 
-struct DirectionalLight {
-  // Camera-space direction from the shaded surface toward the light.
+struct PointPlacement {
+  std::array<double, 3> position{};
+  double radius = 1.0;
+
+  bool operator==(const PointPlacement &other) const {
+    return position == other.position && radius == other.radius;
+  }
+};
+
+struct DiffuseLight {
+  // Direction in the source's lighting space. Point positions are world-space.
   std::array<double, 3> direction{{0.0, 0.0, 1.0}};
   // Display-referred sRGB light color in [0,1].
   std::array<float, 3> color{{1.0f, 1.0f, 1.0f}};
   double intensity = 1.0;
+  std::optional<PointPlacement> point;
 
-  bool operator==(const DirectionalLight &other) const {
+  bool operator==(const DiffuseLight &other) const {
     return direction == other.direction && color == other.color &&
-           intensity == other.intensity;
+           intensity == other.intensity && point == other.point;
   }
+
+  void validate() const;
+  double diffuse(const std::array<double, 3> &normal,
+                 const std::array<double, 3> &sample) const;
 };
 
 struct LightingRig {
@@ -27,7 +42,7 @@ struct LightingRig {
   // converted from sRGB before contributing to diffuse illumination.
   double ambient = 0.0;
   double master = 1.0;
-  std::vector<DirectionalLight> lights;
+  std::vector<DiffuseLight> lights;
 
   bool operator==(const LightingRig &other) const {
     return ambient == other.ambient && master == other.master &&
@@ -63,7 +78,7 @@ struct RenderOptions {
   // Empty uses the asset's linear baseColor factors, converted to sRGB.
   std::vector<std::array<float, 3>> colors;
 
-  // Optional camera-relative directional lighting supplied by a downstream 3D
+  // Optional diffuse lighting supplied by a downstream 3D
   // FX. When enabled it supersedes the legacy headlight but preserves the
   // source node's geometry, camera, material and animation settings.
   bool useLightingRig = false;

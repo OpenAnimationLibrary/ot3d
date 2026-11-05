@@ -1,6 +1,7 @@
 #include "stdfx.h"
 #include "t3dsource.h"
 #include "tfxparam.h"
+#include "tnotanimatableparam.h"
 #include "tparamset.h"
 
 #include <algorithm>
@@ -47,14 +48,14 @@ std::array<float, 3> lightColor(const TPixelD &color) {
 }
 }  // namespace
 
-// Simple camera-relative diffuse lighting for a 3D source. GLB Model is the
-// first production implementation of T3DRenderSource; ordinary raster FX cannot
-// be connected to this port. Shadows/specular/PBR response are intentionally
-// outside this first node.
-class ThreePointLightFx final : public TStandardRasterFx {
+// Accumulate diffuse lighting before the 3D source is shaded and projected.
+class ThreePointLightFx final : public TStandardRasterFx,
+                                public T3DRenderSource {
   FX_PLUGIN_DECLARATION(ThreePointLightFx)
 
   T3DSourcePort m_source;
+  TIntEnumParamP m_lightMode;
+  TDoubleParamP m_rigX, m_rigY, m_rigZ, m_rigRadius;
   TDoubleParamP m_masterIntensity, m_ambient;
   TDoubleParamP m_keyAzimuth, m_keyElevation, m_keyIntensity;
   TPixelParamP m_keyColor;
@@ -63,11 +64,11 @@ class ThreePointLightFx final : public TStandardRasterFx {
   TDoubleParamP m_rimAzimuth, m_rimElevation, m_rimIntensity;
   TPixelParamP m_rimColor;
 
-  otglb::DirectionalLight light(double frame, const TDoubleParamP &azimuth,
-                                const TDoubleParamP &elevation,
-                                const TDoubleParamP &intensity,
-                                const TPixelParamP &color) const {
-    otglb::DirectionalLight result;
+  otglb::DiffuseLight light(double frame, const TDoubleParamP &azimuth,
+                            const TDoubleParamP &elevation,
+                            const TDoubleParamP &intensity,
+                            const TPixelParamP &color) const {
+    otglb::DiffuseLight result;
     result.direction = lightDirection(azimuth->getValue(frame),
                                       elevation->getValue(frame));
     result.intensity = intensity->getValue(frame) / 100.0;
@@ -85,24 +86,30 @@ class ThreePointLightFx final : public TStandardRasterFx {
                                   m_fillIntensity, m_fillColor));
     result.lights.push_back(light(frame, m_rimAzimuth, m_rimElevation,
                                   m_rimIntensity, m_rimColor));
+    if (m_lightMode->getValue() == 1) {
+      const double radius = m_rigRadius->getValue(frame);
+      const std::array<double, 3> center{{m_rigX->getValue(frame),
+                                          m_rigY->getValue(frame),
+                                          m_rigZ->getValue(frame)}};
+      for (auto &light : result.lights) {
+        otglb::PointPlacement point;
+        point.radius = radius;
+        for (int axis = 0; axis < 3; ++axis)
+          point.position[axis] = center[axis] + radius * light.direction[axis];
+        light.point = point;
+      }
+    }
     return result;
-  }
-
-  std::shared_ptr<const otglb::RenderScene> scene(
-      double frame, const int *canceled,
-      const TRenderSettings *renderSettings = nullptr) const {
-    if (!m_source.isConnected()) return {};
-    auto *source = m_source.source();
-    if (!source)
-      throw std::runtime_error("Three-Point Light input is not a compatible 3D source.");
-    const auto rig = lighting(frame);
-    return source->get3DRenderScene(frame, canceled, &rig, nullptr,
-                                    renderSettings);
   }
 
 public:
   ThreePointLightFx()
-      : m_masterIntensity(100.0)
+      : m_lightMode(new TIntEnumParam(0, "Directional"))
+      , m_rigX(0.0)
+      , m_rigY(0.0)
+      , m_rigZ(0.0)
+      , m_rigRadius(10.0)
+      , m_masterIntensity(100.0)
       , m_ambient(10.0)
       , m_keyAzimuth(-45.0)
       , m_keyElevation(35.0)
@@ -122,6 +129,14 @@ public:
     // identifier whitespace-free; the schematic can describe the source type
     // separately from this persistence key.
     addInputPort("GLB", m_source);
+
+    m_lightMode->addItem(1, "Positional");
+    m_rigRadius->setValueRange(0.001, 100000.0);
+    bindParam(this, "lightMode", m_lightMode);
+    bindParam(this, "rigPositionX", m_rigX);
+    bindParam(this, "rigPositionY", m_rigY);
+    bindParam(this, "rigPositionZ", m_rigZ);
+    bindParam(this, "rigRadius", m_rigRadius);
 
     bindParam(this, "masterIntensity", m_masterIntensity);
     bindParam(this, "ambient", m_ambient);
@@ -153,13 +168,46 @@ public:
     enableComputeInFloat(true);
   }
 
+  std::shared_ptr<const otglb::RenderScene> get3DRenderScene(
+      double frame, const int *canceled, const otglb::LightingRig *downstream,
+      const std::vector<otglb::ModelTransform> *transforms,
+      const TRenderSettings *settings) const override {
+    auto *source = m_source.source();
+    if (!source || (canceled && *canceled)) return {};
+
+    auto rig = lighting(frame);
+    if (downstream) {
+      // Scale each rig by its own master before adding its contribution.
+      rig.ambient =
+          rig.ambient * rig.master + downstream->ambient * downstream->master;
+      for (auto &light : rig.lights) light.intensity *= rig.master;
+      rig.master = 1.0;
+      for (auto light : downstream->lights) {
+        light.intensity *= downstream->master;
+        rig.lights.push_back(light);
+      }
+    }
+    return source->get3DRenderScene(frame, canceled, &rig, transforms,
+                                    settings);
+  }
+
+  std::shared_ptr<const otglb::RenderScene> get3DRenderGeometry(
+      double frame, const int *canceled,
+      const std::vector<otglb::ModelTransform> *transforms,
+      const TRenderSettings *settings) const override {
+    auto *source = m_source.source();
+    return source ? source->get3DRenderGeometry(frame, canceled, transforms,
+                                                settings)
+                  : nullptr;
+  }
+
   bool doGetBBox(double frame, TRectD &bbox,
                  const TRenderSettings &info) override {
     bbox = TRectD();
     if (!m_source.isConnected()) return false;
     try {
-      const auto rendered = m_source.source()->get3DRenderGeometry(
-          frame, info.m_isCanceled, nullptr, &info);
+      const auto rendered =
+          get3DRenderGeometry(frame, info.m_isCanceled, nullptr, &info);
       if (!rendered || rendered->triangles.empty()) return false;
       const auto &b = rendered->bounds;
       bbox = TRectD(b[0], b[1], b[2], b[3]);
@@ -190,7 +238,8 @@ public:
     tile.getRaster()->clear();
     if (!m_source.isConnected()) return;
     try {
-      const auto rendered = scene(frame, info.m_isCanceled, &info);
+      const auto rendered =
+          get3DRenderScene(frame, info.m_isCanceled, nullptr, nullptr, &info);
       if (!rendered || rendered->triangles.empty()) return;
 
       otglb::RenderTile request;

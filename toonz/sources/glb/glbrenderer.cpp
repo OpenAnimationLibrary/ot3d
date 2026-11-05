@@ -67,6 +67,9 @@ struct Instance {
     p = {p.x + o.position[0], p.y + o.position[1], p.z + o.position[2]};
     for (const auto &additional : o.transforms)
       if (!additional.camera) p = transform(p, additional);
+    return p;
+  }
+  Vec cameraSpace(Vec p) const {
     p.z -= o.cameraDistance;
     for (const auto &additional : o.transforms)
       if (additional.camera) p = inverseTransform(p, additional);
@@ -140,6 +143,47 @@ float linearToSrgb(float v) {
 float srgbToLinear(float v) {
   return v <= 0.04045f ? v / 12.92f : std::pow((v + 0.055f) / 1.055f, 2.4f);
 }
+
+void DiffuseLight::validate() const {
+  require(std::isfinite(intensity) && intensity >= 0.0,
+          "3D light intensity must be finite and nonnegative.");
+  for (float v : color)
+    require(std::isfinite(v) && v >= 0.0f && v <= 1.0f,
+            "3D light color must be finite and in [0,1].");
+  if (point) {
+    for (double v : point->position)
+      require(std::isfinite(v), "3D light position must be finite.");
+    require(std::isfinite(point->radius) && point->radius > 0.0,
+            "3D light radius must be positive and finite.");
+  } else {
+    const auto [x, y, z] = direction;
+    const double length  = std::hypot(x, y, z);
+    require(std::isfinite(length) && length > 1e-9,
+            "3D directional light requires a finite nonzero direction.");
+  }
+}
+
+double DiffuseLight::diffuse(const std::array<double, 3> &normal,
+                             const std::array<double, 3> &sample) const {
+  auto [x, y, z] = direction;
+  if (point) {
+    x = point->position[0] - sample[0];
+    y = point->position[1] - sample[1];
+    z = point->position[2] - sample[2];
+  }
+  const double distance = std::hypot(x, y, z);
+  if (!(distance > 0.0 && std::isfinite(distance))) return 0.0;
+  double attenuation = 1.0;
+  if (point) {
+    const double ratio = distance / point->radius;
+    // Keep the authored intensity at the rig radius and bound the near field.
+    attenuation = 2.0 / (1.0 + ratio * ratio);
+  }
+  return std::max(0.0, normal[0] * (x / distance) + normal[1] * (y / distance) +
+                           normal[2] * (z / distance)) *
+         intensity * attenuation;
+}
+
 std::array<float, 3> materialColor(const Asset &asset, std::size_t index) {
   if (index >= asset.materials.size()) return {{1, 1, 1}};
   const auto &c = asset.materials[index].baseColor;
@@ -176,22 +220,14 @@ RenderScene prepareRender(const Asset &asset, const RenderOptions &o,
   for (const auto &color : o.colors)
     for (float v : color) require(std::isfinite(v) && v >= 0 && v <= 1,
                                  "Invalid GLB material color.");
+  bool hasPointLights = false;
   if (o.useLightingRig) {
     require(std::isfinite(o.lighting.ambient) && o.lighting.ambient >= 0.0 &&
                 std::isfinite(o.lighting.master) && o.lighting.master >= 0.0,
             "3D lighting requires finite nonnegative Ambient and Master values.");
     for (const auto &light : o.lighting.lights) {
-      double length2 = 0.0;
-      for (double v : light.direction) {
-        require(std::isfinite(v), "3D light direction must be finite.");
-        length2 += v * v;
-      }
-      require(length2 > 1e-18 && std::isfinite(light.intensity) &&
-                  light.intensity >= 0.0,
-              "3D directional light requires a nonzero direction and nonnegative intensity.");
-      for (float v : light.color)
-        require(std::isfinite(v) && v >= 0.0f && v <= 1.0f,
-                "3D light color must be finite and in [0,1].");
+      light.validate();
+      hasPointLights |= light.point.has_value();
     }
   }
   out.wireframe = o.wireframe;
@@ -298,7 +334,11 @@ RenderScene prepareRender(const Asset &asset, const RenderOptions &o,
       const std::size_t count = p.indices.empty() ? p.vertexCount : p.indices.size();
       for (std::size_t i = 2; i < count; i += p.mode == 4 ? 3 : 1) {
         if ((i & 1023) == 0 && canceled && *canceled) return {};
-        const Vec a = vertex(p.mode == 6 ? 0 : i - 2), b = vertex(i - 1), c = vertex(i);
+        const Vec worldA = vertex(p.mode == 6 ? 0 : i - 2);
+        const Vec worldB = vertex(i - 1), worldC = vertex(i);
+        const Vec a         = instance.cameraSpace(worldA);
+        const Vec b         = instance.cameraSpace(worldB);
+        const Vec c         = instance.cameraSpace(worldC);
         Vec normal = cross(sub(b, a), sub(c, a));
         const double length = std::sqrt(dot(normal, normal));
         if (length < 1e-15) continue;
@@ -319,24 +359,29 @@ RenderScene prepareRender(const Asset &asset, const RenderOptions &o,
         if (o.useLightingRig) {
           // The renderer is intentionally two-sided. Orient the face normal
           // toward the camera before evaluating camera-relative diffuse lights.
-          if (viewLength > 0.0 && dot(normal, view) < 0.0)
-            normal = {-normal.x, -normal.y, -normal.z};
-          normal = {normal.x / length, normal.y / length, normal.z / length};
+          const double facing = dot(normal, view) < 0.0 ? -1.0 : 1.0;
+          const std::array<double, 3> cameraNormal{
+              {facing * normal.x / length, facing * normal.y / length,
+               facing * normal.z / length}};
+          std::array<double, 3> worldNormal{}, center{};
+          if (hasPointLights) {
+            const Vec n    = cross(sub(worldB, worldA), sub(worldC, worldA));
+            const double l = std::hypot(n.x, n.y, n.z);
+            if (l > 0.0 && std::isfinite(l))
+              worldNormal = {
+                  {facing * n.x / l, facing * n.y / l, facing * n.z / l}};
+            center = {{(worldA.x + worldB.x + worldC.x) / 3.0,
+                       (worldA.y + worldB.y + worldC.y) / 3.0,
+                       (worldA.z + worldB.z + worldC.z) / 3.0}};
+          }
           const std::array<float, 3> surface =
               o.materialColors ? base : std::array<float, 3>{{0.75f, 0.75f, 0.75f}};
           std::array<double, 3> illumination{{o.lighting.ambient,
                                               o.lighting.ambient,
                                               o.lighting.ambient}};
           for (const auto &source : o.lighting.lights) {
-            const double l2 = source.direction[0] * source.direction[0] +
-                              source.direction[1] * source.direction[1] +
-                              source.direction[2] * source.direction[2];
-            const double invLength = 1.0 / std::sqrt(l2);
-            const Vec direction{source.direction[0] * invLength,
-                                source.direction[1] * invLength,
-                                source.direction[2] * invLength};
-            const double diffuse = std::max(0.0, dot(normal, direction)) *
-                                   source.intensity;
+            const double diffuse = source.diffuse(
+                source.point ? worldNormal : cameraNormal, center);
             for (int channel = 0; channel < 3; ++channel)
               illumination[channel] += diffuse * srgbToLinear(source.color[channel]);
           }
