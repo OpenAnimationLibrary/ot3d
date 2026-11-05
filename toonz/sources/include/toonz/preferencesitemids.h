@@ -88,6 +88,8 @@ enum PreferencesItemId {
   quickTimeBackend,
   rhubarbPath,
   rhubarbTimeout,
+  ot3dPythonPath,
+  ot3dSculptForgePath,
 
   //----------
   // Drawing

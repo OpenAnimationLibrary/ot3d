@@ -44,6 +44,7 @@
         <menu title="Script">
             <command>MI_RunScript</command>
             <command>MI_OpenScriptConsole</command>
+            <command>MI_AssetGeneration</command>
         </menu>
         <separator/>
         <command>MI_Preferences</command>

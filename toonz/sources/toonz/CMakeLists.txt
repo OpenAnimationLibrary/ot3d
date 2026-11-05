@@ -1,6 +1,7 @@
 set(VERSION 1.8)
 
 set(MOC_HEADERS
+    assetgenerationpanel.h
     addfilmstripframespopup.h
     adjustlevelspopup.h
     adjustthicknesspopup.h
@@ -219,6 +220,7 @@ set(HEADERS
 )
 
 set(SOURCES
+    assetgenerationpanel.cpp
     floatingpanelcommand.cpp
     canvassizepopup.cpp
     commandbar.cpp
@@ -442,7 +444,7 @@ endif()
 set(OBJCSOURCES filebrowsermodel.cpp)
 
 # Resource file(s)
-set(RESOURCES toonz.qrc)
+set(RESOURCES toonz.qrc assetgeneration.qrc)
 
 if(BUILD_ENV_MSVC)
     set(RC_FILE toonz.rc)
@@ -828,3 +830,42 @@ endif()
 
 # Hybrid Viewer consumes the immutable GLB geometry service directly.
 target_link_libraries(OpenToonz otglb)
+
+option(BUILD_ASSET_GENERATION_TESTS "Build native asset generation panel checks" OFF)
+if(BUILD_ASSET_GENERATION_TESTS)
+    find_package(Python3 3.11 REQUIRED COMPONENTS Interpreter)
+    enable_testing()
+    set_property(SOURCE main.cpp APPEND PROPERTY COMPILE_DEFINITIONS OT3D_ASSET_GENERATION_TESTS)
+    target_sources(OpenToonz PRIVATE tests/assetgeneration_smoke.cpp)
+    add_executable(assetgeneration_fixture tests/assetgeneration_fixture.cpp)
+    target_link_libraries(assetgeneration_fixture PRIVATE Qt5::Core)
+    add_dependencies(OpenToonz assetgeneration_fixture)
+    if(UNIX AND NOT APPLE)
+        find_program(OT3D_XVFB_RUN xvfb-run)
+        if(NOT OT3D_XVFB_RUN)
+            message(FATAL_ERROR "Native asset panel checks require xvfb-run")
+        endif()
+        add_test(NAME assetgeneration_native COMMAND ${OT3D_XVFB_RUN} -a
+            $<TARGET_FILE:OpenToonz> -TOONZROOT "${CMAKE_SOURCE_DIR}/../../stuff")
+    else()
+        add_test(NAME assetgeneration_native COMMAND $<TARGET_FILE:OpenToonz>
+            -TOONZROOT "${CMAKE_SOURCE_DIR}/../../stuff")
+    endif()
+    ot_configure_native_test_runtime(assetgeneration_native)
+    if(APPLE)
+        # Startup initializes shader contexts. Generic offscreen backends
+        # cannot create CGL/WGL contexts; use the native desktop on these hosts.
+        set(asset_test_platform cocoa)
+    elseif(WIN32)
+        set(asset_test_platform windows)
+    else()
+        set(asset_test_platform offscreen)
+    endif()
+    set_property(TEST assetgeneration_native APPEND PROPERTY ENVIRONMENT
+        "QT_QPA_PLATFORM=${asset_test_platform}"
+        "LIBGL_ALWAYS_SOFTWARE=1"
+        "TOONZROOT=${CMAKE_SOURCE_DIR}/../../stuff"
+        "OT3D_ASSET_SMOKE_PYTHON=${Python3_EXECUTABLE}"
+    )
+    set_tests_properties(assetgeneration_native PROPERTIES TIMEOUT 120)
+endif()

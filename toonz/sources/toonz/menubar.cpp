@@ -559,6 +559,7 @@ QMenuBar *StackedMenuBar::createCleanupMenuBar() {
   customizeMenu->addSeparator();
   addMenuItem(customizeMenu, "MI_RunScript");
   addMenuItem(customizeMenu, "MI_OpenScriptConsole");
+  addMenuItem(customizeMenu, "MI_AssetGeneration");
 #ifndef NDEBUG
   addMenuItem(customizeMenu, "MI_ReloadStyle");
 #endif
@@ -730,6 +731,7 @@ QMenuBar *StackedMenuBar::createPltEditMenuBar() {
   customizeMenu->addSeparator();
   addMenuItem(customizeMenu, "MI_RunScript");
   addMenuItem(customizeMenu, "MI_OpenScriptConsole");
+  addMenuItem(customizeMenu, "MI_AssetGeneration");
 #ifndef NDEBUG
   addMenuItem(customizeMenu, "MI_ReloadStyle");
 #endif
@@ -911,6 +913,7 @@ QMenuBar *StackedMenuBar::createInknPaintMenuBar() {
   customizeMenu->addSeparator();
   addMenuItem(customizeMenu, "MI_RunScript");
   addMenuItem(customizeMenu, "MI_OpenScriptConsole");
+  addMenuItem(customizeMenu, "MI_AssetGeneration");
 #ifndef NDEBUG
   addMenuItem(customizeMenu, "MI_ReloadStyle");
 #endif
@@ -1099,6 +1102,7 @@ QMenuBar *StackedMenuBar::createXsheetMenuBar() {
   customizeMenu->addSeparator();
   addMenuItem(customizeMenu, "MI_RunScript");
   addMenuItem(customizeMenu, "MI_OpenScriptConsole");
+  addMenuItem(customizeMenu, "MI_AssetGeneration");
 #ifndef NDEBUG
   addMenuItem(customizeMenu, "MI_ReloadStyle");
 #endif
@@ -1136,6 +1140,7 @@ QMenuBar *StackedMenuBar::createBatchesMenuBar() {
   customizeMenu->addSeparator();
   addMenuItem(customizeMenu, "MI_RunScript");
   addMenuItem(customizeMenu, "MI_OpenScriptConsole");
+  addMenuItem(customizeMenu, "MI_AssetGeneration");
 #ifndef NDEBUG
   addMenuItem(customizeMenu, "MI_ReloadStyle");
 #endif
@@ -1170,6 +1175,7 @@ QMenuBar *StackedMenuBar::createBrowserMenuBar() {
   customizeMenu->addSeparator();
   addMenuItem(customizeMenu, "MI_RunScript");
   addMenuItem(customizeMenu, "MI_OpenScriptConsole");
+  addMenuItem(customizeMenu, "MI_AssetGeneration");
 #ifndef NDEBUG
   addMenuItem(customizeMenu, "MI_ReloadStyle");
 #endif
@@ -1243,6 +1249,7 @@ QMenuBar *StackedMenuBar::createFullMenuBar() {
   {
     addMenuItem(scriptMenu, "MI_RunScript");
     addMenuItem(scriptMenu, "MI_OpenScriptConsole");
+    addMenuItem(scriptMenu, "MI_AssetGeneration");
   }
   fileMenu->addSeparator();
   addMenuItem(fileMenu, MI_Preferences);

@@ -519,6 +519,8 @@ void Preferences::definePreferenceItems() {
   define(rhubarbPath, "rhubarbPath", QMetaType::QString, "");
   define(rhubarbTimeout, "rhubarbTimeout", QMetaType::Int, 600, 0,
          std::numeric_limits<int>::max());
+  define(ot3dPythonPath, "ot3dPythonPath", QMetaType::QString, "");
+  define(ot3dSculptForgePath, "ot3dSculptForgePath", QMetaType::QString, "");
 
   // Drawing
   define(DefRasterFormat, "DefRasterFormat", QMetaType::QString, "tif");

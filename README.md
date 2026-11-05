@@ -54,6 +54,7 @@ See the [roadmap](doc/ot3d/ROADMAP.md) for ordered milestones and explicit non-g
 
 - [Mission and principles](doc/ot3d/MISSION.md)
 - [Development roadmap](doc/ot3d/ROADMAP.md)
+- [Foundation implementation series](doc/ot3d/FOUNDATION_SERIES.md)
 - [External asset compatibility contract](doc/ot3d/COMPATIBILITY.md)
 - [Release policy](doc/ot3d/RELEASES.md)
 - [OpenToonz relationship and upstream policy](doc/ot3d/UPSTREAM.md)

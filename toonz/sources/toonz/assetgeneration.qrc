@@ -1,0 +1,5 @@
+<RCC>
+  <qresource prefix="/ot3d">
+    <file alias="sculptforge_job.py">../../../tools/ot3d_assets/sculptforge_job.py</file>
+  </qresource>
+</RCC>

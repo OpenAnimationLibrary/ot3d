@@ -1,0 +1,48 @@
+name: Python asset job foundation
+
+on:
+  pull_request:
+    paths:
+      - 'tools/ot3d_assets/**'
+      - 'toonz/sources/toonz/assetgeneration*'
+      - '.github/workflows/python_asset_jobs.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  jobs:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - name: Test local worker lifecycle (no network generation)
+        run: python -m unittest discover -s tools/ot3d_assets/tests -v
+
+  sculptforge-cli:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6
+        with:
+          repository: islandmed/SculptForge
+          ref: e55d3e04e43458985e1dd7adb7939625dde23cf3
+          path: sculptforge-reference
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - name: Build independent SculptForge CLI (HTTP disabled)
+        run: |
+          cmake -S sculptforge-reference -B sculptforge-build -DCMAKE_BUILD_TYPE=Release -DSCULPTFORGE_BUILD_APP=OFF -DSCULPTFORGE_BUILD_TESTS=OFF -DSCULPTFORGE_WEBRTC=OFF -DCMAKE_DISABLE_FIND_PACKAGE_CURL=TRUE
+          cmake --build sculptforge-build --config Release --target sculptforge-cli --parallel 2
+      - name: Verify real CLI schema and local Unicode-path export
+        env:
+          OT3D_SCULPTFORGE_CLI: ${{ github.workspace }}/sculptforge-build/Release/sculptforge-cli.exe
+        run: python -m unittest discover -s tools/ot3d_assets/tests -v
