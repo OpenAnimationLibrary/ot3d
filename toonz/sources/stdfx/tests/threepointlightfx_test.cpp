@@ -47,9 +47,11 @@ void writeModel(const QString &path) {
   check(file.write(reinterpret_cast<const char *>(bytes.data()), bytes.size()) == qint64(bytes.size()), "incomplete GLB fixture write");
 }
 template <class FX>
-TPixel32 center(FX &fx) {
+TPixel32 center(FX &fx, TRenderSettings settings = TRenderSettings()) {
   TRaster32P raster(80, 80); TTile tile; tile.setRaster(raster); tile.m_pos = TPointD(-40, -40);
-  TRenderSettings settings; settings.m_affine = TScale(.2); fx.doCompute(tile, 0, settings); return raster->pixels(40)[40];
+  settings.m_affine = TScale(.2);
+  fx.doCompute(tile, 0, settings);
+  return raster->pixels(40)[40];
 }
 void zeroSecondaryLights(ThreePointLightFx &fx) {
   param<TDoubleParam>(fx, "ambient")->setValue(0, 0.0);
@@ -184,6 +186,25 @@ void testMerge(const QString &path, const QString &saved) {
     check(layer.scene->triangles[0].color[0] > .99 &&
               layer.scene->triangles[0].color[1] == 0,
           "shared lighting failed to reach both branches");
+  TRenderSettings dark, flat;
+  dark.m_disableDefaultLighting = true;
+  flat                          = dark;
+  flat.m_flatRender             = true;
+  const auto unlitGroup =
+      merge.get3DRenderScene(0, nullptr, nullptr, nullptr, &dark);
+  const auto litGroup =
+      light.get3DRenderScene(0, nullptr, nullptr, nullptr, &dark);
+  const auto flatGroup =
+      light.get3DRenderScene(0, nullptr, nullptr, nullptr, &flat);
+  for (int i = 0; i < 2; ++i) {
+    check(unlitGroup->layers[i].scene->triangles[0].color ==
+              std::array<float, 3>{{0, 0, 0}},
+          "default lighting switch did not darken both merged sources");
+    check(litGroup->layers[i].scene->triangles[0].color[0] > .99 &&
+              litGroup->layers[i].scene->triangles[0].color[1] == 0 &&
+              flatGroup->layers[i].scene->triangles[0].color[1] > .99,
+          "merged sources lost explicit lighting or flat render settings");
+  }
   const auto branchRig = makeKey(columns[0], TPixel32(255, 0, 0, 255), 25);
   merge.getInputPort(0)->setFx(branchRig.getPointer());
   param<TPixelParam>(light, "keyColor")->setValue(0, TPixel32(0, 255, 0, 255));
@@ -287,6 +308,29 @@ void testMerge(const QString &path, const QString &saved) {
   int canceled = 1;
   check(!merge.get3DRenderScene(0, &canceled), "merge cancellation ignored");
 }
+
+void testRenderModes(GlbModelFx &model, TFx *column) {
+  TRenderSettings dark;
+  dark.m_disableDefaultLighting = true;
+  param<TIntEnumParam>(model, "lighting")->setValue(1);
+  const auto black = center(model, dark);
+  check(black == TPixel32::Black,
+        "disabling default lighting did not override the GLB headlight");
+  const auto red = makeKey(column, TPixel32(255, 0, 0, 255), 100);
+  auto &light    = *static_cast<ThreePointLightFx *>(red.getPointer());
+  const auto lit = center(light, dark);
+  check(lit.m == 255 && lit.r > 245 && lit.g == 0 && lit.b == 0,
+        "disabling default lighting suppressed an explicit rig");
+  auto flat         = dark;
+  flat.m_flatRender = true;
+  const auto unlit  = center(model, flat);
+  check(unlit.m == 255 && unlit.r > 245 && unlit.g > 245 && unlit.b > 245 &&
+            center(light, flat) == unlit,
+        "flat render did not override default and explicit GLB lighting");
+  check(center(model, dark) == black,
+        "changing GLB render modes reused the flat projection");
+  param<TIntEnumParam>(model, "lighting")->setValue(0);
+}
 }
 
 int main(int argc, char **argv) {
@@ -343,6 +387,7 @@ int main(int argc, char **argv) {
                                 "disconnect did not release column or clear output");
     testLightingChain(scene, columnFx);
     testMerge(path, directory.filePath("merge.xml"));
+    testRenderModes(model, columnFx);
     std::cout << "PASS: Three-Point Light sources, chaining, and rendering\n";
     return 0;
   } catch (const TException &) { std::cerr << "FAIL threepointlightfx: unexpected FX exception\n"; return 1; }

@@ -251,6 +251,8 @@ void TSceneProperties::saveData(TOStream &os) const {
     os.child("step") << step;
     os.child("shrink") << rs.m_shrinkX;
     os.child("applyShrinkToViewer") << (rs.m_applyShrinkToViewer ? 1 : 0);
+    if (rs.m_flatRender) os.child("flatRender") << 1;
+    if (rs.m_disableDefaultLighting) os.child("disableDefaultLighting") << 1;
     os.child("fps") << out.getFrameRate();
     os.child("path") << outPath;
     os.child("bpp") << rs.m_bpp;
@@ -570,6 +572,14 @@ void TSceneProperties::loadData(TIStream &is, bool isLoadingProject) {
               int applyShrinkToViewer;
               is >> applyShrinkToViewer;
               renderSettings.m_applyShrinkToViewer = (applyShrinkToViewer != 0);
+            } else if (tagName == "flatRender" ||
+                       tagName == "disableDefaultLighting") {
+              int enabled;
+              is >> enabled;
+              if (tagName == "flatRender")
+                renderSettings.m_flatRender = enabled != 0;
+              else
+                renderSettings.m_disableDefaultLighting = enabled != 0;
             } else if (tagName == "fps") {
               double j;
               is >> j;

@@ -289,20 +289,20 @@ TFxPair Previewer::Imp::buildSceneFx(int frame) {
     fxPair.m_frameA = ::buildSceneFx(
         scene, xsh, frame, TOutputProperties::AllLevels,
         m_renderSettings.m_applyShrinkToViewer ? m_renderSettings.m_shrinkX : 1,
-        false);
+        false, m_renderSettings);
 
     scene->shiftCameraX(m_renderSettings.m_stereoscopicShift);
     fxPair.m_frameB = ::buildSceneFx(
         scene, xsh, frame, TOutputProperties::AllLevels,
         m_renderSettings.m_applyShrinkToViewer ? m_renderSettings.m_shrinkX : 1,
-        false);
+        false, m_renderSettings);
 
     scene->shiftCameraX(-m_renderSettings.m_stereoscopicShift / 2.0);
   } else
     fxPair.m_frameA = ::buildSceneFx(
         scene, xsh, frame, TOutputProperties::AllLevels,
         m_renderSettings.m_applyShrinkToViewer ? m_renderSettings.m_shrinkX : 1,
-        false);
+        false, m_renderSettings);
 
   return fxPair;
 }
