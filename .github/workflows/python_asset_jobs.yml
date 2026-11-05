@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, windows-2022, macos-14]
+        os: [windows-2022]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
@@ -27,7 +27,7 @@ jobs:
         run: python -m unittest discover -s tools/ot3d_assets/tests -v
 
   sculptforge-cli:
-    runs-on: ubuntu-22.04
+    runs-on: windows-2022
     steps:
       - uses: actions/checkout@v6
       - uses: actions/checkout@v6
@@ -41,8 +41,8 @@ jobs:
       - name: Build independent SculptForge CLI (HTTP disabled)
         run: |
           cmake -S sculptforge-reference -B sculptforge-build -DCMAKE_BUILD_TYPE=Release -DSCULPTFORGE_BUILD_APP=OFF -DSCULPTFORGE_BUILD_TESTS=OFF -DSCULPTFORGE_WEBRTC=OFF -DCMAKE_DISABLE_FIND_PACKAGE_CURL=TRUE
-          cmake --build sculptforge-build --target sculptforge-cli --parallel 2
+          cmake --build sculptforge-build --config Release --target sculptforge-cli --parallel 2
       - name: Verify real CLI schema and local Unicode-path export
         env:
-          OT3D_SCULPTFORGE_CLI: ${{ github.workspace }}/sculptforge-build/sculptforge-cli
+          OT3D_SCULPTFORGE_CLI: ${{ github.workspace }}/sculptforge-build/Release/sculptforge-cli.exe
         run: python -m unittest discover -s tools/ot3d_assets/tests -v

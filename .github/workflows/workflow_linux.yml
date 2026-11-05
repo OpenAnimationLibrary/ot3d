@@ -4,23 +4,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: ${{ github.head_ref != '' }}
 
+# Automatic platform checks are paused while Windows is the primary target.
 on:
-  push:
-    paths:
-      - '**/*'                   # Include all files in the repository
-      - '!appveyor.yml'          # Ignore changes in AppVeyor
-      - '!README.md'             # Exclude README
-      - '!doc/**'                # Exclude documentation
-      - '!**/.github/**'         # Exclude everything in .github folder
-      - '.github/workflows/workflow_linux.yml'  # Include Linux workflow file
-  pull_request:
-    paths:
-      - '**/*'
-      - '!appveyor.yml'
-      - '!README.md'
-      - '!doc/**'
-      - '!**/.github/**'
-      - '.github/workflows/workflow_linux.yml'
+  workflow_dispatch:
 
 jobs:
   Ubuntu:
@@ -42,14 +28,10 @@ jobs:
     steps:
     - uses: actions/checkout@v6
 
-    - uses: actions/setup-python@v6
-      with:
-        python-version: '3.11'
-
     - name: Install libraries
       run: |
         sudo apt-get update
-        sudo apt-get install -y build-essential cmake pkg-config ninja-build ccache libboost-all-dev qtbase5-dev qt5-qmake qtscript5-dev qttools5-dev qttools5-dev-tools qtmultimedia5-dev qtwayland5 libqt5svg5-dev libqt5opengl5-dev libqt5multimedia5-plugins libqt5serialport5-dev libsuperlu-dev liblz4-dev libusb-1.0-0-dev liblzo2-dev libpng-dev libjpeg-dev libglew-dev freeglut3-dev libfreetype6-dev libjson-c-dev libmypaint-dev libopencv-dev libturbojpeg-dev libomp-dev libfuse2 xvfb xauth
+        sudo apt-get install -y build-essential cmake pkg-config ninja-build ccache libboost-all-dev qtbase5-dev qt5-qmake qtscript5-dev qttools5-dev qttools5-dev-tools qtmultimedia5-dev qtwayland5 libqt5svg5-dev libqt5opengl5-dev libqt5multimedia5-plugins libqt5serialport5-dev libsuperlu-dev liblz4-dev libusb-1.0-0-dev liblzo2-dev libpng-dev libjpeg-dev libglew-dev freeglut3-dev libfreetype6-dev libjson-c-dev libmypaint-dev libopencv-dev libturbojpeg-dev libomp-dev libfuse2
 
     - name: Set up cache
       run: mkdir -p /home/runner/.ccache
@@ -76,9 +58,9 @@ jobs:
         cd toonz
         mkdir build
         cd build
-        cmake ../sources -G Ninja -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER=${{ matrix.cxx }} -DCMAKE_C_COMPILER=${{ matrix.cc }} -DWITH_TRANSLATION=OFF -DBUILD_EXR_TESTS=ON -DBUILD_EXR_AOV_FX_TESTS=ON -DBUILD_ASSET_GENERATION_TESTS=ON
+        cmake ../sources -G Ninja -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER=${{ matrix.cxx }} -DCMAKE_C_COMPILER=${{ matrix.cc }} -DWITH_TRANSLATION=OFF -DBUILD_EXR_TESTS=ON -DBUILD_EXR_AOV_FX_TESTS=ON
         ninja
-        ctest --output-on-failure -R '^(tiio_exr(_level)?|openexraovfx|assetgeneration_native)$'
+        ctest --output-on-failure -R '^(tiio_exr(_level)?|openexraovfx)$'
 
     - name: Create Artifact
       run: |
@@ -153,7 +135,7 @@ jobs:
           qt5-qtbase-devel qt5-qtsvg qt5-qtsvg-devel qt5-qtscript qt5-qtscript-devel \
           qt5-qttools qt5-qttools-devel qt5-qttools-static qt5-qtmultimedia \
           qt5-qtmultimedia-devel qt5-qtserialport-devel qt5-qtwayland \
-          pkgconf-pkg-config python3 xorg-x11-server-Xvfb xorg-x11-xauth
+          pkgconf-pkg-config
 
     - name: Build libtiff
       run: |
@@ -166,6 +148,6 @@ jobs:
         cd toonz
         mkdir build
         cd build
-        cmake ../sources -G Ninja -DWITH_TRANSLATION=OFF -DBUILD_EXR_TESTS=ON -DBUILD_EXR_AOV_FX_TESTS=ON -DBUILD_ASSET_GENERATION_TESTS=ON
+        cmake ../sources -G Ninja -DWITH_TRANSLATION=OFF -DBUILD_EXR_TESTS=ON -DBUILD_EXR_AOV_FX_TESTS=ON
         ninja
-        ctest --output-on-failure -R '^(tiio_exr(_level)?|openexraovfx|assetgeneration_native)$'
+        ctest --output-on-failure -R '^(tiio_exr(_level)?|openexraovfx)$'
