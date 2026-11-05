@@ -172,6 +172,15 @@ public:
       m_before.add(TStageObject::T_Path);
       m_before.add(TStageObject::T_ShearX);
       m_before.add(TStageObject::T_ShearY);
+      if (app->getCurrentXsheet()
+              ->getXsheet()
+              ->getStageObject(app->getCurrentObject()->getObjectId())
+              ->isAMTransformEnabled()) {
+        m_before.add(TStageObject::T_RotationX);
+        m_before.add(TStageObject::T_RotationY);
+        m_before.add(TStageObject::T_ScaleZ);
+        m_before.add(TStageObject::T_CenterZ);
+      }
     }
     m_after = m_before;
   }
@@ -198,6 +207,15 @@ public:
       m_before.add(TStageObject::T_Path);
       m_before.add(TStageObject::T_ShearX);
       m_before.add(TStageObject::T_ShearY);
+      if (app->getCurrentXsheet()
+              ->getXsheet()
+              ->getStageObject(app->getCurrentObject()->getObjectId())
+              ->isAMTransformEnabled()) {
+        m_before.add(TStageObject::T_RotationX);
+        m_before.add(TStageObject::T_RotationY);
+        m_before.add(TStageObject::T_ScaleZ);
+        m_before.add(TStageObject::T_CenterZ);
+      }
     }
     m_after = m_before;
   }

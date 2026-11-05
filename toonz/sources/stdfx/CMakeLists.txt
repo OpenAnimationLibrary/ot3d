@@ -341,7 +341,7 @@ include_directories(
 
 _find_toonz_library(TNZLIBS "tnzcore;tnzbase;toonzlib")
 
-target_link_libraries(tnzstdfx otglb OpenEXR::OpenEXR Qt5::Core Qt5::Gui Qt5::OpenGL ${GL_LIB} ${GLEW_LIB} ${TNZLIBS} ${PTHREAD_LIBRARY})
+target_link_libraries(tnzstdfx otglb otam OpenEXR::OpenEXR Qt5::Core Qt5::Gui Qt5::OpenGL ${GL_LIB} ${GLEW_LIB} ${TNZLIBS} ${PTHREAD_LIBRARY})
 
 if(OpenCV_FOUND)
     target_link_libraries(tnzstdfx ${OpenCV_LIBS})
@@ -350,11 +350,11 @@ endif()
 option(BUILD_GLB_FX_TESTS "Build the 3D FX framework regression executables" OFF)
 if(BUILD_GLB_FX_TESTS)
     add_executable(glbmodelfx_test tests/glbmodelfx_test.cpp)
-    target_link_libraries(glbmodelfx_test otglb toonzqt Qt5::Core Qt5::Gui Qt5::Widgets ${TNZLIBS} ${PTHREAD_LIBRARY})
+    target_link_libraries(glbmodelfx_test otglb otam toonzlib toonzqt Qt5::Core Qt5::Gui Qt5::Widgets ${TNZLIBS} ${PTHREAD_LIBRARY})
     add_executable(threepointlightfx_test tests/threepointlightfx_test.cpp)
-    target_link_libraries(threepointlightfx_test otglb Qt5::Core Qt5::Gui ${TNZLIBS} ${PTHREAD_LIBRARY})
+    target_link_libraries(threepointlightfx_test otglb otam toonzlib Qt5::Core Qt5::Gui ${TNZLIBS} ${PTHREAD_LIBRARY})
     add_executable(transform3dfx_test tests/transform3dfx_test.cpp)
-    target_link_libraries(transform3dfx_test otglb Qt5::Core Qt5::Gui ${TNZLIBS} ${PTHREAD_LIBRARY})
+    target_link_libraries(transform3dfx_test otglb otam toonzlib Qt5::Core Qt5::Gui ${TNZLIBS} ${PTHREAD_LIBRARY})
 endif()
 
 # Optional regression target for multipart, tiled, and channel-mapped EXR AOVs.

@@ -1,4 +1,4 @@
-
+#include "tfxconnection.h"
 
 #include "toonz/fxcommand.h"
 
@@ -3408,6 +3408,12 @@ void SetParentUndo::initialize() {
   assert(m_parentPort < parentFx->getInputPortCount());
   assert(m_parentPort >= 0);
 
+  if (m_parentPort < 0 || m_parentPort >= parentFx->getInputPortCount() ||
+      !canConnectFxPort(parentFx->getInputPort(m_parentPort),
+                        m_newFx.getPointer())) {
+    m_parentFx = TFxP();
+    return;
+  }
   m_oldFx = parentFx->getInputPort(m_parentPort)->getFx();
 
   m_removeFromXsheet =  // This is a bit odd. The legacy behavior of the

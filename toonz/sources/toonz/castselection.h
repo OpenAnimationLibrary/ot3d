@@ -10,6 +10,7 @@ class CastBrowser;
 class TXshPaletteLevel;
 class TXshSoundLevel;
 class TXshLevel;
+class TXshAMLevel;
 
 //=============================================================================
 //
@@ -51,6 +52,7 @@ public:
   virtual int getFrameCount() const { return 0; }
   virtual QPixmap getPixmap(bool isSelected) const = 0;
   virtual TXshSimpleLevel *getSimpleLevel() const { return 0; }
+  virtual TXshAMLevel *getAMLevel() const { return 0; }
   virtual TXshSoundLevel *getSoundLevel() const { return 0; }
   virtual TXshPaletteLevel *getPaletteLevel() const { return 0; }
   virtual CastItem *clone() const = 0;
@@ -71,6 +73,7 @@ public:
   int getFrameCount() const override;
   QPixmap getPixmap(bool isSelected = false) const override;
   TXshSimpleLevel *getSimpleLevel() const override;
+  TXshAMLevel *getAMLevel() const override;
   CastItem *clone() const override {
     return new LevelCastItem(m_level, m_itemPixmapSize);
   }

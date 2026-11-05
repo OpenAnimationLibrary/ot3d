@@ -387,6 +387,13 @@ bool isGlobalKeyFrameWithSameTypeDiffFromLinear(TStageObject *stageObject,
                   ->getKeyframeAt(frame)
                   .m_type)
     return false;
+  if (stageObject->isAMTransformEnabled())
+    for (int i = TStageObject::T_RotationX; i < TStageObject::T_ChannelCount;
+         ++i)
+      if (type != stageObject->getParam(static_cast<TStageObject::Channel>(i))
+                      ->getKeyframeAt(frame)
+                      .m_type)
+        return false;
   return true;
 }
 
@@ -439,6 +446,13 @@ bool isGlobalKeyFrameWithSamePrevTypeDiffFromLinear(TStageObject *stageObject,
                   ->getKeyframeAt(frame)
                   .m_prevType)
     return false;
+  if (stageObject->isAMTransformEnabled())
+    for (int i = TStageObject::T_RotationX; i < TStageObject::T_ChannelCount;
+         ++i)
+      if (type != stageObject->getParam(static_cast<TStageObject::Channel>(i))
+                      ->getKeyframeAt(frame)
+                      .m_prevType)
+        return false;
   return true;
 }
 
@@ -4331,6 +4345,15 @@ void CellArea::onStepChanged(QAction *act) {
   if (keyFrameIndex >= 0) {
     setParamStep(keyFrameIndex, step,
                  stageObject->getParam(TStageObject::T_ShearY));
+  }
+
+  if (stageObject->isAMTransformEnabled()) {
+    for (int i = TStageObject::T_RotationX; i < TStageObject::T_ChannelCount;
+         ++i) {
+      param = stageObject->getParam(static_cast<TStageObject::Channel>(i));
+      keyFrameIndex = param->getClosestKeyframe(frame);
+      if (keyFrameIndex >= 0) setParamStep(keyFrameIndex, step, param);
+    }
   }
 
   TUndoManager::manager()->endBlock();

@@ -29,7 +29,9 @@ enum TXshLevelType {
   PLT_XSHLEVEL      = 2 << 7,
   SND_XSHLEVEL      = 3 << 7,
   SND_TXT_XSHLEVEL  = 4 << 7,
-  MESH_XSHLEVEL     = 5 << 7
+  MESH_XSHLEVEL     = 5 << 7,
+  // Native spline/patch asset; NOT a Plastic mesh or an image level.
+  AM_XSHLEVEL = 0x10000 | LEVELCOLUMN_XSHLEVEL
 };
 
 #endif

@@ -1040,6 +1040,11 @@ QString TTool::updateEnabled(int rowIndex, int columnIndex) {
                                              "used to edit a motion path."));
   }
 
+  if (levelType == AM_XSHLEVEL && (toolType & TTool::LevelTool))
+    return (enable(false),
+            QObject::tr("A:M model levels are read-only. Use the Animate Tool "
+                        "for instance transforms."));
+
   // Check against unplaced columns (not in filmstrip mode)
   if (column && !filmstrip) {
     if (column->isLocked() && m_name != T_Selection)

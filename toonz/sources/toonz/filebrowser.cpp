@@ -857,6 +857,12 @@ void FileBrowser::readInfo(Item &item) {
 //! classified as *valid* or *invalid* infos...
 void FileBrowser::readFrameCount(Item &item) {
   if (!item.m_isFolder &&
+      TFileType::getInfo(item.m_path) == TFileType::AM_MODEL_LEVEL) {
+    item.m_frameCount = 1;
+    item.m_frameIds.assign(1, TFrameId(1));
+    return;
+  }
+  if (!item.m_isFolder &&
       TFileType::isViewable(TFileType::getInfo(item.m_path))) {
     if (isMultipleFrameType(item.m_path.getType()))
       item.m_frameCount = m_frameCountReader.getFrameCount(item.m_path);

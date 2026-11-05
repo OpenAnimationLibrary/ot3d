@@ -1,5 +1,10 @@
 # OT3D External Asset Compatibility
 
+> Native A:M development track: [AM_MODEL_LEVEL.md](AM_MODEL_LEVEL.md) adds an
+> experimental read-only `.mdl` level and model-only spatial Animate channels.
+> This supersedes the native-A:M deferral below for that explicitly bounded subset;
+> it does not enable spatial rotation for ordinary 2D levels or full A:M projects.
+
 ## Status of this contract
 
 This document defines the intended early asset boundary. It is deliberately narrower

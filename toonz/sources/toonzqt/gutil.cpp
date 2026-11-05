@@ -588,7 +588,8 @@ bool isResource(const QString &path) {
 
   return (TFileType::isViewable(type) || type & TFileType::MESH_IMAGE ||
           type == TFileType::AUDIO_LEVEL || type == TFileType::TABSCENE ||
-          type == TFileType::TOONZSCENE || fp.getType() == "tpl");
+          type == TFileType::TOONZSCENE || type == TFileType::AM_MODEL_LEVEL ||
+          fp.getType() == "tpl");
 }
 
 //-----------------------------------------------------------------------------

@@ -18,6 +18,7 @@
 #include "toonz/levelset.h"
 #include "toonz/toonzscene.h"
 #include "toonz/txshsimplelevel.h"
+#include "toonz/txshamlevel.h"
 #include "toonz/txshpalettelevel.h"
 #include "toonz/txshsoundlevel.h"
 #include "toonz/txshleveltypes.h"
@@ -600,7 +601,7 @@ void CastBrowser::refreshData() {
 
   int i;
   for (i = 0; i < (int)levels.size(); i++) {
-    if (levels[i]->getSimpleLevel())
+    if (levels[i]->getSimpleLevel() || levels[i]->getAMLevel())
       m_castItems->addItem(new LevelCastItem(
           levels[i], m_itemViewer->getPanel()->getIconSize()));
     else if (levels[i]->getPaletteLevel())
@@ -633,6 +634,8 @@ QVariant CastBrowser::getItemData(int index, DataType dataType,
     return item->getFrameCount();
   else if (dataType == FullPath) {
     ToonzScene *scene   = TApp::instance()->getCurrentScene()->getScene();
+    if (auto *am = item->getAMLevel())
+      return scene->decodeFilePath(am->getPath()).getQString();
     TXshSimpleLevel *sl = item->getSimpleLevel();
     if (sl) return scene->decodeFilePath(sl->getPath()).getQString();
     TXshPaletteLevel *pl = item->getPaletteLevel();
@@ -733,6 +736,7 @@ QMenu *CastBrowser::getContextMenu(QWidget *parent, int index) {
   bool vectorLevelSelected = false;
   bool meshLevelSelected   = false;
   bool toonzRasterLevelSelected = false;
+  bool amSelected               = false;
   bool otherFileSelected   = false;
   int levelSelectedCount   = 0;
   for (it = indices.begin(); it != indices.end(); ++it) {
@@ -741,7 +745,9 @@ QMenu *CastBrowser::getContextMenu(QWidget *parent, int index) {
       continue;  // should never happen
     TXshSimpleLevel *sl = m_castItems->getItem(index)->getSimpleLevel();
     if (!sl) {
-      if (m_castItems->getItem(index)->getPaletteLevel())
+      if (m_castItems->getItem(index)->getAMLevel())
+        amSelected = true;
+      else if (m_castItems->getItem(index)->getPaletteLevel())
         paletteSelected = true;
       else
         audioSelected = true;
@@ -760,25 +766,27 @@ QMenu *CastBrowser::getContextMenu(QWidget *parent, int index) {
   QMenu *menu        = new QMenu(parent);
   CommandManager *cm = CommandManager::instance();
 
-  menu->addAction(cm->getAction(MI_LevelSettings));
+  if (!amSelected) menu->addAction(cm->getAction(MI_LevelSettings));
 
   menu->addAction(cm->getAction(MI_ExposeResource));
   menu->addAction(cm->getAction(MI_ShowFolderContents));
-  if (!audioSelected && !paletteSelected && !meshLevelSelected)
+  if (!amSelected && !audioSelected && !paletteSelected && !meshLevelSelected)
     menu->addAction(cm->getAction(MI_ViewFile));
   menu->addAction(cm->getAction(MI_FileInfo));
 
   // MI_EditLevel solo se e' stato selezionato un singolo diverso da livelli
   // palette a livelli audio
-  if (indices.size() == 1 && !audioSelected && !paletteSelected)
+  if (!amSelected && indices.size() == 1 && !audioSelected && !paletteSelected)
     menu->addAction(cm->getAction(MI_EditLevel));
-  if (!paletteSelected) menu->addAction(cm->getAction(MI_SaveLevel));
+  if (!amSelected && !paletteSelected)
+    menu->addAction(cm->getAction(MI_SaveLevel));
   menu->addSeparator();
   // MI_ConvertToVectors if only non-vector layers were selected
-  if (!audioSelected && !paletteSelected && !vectorLevelSelected)
+  if (!amSelected && !audioSelected && !paletteSelected && !vectorLevelSelected)
     menu->addAction(cm->getAction(MI_ConvertToVectors));
-  if (!audioSelected && !paletteSelected && !toonzRasterLevelSelected)
-      menu->addAction(cm->getAction(MI_ConvertToToonzRaster));
+  if (!amSelected && !audioSelected && !paletteSelected &&
+      !toonzRasterLevelSelected)
+    menu->addAction(cm->getAction(MI_ConvertToToonzRaster));
   menu->addSeparator();
   menu->addAction(cm->getAction(MI_RemoveLevel));
   menu->addAction(cm->getAction(MI_RemoveUnused));
@@ -797,7 +805,10 @@ void CastBrowser::expose() {
     TXshSimpleLevel *sl    = item->getSimpleLevel();
     TXshPaletteLevel *pl   = item->getPaletteLevel();
     TXshSoundLevel *soundl = item->getSoundLevel();
-    if (sl)
+    if (auto *am = item->getAMLevel()) {
+      std::set<TFrameId> frames{TFrameId(1)};
+      FilmstripCmd::moveToScene(am, frames);
+    } else if (sl)
       FilmstripCmd::moveToScene(sl);
     else if (pl)
       FilmstripCmd::moveToScene(pl);

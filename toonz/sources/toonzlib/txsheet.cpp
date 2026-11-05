@@ -280,6 +280,9 @@ bool TXsheet::setCell(int row, int col, const TXshCell &cell) {
     return false;
   }
 
+  if (!cell.isEmpty())
+    getStageObject(TStageObjectId::ColumnId(col))
+        ->enableAMTransform(cell.m_level->getType() == AM_XSHLEVEL);
   TFx *fx = cellColumn->getFx();
   if (wasColumnEmpty && fx && fx->getOutputConnectionCount() == 0 &&
       cellColumn->getPaletteColumn() == nullptr)
@@ -363,6 +366,9 @@ bool TXsheet::setCells(int row, int col, int rowCount, const TXshCell cells[]) {
     }
     return false;
   }
+  if (i < rowCount)
+    getStageObject(TStageObjectId::ColumnId(col))
+        ->enableAMTransform(cells[i].m_level->getType() == AM_XSHLEVEL);
   int newColRowCount = column->getMaxFrame() + 1;
 
   TFx *fx = column->getFx();
@@ -1257,6 +1263,15 @@ void TXsheet::loadData(TIStream &is) {
       throw TException("xsheet, unknown tag: " + tagName);
     }
     is.closeChild();
+  }
+  for (int c = 0; c < getColumnCount(); ++c) {
+    auto *column = getColumn(c) ? getColumn(c)->getCellColumn() : nullptr;
+    if (!column || column->isEmpty()) continue;
+    int first, last;
+    column->getRange(first, last);
+    getStageObject(TStageObjectId::ColumnId(c))
+        ->enableAMTransform(column->getCell(first).m_level->getType() ==
+                            AM_XSHLEVEL);
   }
   updateFrameCount();
 }

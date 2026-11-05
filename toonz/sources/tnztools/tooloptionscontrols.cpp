@@ -941,13 +941,19 @@ PegbarChannelField::PegbarChannelField(TTool *tool,
   case TStageObject::T_ShearY:
     setMeasure("shear");
     break;
+  case TStageObject::T_RotationX:
+  case TStageObject::T_RotationY:
   case TStageObject::T_Angle:
     setMeasure("angle");
     break;
+  case TStageObject::T_ScaleZ:
   case TStageObject::T_ScaleX:
   case TStageObject::T_ScaleY:
   case TStageObject::T_Scale:
     setMeasure("scale");
+    break;
+  case TStageObject::T_CenterZ:
+    setMeasure("length");
     break;
   default:
     setMeasure("dummy");
@@ -963,6 +969,14 @@ PegbarChannelField::PegbarChannelField(TTool *tool,
 
 void PegbarChannelField::onChange(TMeasuredValue *fld, bool addToUndo) {
   if (!m_tool->isEnabled()) return;
+  auto *stageObject =
+      m_tool->getXsheet()->getStageObject(m_tool->getObjectId());
+  const bool isModel = stageObject->isAMTransformEnabled();
+  if (TStageObject::isAMChannel(m_actionId) && !isModel) return;
+  auto *globalProperty = dynamic_cast<TBoolProperty *>(
+      m_tool->getProperties(0)->getProperty("Global Key"));
+  const bool modelGlobalKey =
+      isModel && globalProperty && globalProperty->getValue();
 
   // the camera will crash with a value of 0
   if (m_tool->getObjectId().isCamera()) {
@@ -991,7 +1005,7 @@ void PegbarChannelField::onChange(TMeasuredValue *fld, bool addToUndo) {
       else
         modifyConnectedActionId = false;
     }
-    if (m_isGlobalKeyframe) {
+    if (m_isGlobalKeyframe || modelGlobalKey) {
       m_before.add(TStageObject::T_Angle);
       m_before.add(TStageObject::T_X);
       m_before.add(TStageObject::T_Y);
@@ -1003,6 +1017,12 @@ void PegbarChannelField::onChange(TMeasuredValue *fld, bool addToUndo) {
       m_before.add(TStageObject::T_Path);
       m_before.add(TStageObject::T_ShearX);
       m_before.add(TStageObject::T_ShearY);
+      if (isModel) {
+        m_before.add(TStageObject::T_RotationX);
+        m_before.add(TStageObject::T_RotationY);
+        m_before.add(TStageObject::T_ScaleZ);
+        m_before.add(TStageObject::T_CenterZ);
+      }
     }
     m_before.updateValues();
   }

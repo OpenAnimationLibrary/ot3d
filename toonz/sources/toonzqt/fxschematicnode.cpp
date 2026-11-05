@@ -1,4 +1,4 @@
-
+#include "tfxconnection.h"
 
 #include "toonzqt/fxschematicnode.h"
 
@@ -1489,6 +1489,13 @@ bool FxSchematicPort::linkTo(SchematicPort *port, bool checkOnly) {
   if (!fxScene) return false;
   FxDag *fxDag = fxScene->getXsheet()->getFxDag();
   if (fxDag->checkLoop(inputFx, fx)) return false;
+  TFx *destination = fx;
+  if (auto *zerary = dynamic_cast<TZeraryColumnFx *>(destination))
+    destination = zerary->getZeraryFx();
+  if (destination && portIndex >= 0 &&
+      portIndex < destination->getInputPortCount() &&
+      !canConnectFxPort(destination->getInputPort(portIndex), inputFx))
+    return false;
   if (!checkOnly) linkEffects(inputFx, fx, portIndex);
   return true;
 }

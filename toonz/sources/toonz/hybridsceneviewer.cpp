@@ -1,3 +1,5 @@
+#include "toonz/amlevelrender.h"
+#include "toonz/txshleveltypes.h"
 #include "hybridsceneviewer.h"
 
 #include "tapp.h"
@@ -101,6 +103,31 @@ void HybridSceneViewer::drawScene() {
     if (!column || !column->isCamstandVisible() ||
         xsheet->getCell(frame, i).isEmpty() || column->getOpacity() == 0)
       continue;
+    const auto cell = xsheet->getCell(frame, i);
+    if (cell.m_level->getType() == AM_XSHLEVEL) {
+      try {
+        auto snapshot = prepareAMLevelGeometry(xsheet, i, frame, !is3DView());
+        if (!snapshot) continue;
+        for (const auto &warning : snapshot->warnings)
+          reportDiagnostic(QString::fromStdString(warning));
+        if (snapshot->triangles.size() > 1000000 - triangles) {
+          reportDiagnostic(
+              tr("Scene exceeds the interactive triangle budget."));
+          break;
+        }
+        auto geometry = std::make_shared<otglb::ViewerGeometry>();
+        geometry->stageUnitsPerModelUnit = 1.0;
+        for (const auto &triangle : snapshot->triangles)
+          geometry->triangles.push_back({triangle.vertices, triangle.color});
+        triangles += geometry->triangles.size();
+        // These vertices are already placed. Never apply the stage transform
+        // twice, and do not turn native data into an intermediate GLB asset.
+        items.push_back({geometry, TAffine(), 0, column->getOpacity() / 255.0});
+      } catch (const std::exception &error) {
+        reportDiagnostic(QString::fromUtf8(error.what()));
+      }
+      continue;
+    }
     auto *zerary = column->getZeraryFxColumn();
     if (!zerary) continue;
     auto *source = dynamic_cast<T3DViewerSource *>(
