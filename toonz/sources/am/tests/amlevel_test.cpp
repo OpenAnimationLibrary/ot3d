@@ -47,16 +47,18 @@ QByteArray readFile(const QString &path) {
 class NativeRenderSession {
   TRenderer m_renderer;
   unsigned long m_id;
+  double m_frame;
 
 public:
-  NativeRenderSession() : m_renderer(1), m_id(TRenderer::buildRenderId()) {
+  explicit NativeRenderSession(double frame = 0)
+      : m_renderer(1), m_id(TRenderer::buildRenderId()), m_frame(frame) {
     m_renderer.enablePrecomputing(false);
     m_renderer.install(m_id);
     m_renderer.declareRenderStart(m_id);
-    m_renderer.declareFrameStart(0);
+    m_renderer.declareFrameStart(m_frame);
   }
   ~NativeRenderSession() {
-    m_renderer.declareFrameEnd(0);
+    m_renderer.declareFrameEnd(m_frame);
     m_renderer.declareRenderEnd(m_id);
     m_renderer.uninstall();
   }
@@ -323,6 +325,72 @@ int main(int argc, char **argv) {
       glbFx->compute(tile, 0, settings);
     }
     check(raster->pixels(64)[64].m > 0, "GLB render snapshot did not draw");
+    // Hold drawing 1 while palette style 2 changes on Xsheet rows.
+    const TPixel32 orange(255, 154, 31, 255);
+    for (const auto &[row, color] : {std::pair<int, TPixel32>{0, TPixel32::Red},
+                                     {14, orange},
+                                     {35, TPixel32::Red}}) {
+      palette->getStyle(2)->setMainColor(color);
+      palette->setKeyframe(2, row);
+    }
+    palette->setFrame(14);
+    check(level->updatePaletteColors(),
+          "palette keys did not refresh the model");
+    for (int row = 1; row <= 35; ++row)
+      check(xsheet->setCell(row, 1, TXshCell(level, TFrameId(1))),
+            "hold native model exposure");
+
+    const auto orangeGeometry =
+        prepareNativeModelGeometry(xsheet, 1, 14, false);
+    const auto redGeometry   = prepareNativeModelGeometry(xsheet, 1, 0, false);
+    const auto tweenGeometry = prepareNativeModelGeometry(xsheet, 1, 7, false);
+    const auto endGeometry   = prepareNativeModelGeometry(xsheet, 1, 35, false);
+    palette->setFrame(7);
+    const auto tween = palette->getStyle(2)->getMainColor();
+    check(orangeGeometry->triangles[0].color ==
+                  otam::Color{{1, orange.g / 255.f, orange.b / 255.f}} &&
+              redGeometry->triangles[0].color == otam::Color{{1, 0, 0}} &&
+              tweenGeometry->triangles[0].color ==
+                  otam::Color{{1, tween.g / 255.f, tween.b / 255.f}} &&
+              endGeometry->triangles[0].color == otam::Color{{1, 0, 0}},
+          "held model did not use the keyed and interpolated palette colors");
+
+    TRasterFxP orangeFx(makeNativeModelRenderFx(xsheet, 1, 14, false));
+    TRasterFxP redFx(makeNativeModelRenderFx(xsheet, 1, 0, false));
+    check(orangeFx->getAlias(14, settings) != redFx->getAlias(0, settings),
+          "keyed palette colors share a render cache identity");
+    check(palette->getFrame() == 7 &&
+              palette->getStyle(2)->getMainColor() == tween,
+          "out-of-order render requests changed the editable palette");
+    raster->clear();
+    settings.m_flatRender = true;
+    {
+      NativeRenderSession renderSession(14);
+      orangeFx->compute(tile, 14, settings);
+    }
+    check(raster->pixels(64)[64] == orange,
+          "final render lost the keyed A:M palette color");
+
+    const TFilePath animatedPath(temp.path() + "/animated-palette.tnz");
+    {
+      TOStream out(animatedPath);
+      out << level;
+    }
+    TPersist *animated = nullptr;
+    {
+      TIStream in(animatedPath);
+      in >> animated;
+    }
+    std::unique_ptr<TPersist> animatedOwner(animated);
+    auto *animatedLevel = dynamic_cast<TXshAMLevel *>(animated);
+    check(animatedLevel, "animated A:M level did not reopen");
+    animatedLevel->setScene(&scene);
+    animatedLevel->load();
+    check(animatedLevel->getPalette()->getKeyframeCount(2) == 3 &&
+              animatedLevel->renderMesh(14)->triangles[0].color ==
+                  orangeGeometry->triangles[0].color,
+          "A:M palette keys were lost on reopen");
+
     level->save();
     check(readFile(source).toStdString() == amtest::source,
           "source rewritten by save");

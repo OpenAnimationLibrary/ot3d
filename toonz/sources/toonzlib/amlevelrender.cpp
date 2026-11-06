@@ -72,12 +72,13 @@ static std::shared_ptr<const otam::Mesh> prepareModelGeometryImpl(
     TXsheet *xsheet, int column, double frame, bool projectToCamera,
     bool previewCamera, bool allowGlb) {
   if (!xsheet || column < 0 || !std::isfinite(frame)) return {};
-  const auto cell = xsheet->getCell(int(std::floor(frame)), column);
+  const int row   = int(std::floor(frame));
+  const auto cell = xsheet->getCell(row, column);
   if (cell.isEmpty()) return {};
   std::shared_ptr<const otam::Mesh> mesh;
   double units = Stage::inch / 2.54;
   if (auto *am = cell.m_level->getAMLevel()) {
-    mesh = am->renderMesh();
+    mesh = am->renderMesh(row);
     if (!mesh)
       throw std::runtime_error(
           am->error().empty() ? "A:M model source is not loaded" : am->error());
