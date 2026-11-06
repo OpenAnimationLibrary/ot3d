@@ -16,6 +16,7 @@ public:
     m_table["tnz"] = TFileType::TOONZSCENE;
     m_table["tab"] = TFileType::TABSCENE;
     m_table["mdl"] = TFileType::AM_MODEL_LEVEL;
+    m_table["glb"] = TFileType::GLB_MODEL_LEVEL;
   }
 
   static FileTypeData *instance() {

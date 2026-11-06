@@ -104,9 +104,10 @@ void HybridSceneViewer::drawScene() {
         xsheet->getCell(frame, i).isEmpty() || column->getOpacity() == 0)
       continue;
     const auto cell = xsheet->getCell(frame, i);
-    if (cell.m_level->getType() == AM_XSHLEVEL) {
+    if (isNativeModelLevel(cell.m_level->getType())) {
       try {
-        auto snapshot = prepareAMLevelGeometry(xsheet, i, frame, !is3DView());
+        auto snapshot =
+            prepareNativeModelGeometry(xsheet, i, frame, !is3DView());
         if (!snapshot) continue;
         for (const auto &warning : snapshot->warnings)
           reportDiagnostic(QString::fromStdString(warning));
@@ -121,7 +122,7 @@ void HybridSceneViewer::drawScene() {
           geometry->triangles.push_back({triangle.vertices, triangle.color});
         triangles += geometry->triangles.size();
         // These vertices are already placed. Never apply the stage transform
-        // twice, and do not turn native data into an intermediate GLB asset.
+        // twice.
         items.push_back({geometry, TAffine(), 0, column->getOpacity() / 255.0});
       } catch (const std::exception &error) {
         reportDiagnostic(QString::fromUtf8(error.what()));

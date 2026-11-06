@@ -24,11 +24,17 @@ DVAPI TRasterFx *makeAMLevelRenderFx(
 
 // Interactive columns and immutable render-tree snapshots share this contract.
 DVAPI bool isAMModelColumn(TFx *fx);
+DVAPI bool isNativeModelColumn(TFx *fx);
+DVAPI std::shared_ptr<const otam::Mesh> prepareNativeModelGeometry(
+    TXsheet *xsheet, int column, double frame, bool projectToCamera);
+DVAPI TRasterFx *makeNativeModelRenderFx(TXsheet *xsheet, int column,
+                                         double frame, bool previewCamera);
 DVAPI TRasterFx *makeAMLevelRenderFx(TXsheet *xsheet, int column, double frame,
                                      bool previewCamera = false);
 DVAPI bool setAMLevelColorFilter(TRasterFx *fx, const TPixel32 &color);
 class TLevelColumnFx;
-DVAPI std::shared_ptr<const otglb::RenderScene> prepareAMColumnRenderScene(
+DVAPI std::shared_ptr<const otglb::RenderScene>
+prepareNativeModelColumnRenderScene(
     TLevelColumnFx *column, double frame, const int *canceled,
     const otglb::LightingRig *lighting                   = nullptr,
     const std::vector<otglb::ModelTransform> *transforms = nullptr,

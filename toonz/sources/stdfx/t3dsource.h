@@ -26,14 +26,14 @@ class T3DSourcePort final : public TRasterFxPort,
       double frame, const int *canceled, const otglb::LightingRig *lighting,
       const std::vector<otglb::ModelTransform> *transforms,
       const TRenderSettings *settings) const override {
-    return prepareAMColumnRenderScene(dynamic_cast<TLevelColumnFx *>(getFx()),
-                                      frame, canceled, lighting, transforms,
-                                      settings);
+    return prepareNativeModelColumnRenderScene(
+        dynamic_cast<TLevelColumnFx *>(getFx()), frame, canceled, lighting,
+        transforms, settings);
   }
 
 public:
   bool canConnect(TFx *fx) const override {
-    return !fx || resolve(fx) || isAMModelColumn(fx);
+    return !fx || resolve(fx) || isNativeModelColumn(fx);
   }
   void setFx(TFx *fx) override {
     // Scene restoration can connect a column before its cells are populated.

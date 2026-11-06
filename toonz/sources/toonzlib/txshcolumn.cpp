@@ -235,7 +235,7 @@ bool TXshCellColumn::setCells(int row, int rowCount, const TXshCell cells[]) {
   int batchKind = -1;
   for (int k = 0; k < rowCount; ++k) {
     if (cells[k].isEmpty()) continue;
-    const int kind = cells[k].m_level->getType() == AM_XSHLEVEL ? 1 : 0;
+    const int kind = nativeModelColumnKind(cells[k].m_level->getType());
     if (batchKind >= 0 && batchKind != kind) return false;
     batchKind = kind;
   }

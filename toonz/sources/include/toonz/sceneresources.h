@@ -27,6 +27,7 @@ class ToonzScene;
 class TXshSimpleLevel;
 class TXshPaletteLevel;
 class TXshAMLevel;
+class TXshGlbLevel;
 class TXsheet;
 
 //=============================================================================
@@ -75,6 +76,7 @@ public:
   virtual void process(TXshPaletteLevel *sl) {}
   virtual void process(TXshSoundLevel *sl) {}
   virtual void process(TXshAMLevel *sl) {}
+  virtual void process(TXshGlbLevel *sl) {}
   virtual bool aborted() const { return false; }
 };
 
@@ -350,6 +352,7 @@ public:
   void process(TXshPaletteLevel *sl) override;
   void process(TXshSoundLevel *sl) override;
   void process(TXshAMLevel *sl) override;
+  void process(TXshGlbLevel *sl) override;
 
   bool aborted() const override { return m_importStrategy.aborted(); }
 
@@ -373,6 +376,9 @@ class DVAPI ResourceCollector final : public ResourceProcessor {
   int m_count;
   std::map<TFilePath, TFilePath> m_collectedFiles;
 
+  template <class Level>
+  void collectModel(Level *level);
+
 public:
   ResourceCollector(ToonzScene *scene);
   ~ResourceCollector();
@@ -387,6 +393,7 @@ public:
   void process(TXshSimpleLevel *sl) override;
   void process(TXshSoundLevel *sl) override;
   void process(TXshAMLevel *sl) override;
+  void process(TXshGlbLevel *sl) override;
   void process(TXshPaletteLevel *pl) override;
 };
 

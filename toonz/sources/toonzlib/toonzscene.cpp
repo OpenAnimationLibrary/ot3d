@@ -30,6 +30,7 @@
 #include "toonz/txshpalettecolumn.h"
 #include "toonz/txshpalettelevel.h"
 #include "toonz/txshamlevel.h"
+#include "toonz/txshglblevel.h"
 #include "toonz/toonzfolders.h"
 
 // TnzCore includes
@@ -868,6 +869,8 @@ TXshLevel *ToonzScene::createNewLevel(int type, std::wstring levelName,
                                       TFilePath fp) {
   TLevelSet *levelSet = getLevelSet();
 
+  if (type == GLB_XSHLEVEL)
+    throw TException("GLB models are read-only; load an existing .glb file.");
   if (type == AM_XSHLEVEL)
     throw TException("A:M models are read-only; load an existing .mdl file.");
 
@@ -1015,6 +1018,10 @@ static LevelType getLevelType(const TFilePath &fp) {
     ret.m_ltype = PLI_XSHLEVEL;
     break;
 
+  case TFileType::GLB_MODEL_LEVEL:
+    ret.m_ltype = GLB_XSHLEVEL;
+    break;
+
   case TFileType::AM_MODEL_LEVEL:
     ret.m_ltype = AM_XSHLEVEL;
     break;
@@ -1043,7 +1050,7 @@ static LevelType getLevelType(const TFilePath &fp) {
 //-----------------------------------------------------------------------------
 
 TFilePath ToonzScene::getImportedLevelPath(const TFilePath path) const {
-  if (TFileType::getInfo(path) == TFileType::AM_MODEL_LEVEL)
+  if (TFileType::isModelLevel(TFileType::getInfo(path)))
     return path.withParentDir(TFilePath("+extras"));
   if (TFileType::getInfo(path) == TFileType::AUDIO_LEVEL)
     return path.withParentDir(TFilePath("+extras"));
@@ -1160,6 +1167,15 @@ TXshLevel *ToonzScene::loadLevel(const TFilePath &actualPath,
 
   if (ltype.m_ltype == AM_XSHLEVEL) {
     TXshAMLevelP model = new TXshAMLevel(levelName);
+    model->setScene(this);
+    model->setPath(codeFilePath(levelPath));
+    model->load();
+    m_levelSet->insertLevel(model.getPointer());
+    return model.getPointer();
+  }
+
+  if (ltype.m_ltype == GLB_XSHLEVEL) {
+    TXshGlbLevelP model = new TXshGlbLevel(levelName);
     model->setScene(this);
     model->setPath(codeFilePath(levelPath));
     model->load();
@@ -1439,6 +1455,9 @@ TFilePath ToonzScene::getDefaultLevelPath(int levelType,
     break;
   case TZP_XSHLEVEL:
     levelPath = TFilePath(levelName).withType("tlv");
+    break;
+  case GLB_XSHLEVEL:
+    levelPath = TFilePath(levelName).withType("glb");
     break;
   case AM_XSHLEVEL:
     levelPath = TFilePath(levelName).withType("mdl");

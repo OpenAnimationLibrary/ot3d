@@ -1040,7 +1040,7 @@ QString TTool::updateEnabled(int rowIndex, int columnIndex) {
                                              "used to edit a motion path."));
   }
 
-  if (levelType == AM_XSHLEVEL && (toolType & TTool::LevelTool))
+  if (isNativeModelLevel(levelType) && (toolType & TTool::LevelTool))
     return (enable(false),
             QObject::tr("A:M model levels are read-only. Use the Animate Tool "
                         "for instance transforms."));

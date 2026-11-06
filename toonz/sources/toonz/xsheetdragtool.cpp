@@ -46,7 +46,6 @@
 #include "toonz/onionskinmask.h"
 #include "toonz/txshsoundcolumn.h"
 #include "toonz/txshsimplelevel.h"
-#include "toonz/txshamlevel.h"
 #include "toonz/txshnoteset.h"
 #include "toutputproperties.h"
 #include "toonz/preferences.h"
@@ -2124,8 +2123,8 @@ public:
       int i;
       for (i = 0; i < cast->getItemCount(); i++) {
         CastItem *item      = cast->getItem(i);
-        if (auto *am = item->getAMLevel()) {
-          m_data->addPath(am->getScene()->decodeFilePath(am->getPath()));
+        if (auto *model = item->getModelLevel()) {
+          m_data->addPath(model->getScene()->decodeFilePath(model->getPath()));
           continue;
         }
         TXshSimpleLevel *sl = item->getSimpleLevel();

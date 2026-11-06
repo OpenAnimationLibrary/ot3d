@@ -38,9 +38,10 @@ enum Type {
 
   IMAGE = RASTER_IMAGE | VECTOR_IMAGE | CMAPPED_IMAGE | MESH_IMAGE,
 
-  AUDIO_LEVEL    = 0x20 | LEVEL,
-  PALETTE_LEVEL  = 0x40 | LEVEL,
-  AM_MODEL_LEVEL = 0x100 | LEVEL,
+  AUDIO_LEVEL     = 0x20 | LEVEL,
+  PALETTE_LEVEL   = 0x40 | LEVEL,
+  AM_MODEL_LEVEL  = 0x100 | LEVEL,
+  GLB_MODEL_LEVEL = 0x200 | LEVEL,
 
   META_IMAGE = 0x80,
   META_LEVEL = META_IMAGE | LEVEL,
@@ -73,6 +74,9 @@ DVAPI Type getInfoFromExtension(const QString &ext);
 
 DVAPI void declare(std::string extension, Type type);
 
+inline bool isModelLevel(Type type) {
+  return type == AM_MODEL_LEVEL || type == GLB_MODEL_LEVEL;
+}
 inline bool isResource(Type type) { return (type != UNKNOW_FILE); }
 inline bool isViewable(Type type) { return (type & VIEWABLE) != 0; }
 inline bool isLevel(Type type) { return (type & LEVEL) != 0; }
