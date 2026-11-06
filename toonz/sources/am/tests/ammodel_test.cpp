@@ -49,6 +49,16 @@ int main() {
     near(mesh.triangles[0].color[1], 0);
     for (const auto &t : mesh.triangles)
       for (const auto &v : t.vertices) near(v[2], 0);
+    auto overlap  = d;
+    auto topGroup = overlap.models[0].groups.front();
+    topGroup.name = "Cover";
+    overlap.models[0].groups.push_back(topGroup);
+    const auto layered = otam::previewMesh(overlap);
+    check(layered.triangles.front().colorGroup == 1 &&
+              layered.triangles.front().color == mesh.triangles.front().color,
+          "equal RGB values lost the winning group identity");
+    check(otam::projected(layered, 0, 0, 0).triangles.front().colorGroup == 1,
+          "camera projection lost the group identity");
     // Coincidence must not cause an implicit topological attachment.
     auto duplicate = otam::parse(
         replace(source, "262145 1 3 2 . .", "262145 0 3 1 -1 0 . ."));

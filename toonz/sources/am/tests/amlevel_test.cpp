@@ -110,6 +110,19 @@ int main(int argc, char **argv) {
           "source not retained");
     check(scene.decodeFilePath(level->getPath()) == TFilePath(source),
           "scene loader changed the physical model path");
+    auto *palette = level->getPalette();
+    check(palette->getStyleCount() == 3 &&
+              palette->getStyle(2)->getName() == L"Red" &&
+              palette->getStyle(2)->getMainColor() == TPixel32::Red,
+          "A:M group did not initialize a named surface style");
+    const auto originalMesh = level->mesh();
+    palette->getStyle(2)->setMainColor(TPixel32::Blue);
+    check(
+        level->updatePaletteColors() &&
+            level->renderMesh()->triangles[0].color == otam::Color{{0, 0, 1}} &&
+            level->mesh() == originalMesh &&
+            originalMesh->triangles[0].color == otam::Color{{1, 0, 0}},
+        "palette edit did not produce an independent colored snapshot");
     const int castCount   = scene.getLevelSet()->getLevelCount();
     const QString invalid = temp.path() + "/invalid.mdl";
     {
@@ -239,6 +252,37 @@ int main(int argc, char **argv) {
           "shared level identity lost");
     restoredLevel->setScene(&scene);
     restoredLevel->load();
+    check(restoredLevel->getPalette()->getStyle(2)->getName() == L"Red" &&
+              restoredLevel->renderMesh()->triangles[0].color ==
+                  otam::Color{{0, 0, 1}},
+          "A:M palette override was lost on reopen");
+    auto renamed = amtest::source;
+    renamed.replace(renamed.find("Name=Red"), 8, "Name=Coat");
+    {
+      QFile file(source);
+      check(file.open(QIODevice::WriteOnly), "write renamed group fixture");
+      check(file.write(renamed.data(), qint64(renamed.size())) ==
+                qint64(renamed.size()),
+            "write complete renamed fixture");
+    }
+    restoredLevel->load();
+    check(restoredLevel->getPalette()->getStyle(2)->getName() == L"Coat" &&
+              restoredLevel->renderMesh()->triangles[0].color ==
+                  otam::Color{{0, 0, 1}},
+          "refresh did not update group name or preserve color edit");
+    restoredLevel->getPalette()->getStyle(2)->setMainColor(
+        restoredLevel->sourceStyleColors().at(2));
+    check(restoredLevel->updatePaletteColors() &&
+              restoredLevel->renderMesh()->triangles[0].color ==
+                  otam::Color{{1, 0, 0}},
+          "source color was not restored");
+    {
+      QFile file(source);
+      check(file.open(QIODevice::WriteOnly), "restore original fixture");
+      check(file.write(amtest::source.data(), qint64(amtest::source.size())) ==
+                qint64(amtest::source.size()),
+            "restore complete original fixture");
+    }
     auto *restoredObject =
         restored->getStageObject(TStageObjectId::ColumnId(0));
     check(restoredObject->isAMTransformEnabled(),
@@ -270,8 +314,8 @@ int main(int argc, char **argv) {
       NativeRenderSession renderSession;
       fx->compute(tile, 0, settings);
     }
-    check(raster->pixels(64)[64].m == 255,
-          "model final-render adapter did not draw");
+    check(raster->pixels(64)[64] == TPixel32::Blue,
+          "model final-render adapter did not use the palette color");
     TRasterFxP glbFx(makeNativeModelRenderFx(xsheet, 3, 0, false));
     raster->clear();
     {

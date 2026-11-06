@@ -77,7 +77,7 @@ static std::shared_ptr<const otam::Mesh> prepareModelGeometryImpl(
   std::shared_ptr<const otam::Mesh> mesh;
   double units = Stage::inch / 2.54;
   if (auto *am = cell.m_level->getAMLevel()) {
-    mesh = am->mesh();
+    mesh = am->renderMesh();
     if (!mesh)
       throw std::runtime_error(
           am->error().empty() ? "A:M model source is not loaded" : am->error());

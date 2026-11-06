@@ -2,6 +2,8 @@
 
 #include "toonz/txshlevel.h"
 #include "ammodel.h"
+#include "tpalette.h"
+#include <map>
 #include <mutex>
 
 #undef DVAPI
@@ -26,6 +28,19 @@ class DVAPI TXshAMLevel final : public TXshLevel {
   std::string m_revision;
   std::string m_error;
 
+  struct SurfaceStyle {
+    int id;
+    TPixel32 sourceColor;
+  };
+  TPaletteP m_palette;
+  std::map<std::string, SurfaceStyle> m_groupStyles;
+  std::vector<int> m_styleByGroup;
+  std::map<int, TPixel32> m_colorOverrides;
+  std::shared_ptr<const otam::Mesh> m_renderMesh;
+
+  void refreshPalette(const otam::Model &model, const std::string &revision);
+  bool updatePaletteColorsLocked();
+
 public:
   explicit TXshAMLevel(std::wstring name = L"");
   ~TXshAMLevel() override;
@@ -42,6 +57,11 @@ public:
   void save() override {}
   std::shared_ptr<const otam::Document> document() const;
   std::shared_ptr<const otam::Mesh> mesh() const;
+  std::shared_ptr<const otam::Mesh> renderMesh() const;
+  TPalette *getPalette() const { return m_palette.getPointer(); }
+  // Called on the UI thread after palette edits. Renderers use the snapshot.
+  bool updatePaletteColors();
+  std::map<int, TPixel32> sourceStyleColors() const;
   std::string revision() const;
   std::string error() const;
 };
