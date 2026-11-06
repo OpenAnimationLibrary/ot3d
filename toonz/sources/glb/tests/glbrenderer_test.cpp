@@ -184,6 +184,42 @@ int main() {
       for (auto &v : back.vertices) { v.x *= .3; v.y *= .3; v.depth -= 2; }
       s.triangles.push_back(back); equal(wire, renderTile(s, tile()));
     });
+    run("3D source layers preserve order, opacity, affine and nesting", [] {
+      auto back  = std::make_shared<RenderScene>(prepareRender(triangle(), {}));
+      auto front = std::make_shared<RenderScene>(*back);
+      back->triangles[0].color  = {{0, 0, 1}};
+      front->triangles[0].color = {{1, 0, 0}};
+      front->colorScale[3]      = .5;
+      // Separate sources can have different projection depth conventions.
+      for (auto &v : front->triangles[0].vertices) v.depth = -10000;
+      RenderScene group;
+      group.layers     = {{back}, {front}};
+      const auto image = renderTile(group, tile());
+      const auto p     = image[40 * 80 + 40];
+      near(p.r, .5);
+      near(p.b, .5);
+      near(p.alpha, 1);
+      RenderScene nested;
+      nested.layers = {{std::make_shared<RenderScene>(group)}};
+      equal(image, renderTile(nested, tile()));
+      group.layers[1].affine[2] = 10000;
+      near(renderTile(group, tile())[40 * 80 + 40].r, 0);
+      group.layers[1].affine[2] = 0;
+      front->wireframe          = true;
+      near(renderTile(group, tile())[40 * 80 + 40].b, 1);
+      auto texture = std::make_shared<const std::vector<ColorPixel>>(
+          80 * 80, ColorPixel{0, .5f, 0, .5f});
+      auto plane =
+          std::make_shared<RenderScene>(prepareImagePlane(80, 80, texture, {}));
+      group.layers[1].scene = plane;
+      const auto textured   = renderTile(group, tile())[40 * 80 + 40];
+      near(textured.g, .5);
+      near(textured.b, .5);
+      near(textured.alpha, 1);
+      int canceled = 1;
+      check(renderTile(group, tile(), &canceled).empty(),
+            "group cancellation ignored");
+    });
     run("tile seams, affine rotation/shear/reflection and concurrent tiles", [] {
       auto s = prepareRender(triangle(), {}); auto t = tile();
       t.affine = {{-.19, .04, 40.125, .07, .22, 39.75}};

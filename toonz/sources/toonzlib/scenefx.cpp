@@ -1,4 +1,5 @@
 #include "toonz/amlevelrender.h"
+#include "toonz/t3drendersource.h"
 
 // TnzBase includes
 #include "tfxattributes.h"
@@ -1286,6 +1287,26 @@ PlacedFx FxBuilder::makePFfromGenericFx(TFx *fx) {
   // will have an NaAffineFx
   // injected just before its actual input fx.
   pf.m_fx = fx->clone(false);
+
+  if (auto *group = dynamic_cast<T3DRenderGroup *>(pf.m_fx.getPointer())) {
+    // Preserve each input's placement without inserting raster-only affine
+    // wrappers into typed 3D ports. No single column owns the merged placement.
+    bool first = true;
+    for (int i = 0; i < fx->getInputPortCount(); ++i) {
+      pf.m_fx->getInputPort(i)->setFx(nullptr);
+      auto input = makePF(fx->getInputPort(i)->getFx());
+      group->set3DInputAffine(i, input.m_aff);
+      if (input.m_columnIndex < 0 && !input.m_isPostXsheetNode) continue;
+      if (first) {
+        first   = false;
+        pf.m_z  = input.m_z;
+        pf.m_so = input.m_so;
+      }
+      pf.m_fx->getInputPort(i)->setFx(input.m_fx.getPointer());
+    }
+    pf.m_isPostXsheetNode = true;
+    return pf;
+  }
 
   bool firstInput = true;
 

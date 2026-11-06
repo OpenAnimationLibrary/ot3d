@@ -3,6 +3,7 @@
 #include "glbrenderer.h"
 #include <memory>
 class TRenderSettings;
+class TAffine;
 
 // Internal contract for FX nodes that can provide an unevaluated 3D render
 // result to another 3D-aware FX. It is deliberately separate from raster
@@ -25,4 +26,12 @@ public:
     return get3DRenderScene(frame, canceled, nullptr, transforms,
                             renderSettings);
   }
+};
+
+// Optional render-tree contract for multi-input 3D groups. Column placement
+// must stay metadata, rather than becoming a raster-only affine input node.
+class T3DRenderGroup {
+public:
+  virtual ~T3DRenderGroup()                                       = default;
+  virtual void set3DInputAffine(int input, const TAffine &affine) = 0;
 };

@@ -418,17 +418,63 @@ RenderScene prepareRender(const Asset &asset, const RenderOptions &o,
   return out;
 }
 
-std::vector<ColorPixel> renderTile(const RenderScene &scene, const RenderTile &tile,
-                                   const int *canceled) {
+namespace {
+void applyColorScale(const RenderScene &scene,
+                     std::vector<ColorPixel> &output) {
+  if (scene.colorScale != std::array<float, 4>{{0, 0, 0, 1}}) {
+    const auto &f = scene.colorScale;
+    for (auto &p : output) {
+      p.r = ((1 - f[0]) * p.r + f[0] * p.alpha) * f[3];
+      p.g = ((1 - f[1]) * p.g + f[1] * p.alpha) * f[3];
+      p.b = ((1 - f[2]) * p.b + f[2] * p.alpha) * f[3];
+      p.alpha *= f[3];
+    }
+  }
+}
+
+std::vector<ColorPixel> renderLayeredTile(const RenderScene &scene,
+                                          const RenderTile &tile,
+                                          const int *canceled, int nesting) {
   require(tile.width >= 0 && tile.height >= 0, "Invalid GLB tile dimensions.");
   const std::size_t count = std::size_t(tile.width) * std::size_t(tile.height);
   struct Sample { double depth = -std::numeric_limits<double>::infinity(); ColorPixel color; };
-  require(count <= MemoryLimit / (sizeof(ColorPixel) + 4 * sizeof(Sample)),
-          "GLB tile exceeds the 256 MiB render budget; reduce the render tile size.");
+  require(
+      count <= MemoryLimit / (std::size_t(nesting + 2) * sizeof(ColorPixel) +
+                              4 * sizeof(Sample)),
+      "GLB tile exceeds the 256 MiB render budget; reduce the render tile "
+      "size.");
   for (double value : tile.affine) require(std::isfinite(value), "Invalid GLB image affine.");
   require(std::isfinite(tile.x) && std::isfinite(tile.y), "Invalid GLB tile origin.");
   std::vector<ColorPixel> output(count);
-  if (!count || scene.triangles.empty()) return output;
+  if (!count || scene.empty()) return output;
+  require(nesting < 64, "3D Merge nesting exceeds the render limit.");
+  if (!scene.layers.empty()) {
+    require(scene.triangles.empty(),
+            "3D groups cannot also contain triangles.");
+    for (const auto &layer : scene.layers) {
+      if (canceled && *canceled) return {};
+      if (!layer.scene) continue;
+      auto request   = tile;
+      const auto &a  = tile.affine;
+      const auto &b  = layer.affine;
+      request.affine = {{a[0] * b[0] + a[1] * b[3], a[0] * b[1] + a[1] * b[4],
+                         a[0] * b[2] + a[1] * b[5] + a[2],
+                         a[3] * b[0] + a[4] * b[3], a[3] * b[1] + a[4] * b[4],
+                         a[3] * b[2] + a[4] * b[5] + a[5]}};
+      const auto pixels =
+          renderLayeredTile(*layer.scene, request, canceled, nesting + 1);
+      if (pixels.empty()) return {};
+      for (std::size_t i = 0; i < count; ++i) {
+        const auto &p         = pixels[i];
+        auto &out             = output[i];
+        const float remaining = 1 - p.alpha;
+        out = {p.r + out.r * remaining, p.g + out.g * remaining,
+               p.b + out.b * remaining, p.alpha + out.alpha * remaining};
+      }
+    }
+    applyColorScale(scene, output);
+    return output;
+  }
   std::vector<Sample> samples(count * 4);
   const auto &m = tile.affine;
   for (const auto &triangle : scene.triangles) {
@@ -509,16 +555,15 @@ std::vector<ColorPixel> renderTile(const RenderScene &scene, const RenderTile &t
       output[i].b += c.b * 0.25f;
       output[i].alpha += c.alpha * 0.25f;
     }
-  if (scene.colorScale != std::array<float, 4>{{0, 0, 0, 1}}) {
-    const auto &f = scene.colorScale;
-    for (auto &p : output) {
-      p.r = ((1 - f[0]) * p.r + f[0] * p.alpha) * f[3];
-      p.g = ((1 - f[1]) * p.g + f[1] * p.alpha) * f[3];
-      p.b = ((1 - f[2]) * p.b + f[2] * p.alpha) * f[3];
-      p.alpha *= f[3];
-    }
-  }
+  applyColorScale(scene, output);
   return output;
+}
+}  // namespace
+
+std::vector<ColorPixel> renderTile(const RenderScene &scene,
+                                   const RenderTile &tile,
+                                   const int *canceled) {
+  return renderLayeredTile(scene, tile, canceled, 0);
 }
 
 RenderScene prepareImagePlane(

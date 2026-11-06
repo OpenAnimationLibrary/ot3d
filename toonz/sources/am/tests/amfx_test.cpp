@@ -2,6 +2,9 @@
 // context.
 #include "../../stdfx/transform3dfx.cpp"
 #include "../../stdfx/threepointlightfx.cpp"
+#include "../../stdfx/merge3dfx.cpp"
+#include "../../stdfx/glbmodelfx.cpp"
+#include "../../glb/tests/glbfixture.h"
 #include "amfixture.h"
 #include "toonz/txshamlevel.h"
 #include "toonz/toonzscene.h"
@@ -297,6 +300,46 @@ int main(int argc, char **argv) {
             "native model was lost while building the render tree");
     require(level->getAMLevel()->mesh() == original,
             "FX modified the authoritative preview mesh");
+    // A mixed native/GLB group retains both source contracts for shared light.
+    const auto glbPath = temp.filePath("model.glb");
+    {
+      const auto bytes = triangleGlb();
+      QFile f(glbPath);
+      require(f.open(QIODevice::WriteOnly) &&
+                  f.write(reinterpret_cast<const char *>(bytes.data()),
+                          bytes.size()) == qint64(bytes.size()),
+              "write mixed-group GLB fixture");
+    }
+    TFxP glbOwner = new GlbModelFx;
+    auto &glb     = *static_cast<GlbModelFx *>(glbOwner.getPointer());
+    auto *file =
+        dynamic_cast<TStringParam *>(glb.getParams()->getParam("modelFile"));
+    require(file, "mixed-group GLB file parameter");
+    file->setValue(glbPath.toStdWString());
+    TFxP mergeOwner = new Merge3DFx;
+    auto &merge     = *static_cast<Merge3DFx *>(mergeOwner.getPointer());
+    merge.getInputPort(0)->setFx(column);
+    merge.getInputPort(1)->setFx(&glb);
+    light.getInputPort(0)->setFx(&merge);
+    set(light, "masterIntensity", 0);
+    const auto darkGroup =
+        light.get3DRenderScene(0, nullptr, nullptr, nullptr, &info);
+    require(darkGroup && darkGroup->layers.size() == 2,
+            "mixed native/GLB sources were not retained");
+    for (const auto &layer : darkGroup->layers)
+      require(
+          layer.scene->triangles[0].color == std::array<float, 3>{{0, 0, 0}},
+          "shared light failed to shade a mixed-group branch");
+    set(light, "masterIntensity", 100);
+    set(light, "ambient", 100);
+    const auto litGroup =
+        light.get3DRenderScene(0, nullptr, nullptr, nullptr, &info);
+    for (const auto &layer : litGroup->layers)
+      require(layer.scene->triangles[0].color[0] > 0,
+              "shared light failed to illuminate a mixed-group branch");
+    light.doCompute(tile, 0, info);
+    require(coverage(raster) > 0, "mixed-group raster output is empty");
+    light.getInputPort(0)->setFx(&transform);
     int canceled = 1;
     require(!transform.get3DRenderScene(0, &canceled),
             "cancellation not honored");

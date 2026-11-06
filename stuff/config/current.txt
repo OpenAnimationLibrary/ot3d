@@ -68,6 +68,7 @@
   <item>"STD_transform3DFx.scaleZ" "Scale Z (%)" </item>
   <item>"STD_transform3DFx.gizmoMode" "Canvas Gizmo" </item>
   <item>"STD_threePointLightFx" "Three-Point Light" </item>
+  <item>"STD_merge3DFx" "3D Merge" </item>
   <item>"STD_threePointLightFx.masterIntensity" "Master Intensity (%)" </item>
   <item>"STD_threePointLightFx.ambient" "Ambient (%)" </item>
   <item>"STD_threePointLightFx.keyColor" "Key Color" </item>
