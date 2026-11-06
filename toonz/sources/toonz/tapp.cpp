@@ -40,6 +40,7 @@
 #include "toonz/toonzscene.h"
 #include "toonz/txshlevel.h"
 #include "toonz/txshcell.h"
+#include "toonz/txshamlevel.h"
 #include "toonz/txshsimplelevel.h"
 #include "toonz/txshpalettelevel.h"
 #include "toonz/txshleveltypes.h"
@@ -368,6 +369,9 @@ void TApp::updateXshLevel() {
           currentPalette->isCleanupPalette())
 
         m_paletteController->editCleanupPalette();
+    } else if (xl && xl->getAMLevel()) {
+      auto *handle = m_paletteController->getCurrentLevelPalette();
+      handle->setPalette(xl->getAMLevel()->getPalette());
     } else if (xl && xl->getPaletteLevel()) {
       int styleIndex =
           m_paletteController->getCurrentLevelPalette()->getStyleIndex();
@@ -541,6 +545,12 @@ void TApp::onXshLevelSwitched(TXshLevel *) {
       return;
     }
 
+    if (auto *model = level->getAMLevel()) {
+      m_paletteController->getCurrentLevelPalette()->setPalette(
+          model->getPalette());
+      return;
+    }
+
     TXshPaletteLevel *paletteLevel = level->getPaletteLevel();
     if (paletteLevel) {
       m_paletteController->getCurrentLevelPalette()->setPalette(
@@ -597,7 +607,23 @@ void TApp::onSceneChanged() {
 
 //-----------------------------------------------------------------------------
 
-void TApp::onPaletteChanged() { m_currentScene->setDirtyFlag(true); }
+void TApp::onPaletteChanged() {
+  m_currentScene->setDirtyFlag(true);
+  auto *scene = m_currentScene->getScene();
+  if (!scene) return;
+
+  // Style undo can edit a palette that is no longer selected.
+  std::vector<TXshLevel *> levels;
+  scene->getLevelSet()->listLevels(levels);
+  bool changed = false;
+  for (auto *level : levels)
+    if (auto *model = level->getAMLevel())
+      changed |= model->updatePaletteColors();
+  if (changed) {
+    m_currentXsheet->notifyXsheetChanged();
+    m_currentScene->notifySceneChanged(false);
+  }
+}
 
 //-----------------------------------------------------------------------------
 

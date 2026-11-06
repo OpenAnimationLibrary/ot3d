@@ -18,6 +18,8 @@
 #include "toonz/levelset.h"
 #include "toonz/toonzscene.h"
 #include "toonz/txshsimplelevel.h"
+#include "toonz/txshamlevel.h"
+#include "toonz/tpalettehandle.h"
 #include "toonz/txshpalettelevel.h"
 #include "toonz/txshsoundlevel.h"
 #include "toonz/txshleveltypes.h"
@@ -720,6 +722,59 @@ bool CastBrowser::drop(const QMimeData *data) {
 
 //-----------------------------------------------------------------------------
 
+namespace {
+void notifyAMModelAppearanceChanged(TXshAMLevel &model) {
+  auto *app    = TApp::instance();
+  auto *handle = app->getCurrentPalette();
+  if (handle->getPalette() == model.getPalette()) {
+    handle->notifyPaletteChanged();
+    handle->notifyColorStyleChanged(false);
+  }
+  app->getCurrentXsheet()->notifyXsheetChanged();
+  app->getCurrentScene()->notifySceneChanged();
+}
+
+class ResetAMSurfaceColorsUndo final : public TUndo {
+  TXshAMLevelP m_model;
+  struct Edit {
+    int id;
+    TPixel32 before, source;
+  };
+  std::vector<Edit> m_edits;
+
+  void apply(bool reset) const {
+    auto *palette = m_model->getPalette();
+    for (const auto &edit : m_edits) {
+      auto *style = palette->getStyle(edit.id);
+      style->setMainColor(reset ? edit.source : edit.before);
+    }
+    m_model->updatePaletteColors();
+    notifyAMModelAppearanceChanged(*m_model);
+  }
+
+public:
+  explicit ResetAMSurfaceColorsUndo(TXshAMLevel *model) : m_model(model) {
+    auto *palette = model->getPalette();
+    for (const auto &[id, source] : model->sourceStyleColors()) {
+      if (id >= palette->getStyleCount() || !palette->getStylePage(id))
+        continue;
+      auto *style = palette->getStyle(id);
+      if (style->hasMainColor() && style->getMainColor() != source)
+        m_edits.push_back({id, style->getMainColor(), source});
+    }
+  }
+  bool empty() const { return m_edits.empty(); }
+  void undo() const override { apply(false); }
+  void redo() const override { apply(true); }
+  int getSize() const override {
+    return int(sizeof(*this) + m_edits.size() * sizeof(Edit));
+  }
+  QString getHistoryString() override {
+    return QObject::tr("Reset A:M Surface Colors");
+  }
+};
+}  // namespace
+
 QMenu *CastBrowser::getContextMenu(QWidget *parent, int index) {
   const std::set<int> &indices = m_itemViewer->getSelectedIndices();
   if (indices.empty()) {
@@ -772,6 +827,33 @@ QMenu *CastBrowser::getContextMenu(QWidget *parent, int index) {
   if (!amSelected && !audioSelected && !paletteSelected && !meshLevelSelected)
     menu->addAction(cm->getAction(MI_ViewFile));
   menu->addAction(cm->getAction(MI_FileInfo));
+
+  if (indices.size() == 1 && *indices.begin() >= 0 &&
+      *indices.begin() < m_castItems->getItemCount()) {
+    auto *level = m_castItems->getItem(*indices.begin())->getModelLevel();
+    if (auto *am = level ? level->getAMLevel() : nullptr) {
+      const TXshAMLevelP model(am);
+      menu->addSeparator();
+      auto *refresh = menu->addAction(tr("Refresh A:M Model and Palette"));
+      connect(refresh, &QAction::triggered, this, [model] {
+        try {
+          model->load();
+        } catch (const TException &error) {
+          DVGui::error(QString::fromStdWString(error.getMessage()));
+        }
+        notifyAMModelAppearanceChanged(*model);
+      });
+      auto *reset = menu->addAction(tr("Reset A:M Surface Colors"));
+      reset->setEnabled(!am->getPalette()->isLocked());
+      connect(reset, &QAction::triggered, this, [model] {
+        auto undo =
+            std::make_unique<ResetAMSurfaceColorsUndo>(model.getPointer());
+        if (undo->empty()) return;
+        undo->redo();
+        TUndoManager::manager()->add(undo.release());
+      });
+    }
+  }
 
   // MI_EditLevel solo se e' stato selezionato un singolo diverso da livelli
   // palette a livelli audio

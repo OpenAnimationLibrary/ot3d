@@ -389,12 +389,15 @@ Mesh previewMesh(const Document &d, std::size_t modelIndex,
            "Patch orientation/special flags are retained; preview uses "
            "recorded corner order.");
     Color color{{0.65f, 0.65f, 0.65f}};
+    int colorGroup = -1;
     for (std::size_t g = 0; g < m.groups.size(); ++g)
       if (m.groups[g].hasColor &&
           std::all_of(heads.begin(), heads.end(), [&](std::size_t h) {
             return memberships[g].count(h) != 0;
-          }))
+          })) {
         color = m.groups[g].color;
+        colorGroup = int(g);
+      }
     const std::size_t count =
         heads.size() == 3 ? 1 : 2 * subdivisions * subdivisions;
     if (count > limits.triangles - out.triangles.size())
@@ -404,7 +407,8 @@ Mesh previewMesh(const Document &d, std::size_t modelIndex,
           {{{m.points[heads[0]].position, m.points[heads[1]].position,
              m.points[heads[2]].position}},
            color,
-           p});
+           p,
+           colorGroup});
       continue;
     }
     const auto sample = [&](double u, double v) {
@@ -423,8 +427,8 @@ Mesh previewMesh(const Document &d, std::size_t modelIndex,
                      v1 = double(y + 1) / subdivisions;
         const Vec3 a = sample(u, v), b = sample(u1, v), c = sample(u1, v1),
                    e = sample(u, v1);
-        out.triangles.push_back({{{a, b, c}}, color, p});
-        out.triangles.push_back({{{a, c, e}}, color, p});
+        out.triangles.push_back({{{a, b, c}}, color, p, colorGroup});
+        out.triangles.push_back({{{a, c, e}}, color, p, colorGroup});
       }
   }
   return out;
@@ -543,8 +547,10 @@ Mesh projected(const Mesh &mesh, double cx, double cy, double cz, double focus,
       p[2]           = focus / std::max(nearPlane, focus + cz - p[2]);
     }
     for (std::size_t i = 1; i + 1 < polygon.size(); ++i)
-      out.triangles.push_back(
-          {{{polygon[0], polygon[i], polygon[i + 1]}}, t.color, t.patch});
+      out.triangles.push_back({{{polygon[0], polygon[i], polygon[i + 1]}},
+                               t.color,
+                               t.patch,
+                               t.colorGroup});
   }
   return out;
 }

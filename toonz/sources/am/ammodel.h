@@ -69,6 +69,7 @@ struct Triangle {
   std::array<Vec3, 3> vertices;
   Color color;
   std::size_t patch = 0;
+  int colorGroup    = -1;  // -1 is the default surface.
 };
 struct Mesh {
   std::vector<Triangle> triangles;
