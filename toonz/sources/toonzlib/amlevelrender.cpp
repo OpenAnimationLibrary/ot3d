@@ -4,6 +4,8 @@
 #include "toonz/tcolumnfx.h"
 #include "toonz/txshlevelcolumn.h"
 #include "toonz/txshamlevel.h"
+#include "toonz/txshglblevel.h"
+#include "toonz/txshleveltypes.h"
 #include "toonz/txsheet.h"
 #include "toonz/tstageobject.h"
 #include "toonz/tstageobjecttree.h"
@@ -66,24 +68,38 @@ otam::Matrix modelTransform(const otglb::ModelTransform &t) {
 }
 }  // namespace
 
-std::shared_ptr<const otam::Mesh> prepareAMLevelGeometry(TXsheet *xsheet,
-                                                         int column,
-                                                         double frame,
-                                                         bool projectToCamera,
-                                                         bool previewCamera) {
+static std::shared_ptr<const otam::Mesh> prepareModelGeometryImpl(
+    TXsheet *xsheet, int column, double frame, bool projectToCamera,
+    bool previewCamera, bool allowGlb) {
   if (!xsheet || column < 0 || !std::isfinite(frame)) return {};
   const auto cell = xsheet->getCell(int(std::floor(frame)), column);
-  auto *level     = cell.isEmpty() ? nullptr : cell.m_level->getAMLevel();
-  if (!level) return {};
-  auto mesh = level->mesh();
-  if (!mesh)
-    throw std::runtime_error(level->error().empty()
-                                 ? "A:M model source is not loaded"
-                                 : level->error());
+  if (cell.isEmpty()) return {};
+  std::shared_ptr<const otam::Mesh> mesh;
+  double units = Stage::inch / 2.54;
+  if (auto *am = cell.m_level->getAMLevel()) {
+    mesh = am->mesh();
+    if (!mesh)
+      throw std::runtime_error(
+          am->error().empty() ? "A:M model source is not loaded" : am->error());
+  } else if (auto *glb = allowGlb ? cell.m_level->getGlbLevel() : nullptr) {
+    const auto geometry = glb->geometry();
+    if (!geometry)
+      throw std::runtime_error(glb->error().empty()
+                                   ? "GLB model source is not loaded"
+                                   : glb->error());
+    // Adapt only the draw triangles. The GLB asset remains a separate
+    // resource and never becomes an A:M document or spline/patch level.
+    auto triangles      = std::make_shared<otam::Mesh>();
+    triangles->warnings = geometry->warnings;
+    triangles->triangles.reserve(geometry->triangles.size());
+    for (const auto &triangle : geometry->triangles)
+      triangles->triangles.push_back({triangle.vertices, triangle.color});
+    units = geometry->stageUnitsPerModelUnit;
+    mesh  = std::move(triangles);
+  } else {
+    return {};
+  }
   auto *object = xsheet->getStageObject(TStageObjectId::ColumnId(column));
-  // Initial explicit bridge: A:M model units are interpreted as centimeters,
-  // Y up, +Z toward the OT camera. Calibration remains experimental.
-  const double units   = Stage::inch / 2.54;
   const double noScale = 1.0 - object->getGlobalNoScaleZ() / 1000.0;
   const auto matrix    = otam::multiply(
          object->getAMPlacement(frame),
@@ -96,11 +112,26 @@ std::shared_ptr<const otam::Mesh> prepareAMLevelGeometry(TXsheet *xsheet,
   return result;
 }
 
+std::shared_ptr<const otam::Mesh> prepareAMLevelGeometry(TXsheet *xsheet,
+                                                         int column,
+                                                         double frame,
+                                                         bool projectToCamera,
+                                                         bool previewCamera) {
+  return prepareModelGeometryImpl(xsheet, column, frame, projectToCamera,
+                                  previewCamera, false);
+}
+
+std::shared_ptr<const otam::Mesh> prepareNativeModelGeometry(
+    TXsheet *xsheet, int column, double frame, bool projectToCamera) {
+  return prepareModelGeometryImpl(xsheet, column, frame, projectToCamera, false,
+                                  true);
+}
+
 // Render-tree snapshots own world-space preview geometry and the camera state.
 // Neither downstream FX nor worker threads retain mutable A:M
-// documents/columns.
-class AMLevelRenderFx final : public TRasterFx, public T3DRenderSource {
-  FX_DECLARATION(AMLevelRenderFx)
+// documents, GLB assets or columns.
+class NativeModelRenderFx final : public TRasterFx, public T3DRenderSource {
+  FX_DECLARATION(NativeModelRenderFx)
   std::shared_ptr<const otam::Mesh> m_geometry;
   ModelCamera m_camera;
   bool m_project         = false;
@@ -108,7 +139,7 @@ class AMLevelRenderFx final : public TRasterFx, public T3DRenderSource {
   std::string m_key;
 
 public:
-  AMLevelRenderFx() { enableComputeInFloat(true); }
+  NativeModelRenderFx() { enableComputeInFloat(true); }
   void setGeometry(std::shared_ptr<const otam::Mesh> geometry,
                    bool project = false, ModelCamera camera = ModelCamera()) {
     m_geometry = std::move(geometry);
@@ -132,7 +163,7 @@ public:
   }
   void setColorFilter(const TPixel32 &color) { m_colorFilter = color; }
   TFx *clone(bool recursive = true) const override {
-    auto *fx          = static_cast<AMLevelRenderFx *>(TFx::clone(recursive));
+    auto *fx = static_cast<NativeModelRenderFx *>(TFx::clone(recursive));
     fx->m_geometry    = m_geometry;
     fx->m_camera      = m_camera;
     fx->m_project     = m_project;
@@ -265,7 +296,7 @@ public:
     TRaster64P r64 = raster;
     TRasterFP rf   = raster;
     if (!r32 && !r64 && !rf)
-      throw TException("A:M model: unsupported output raster");
+      throw TException("3D model: unsupported output raster");
     const auto &a = info.m_affine;
     otglb::RenderTile request;
     request.width  = raster->getLx();
@@ -300,45 +331,61 @@ public:
     }
   }
 };
-FX_IDENTIFIER_IS_HIDDEN(AMLevelRenderFx, "amModelSnapshot")
+FX_IDENTIFIER_IS_HIDDEN(NativeModelRenderFx, "amModelSnapshot")
 
 TRasterFx *makeAMLevelRenderFx(std::shared_ptr<const otam::Mesh> geometry) {
-  auto *fx = new AMLevelRenderFx;
+  auto *fx = new NativeModelRenderFx;
   fx->setGeometry(std::move(geometry));
   return fx;
 }
-TRasterFx *makeAMLevelRenderFx(TXsheet *xsheet, int column, double frame,
-                               bool previewCamera) {
-  auto geometry = prepareAMLevelGeometry(xsheet, column, frame, false);
+static TRasterFx *makeModelSnapshot(TXsheet *xsheet, int column, double frame,
+                                    bool previewCamera, bool allowGlb) {
+  auto geometry = prepareModelGeometryImpl(xsheet, column, frame, false,
+                                           previewCamera, allowGlb);
   if (!geometry) return nullptr;
-  auto fx = std::make_unique<AMLevelRenderFx>();
+  auto fx = std::make_unique<NativeModelRenderFx>();
   fx->setGeometry(std::move(geometry), true,
                   modelCamera(xsheet, frame, previewCamera));
   return fx.release();
 }
+TRasterFx *makeAMLevelRenderFx(TXsheet *xsheet, int column, double frame,
+                               bool previewCamera) {
+  return makeModelSnapshot(xsheet, column, frame, previewCamera, false);
+}
+TRasterFx *makeNativeModelRenderFx(TXsheet *xsheet, int column, double frame,
+                                   bool previewCamera) {
+  return makeModelSnapshot(xsheet, column, frame, previewCamera, true);
+}
 bool setAMLevelColorFilter(TRasterFx *fx, const TPixel32 &color) {
-  auto *model = dynamic_cast<AMLevelRenderFx *>(fx);
+  auto *model = dynamic_cast<NativeModelRenderFx *>(fx);
   if (!model) return false;
   model->setColorFilter(color);
   return true;
 }
-bool isAMModelColumn(TFx *fx) {
+static TXshLevel *firstColumnLevel(TFx *fx) {
   auto *levelFx = dynamic_cast<TLevelColumnFx *>(fx);
   auto *column  = levelFx ? levelFx->getColumn() : nullptr;
   int first = 0, last = -1;
-  return column && column->getRange(first, last) > 0 &&
-         !column->getCell(first).isEmpty() &&
-         column->getCell(first).m_level->getAMLevel();
+  if (!column || column->getRange(first, last) <= 0) return nullptr;
+  return column->getCell(first).m_level.getPointer();
 }
-std::shared_ptr<const otglb::RenderScene> prepareAMColumnRenderScene(
+bool isAMModelColumn(TFx *fx) {
+  auto *level = firstColumnLevel(fx);
+  return level && level->getAMLevel();
+}
+bool isNativeModelColumn(TFx *fx) {
+  auto *level = firstColumnLevel(fx);
+  return level && isNativeModelLevel(level->getType());
+}
+std::shared_ptr<const otglb::RenderScene> prepareNativeModelColumnRenderScene(
     TLevelColumnFx *column, double frame, const int *canceled,
     const otglb::LightingRig *lighting,
     const std::vector<otglb::ModelTransform> *transforms,
     const TRenderSettings *settings) {
   if (!column || !column->getColumn() || (canceled && *canceled)) return {};
   auto *source = column->getColumn();
-  TRasterFxP snapshot =
-      makeAMLevelRenderFx(source->getXsheet(), source->getIndex(), frame);
+  TRasterFxP snapshot = makeNativeModelRenderFx(
+      source->getXsheet(), source->getIndex(), frame, false);
   const auto *model =
       dynamic_cast<const T3DRenderSource *>(snapshot.getPointer());
   return model ? model->get3DRenderScene(frame, canceled, lighting, transforms,

@@ -31,7 +31,16 @@ enum TXshLevelType {
   SND_TXT_XSHLEVEL  = 4 << 7,
   MESH_XSHLEVEL     = 5 << 7,
   // Native spline/patch asset; NOT a Plastic mesh or an image level.
-  AM_XSHLEVEL = 0x10000 | LEVELCOLUMN_XSHLEVEL
+  AM_XSHLEVEL  = 0x10000 | LEVELCOLUMN_XSHLEVEL,
+  GLB_XSHLEVEL = 0x20000 | LEVELCOLUMN_XSHLEVEL
 };
+
+inline bool isNativeModelLevel(int type) {
+  return type == AM_XSHLEVEL || type == GLB_XSHLEVEL;
+}
+
+inline int nativeModelColumnKind(int type) {
+  return isNativeModelLevel(type) ? type : 0;
+}
 
 #endif

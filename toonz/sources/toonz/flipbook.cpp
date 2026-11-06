@@ -1808,7 +1808,7 @@ void FlipBook::dragEnterEvent(QDragEnterEvent *e) {
     TFilePath fp(url.toLocalFile().toStdWString());
     std::string type = fp.getType();
     if (type == "tzp" || type == "tzu" || type == "tnz" || type == "scr" ||
-        type == "mesh" || type == "mdl")
+        type == "mesh" || type == "mdl" || type == "glb")
       return;
   }
   if (mimeData->hasFormat(CastItems::getMimeFormat())) {

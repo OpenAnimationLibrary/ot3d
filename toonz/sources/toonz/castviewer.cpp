@@ -18,7 +18,6 @@
 #include "toonz/levelset.h"
 #include "toonz/toonzscene.h"
 #include "toonz/txshsimplelevel.h"
-#include "toonz/txshamlevel.h"
 #include "toonz/txshpalettelevel.h"
 #include "toonz/txshsoundlevel.h"
 #include "toonz/txshleveltypes.h"
@@ -601,7 +600,7 @@ void CastBrowser::refreshData() {
 
   int i;
   for (i = 0; i < (int)levels.size(); i++) {
-    if (levels[i]->getSimpleLevel() || levels[i]->getAMLevel())
+    if (levels[i]->getSimpleLevel() || isNativeModelLevel(levels[i]->getType()))
       m_castItems->addItem(new LevelCastItem(
           levels[i], m_itemViewer->getPanel()->getIconSize()));
     else if (levels[i]->getPaletteLevel())
@@ -634,8 +633,8 @@ QVariant CastBrowser::getItemData(int index, DataType dataType,
     return item->getFrameCount();
   else if (dataType == FullPath) {
     ToonzScene *scene   = TApp::instance()->getCurrentScene()->getScene();
-    if (auto *am = item->getAMLevel())
-      return scene->decodeFilePath(am->getPath()).getQString();
+    if (auto *model = item->getModelLevel())
+      return scene->decodeFilePath(model->getPath()).getQString();
     TXshSimpleLevel *sl = item->getSimpleLevel();
     if (sl) return scene->decodeFilePath(sl->getPath()).getQString();
     TXshPaletteLevel *pl = item->getPaletteLevel();
@@ -745,7 +744,7 @@ QMenu *CastBrowser::getContextMenu(QWidget *parent, int index) {
       continue;  // should never happen
     TXshSimpleLevel *sl = m_castItems->getItem(index)->getSimpleLevel();
     if (!sl) {
-      if (m_castItems->getItem(index)->getAMLevel())
+      if (m_castItems->getItem(index)->getModelLevel())
         amSelected = true;
       else if (m_castItems->getItem(index)->getPaletteLevel())
         paletteSelected = true;
@@ -805,9 +804,9 @@ void CastBrowser::expose() {
     TXshSimpleLevel *sl    = item->getSimpleLevel();
     TXshPaletteLevel *pl   = item->getPaletteLevel();
     TXshSoundLevel *soundl = item->getSoundLevel();
-    if (auto *am = item->getAMLevel()) {
+    if (auto *model = item->getModelLevel()) {
       std::set<TFrameId> frames{TFrameId(1)};
-      FilmstripCmd::moveToScene(am, frames);
+      FilmstripCmd::moveToScene(model, frames);
     } else if (sl)
       FilmstripCmd::moveToScene(sl);
     else if (pl)

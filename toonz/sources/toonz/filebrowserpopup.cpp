@@ -958,7 +958,7 @@ void LoadLevelPopup::onNameSetEditted() {
       updateBottomGUI();
     } else {
       m_notExistLabel->show();
-      if (TFileType::getInfo(path) == TFileType::AM_MODEL_LEVEL) {
+      if (TFileType::isModelLevel(TFileType::getInfo(path))) {
         // Missing models are errors, not missing image-sequence placeholders.
         updateBottomGUI();
         return;
@@ -990,7 +990,7 @@ void LoadLevelPopup::updatePosTo() {
   TFilePath fp = getCurrentPath();
 
   if (fp.getType() == "tpl" ||
-      TFileType::getInfo(fp) == TFileType::AM_MODEL_LEVEL) {
+      TFileType::isModelLevel(TFileType::getInfo(fp))) {
     m_posTo->setText(m_posFrom->text());
     return;
   }
@@ -1181,7 +1181,7 @@ void LoadLevelPopup::onFrameSwitched() {
 bool LoadLevelPopup::execute() {
   if (m_selectedPaths.size() == 1) {
     const TFilePath &fp = *m_selectedPaths.begin();
-    if (TFileType::getInfo(fp) == TFileType::AM_MODEL_LEVEL) {
+    if (TFileType::isModelLevel(TFileType::getInfo(fp))) {
       // A model has one exposure, not an image subsequence. Do not carry
       // raster options or a previous drawing's loading range into this load.
       setLoadingLevelRange(TFrameId(1), TFrameId(0));
@@ -1364,7 +1364,7 @@ void LoadLevelPopup::updateBottomGUI() {
   const bool onlyModels =
       !paths.empty() &&
       std::all_of(paths.begin(), paths.end(), [](const TFilePath &path) {
-        return TFileType::getInfo(path) == TFileType::AM_MODEL_LEVEL;
+        return TFileType::isModelLevel(TFileType::getInfo(path));
       });
   m_rasterCacheBehaviorComboBox->setEnabled(!onlyModels);
 
@@ -1386,7 +1386,7 @@ void LoadLevelPopup::updateBottomGUI() {
   if (fp.isEmpty() || ext == "") {
     disableAll();
     return;
-  } else if (TFileType::getInfo(fp) == TFileType::AM_MODEL_LEVEL) {
+  } else if (TFileType::isModelLevel(TFileType::getInfo(fp))) {
     m_fromFrame->setValue(TFrameId(1));
     m_toFrame->setValue(TFrameId(1));
     m_xFrom->setValue(TFrameId(1));

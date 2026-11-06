@@ -907,14 +907,15 @@ PlacedFx FxBuilder::makePF(TLevelColumnFx *lcfx) {
     if (m_particleDescendentCount == 0) {
       if (!xl ||
           (xl->getType() != PLI_XSHLEVEL && xl->getType() != TZP_XSHLEVEL &&
-           xl->getType() != CHILD_XSHLEVEL && xl->getType() != AM_XSHLEVEL))
+           xl->getType() != CHILD_XSHLEVEL &&
+           !isNativeModelLevel(xl->getType())))
         return PlacedFx();
     }
     /*-- ParticleFxのTextureポートに繋がっている場合 --*/
     else {
       if (xl && xl->getType() != PLI_XSHLEVEL &&
           xl->getType() != TZP_XSHLEVEL && xl->getType() != CHILD_XSHLEVEL &&
-          xl->getType() != AM_XSHLEVEL)
+          !isNativeModelLevel(xl->getType()))
         return PlacedFx();
     }
   }
@@ -932,14 +933,14 @@ PlacedFx FxBuilder::makePF(TLevelColumnFx *lcfx) {
 
   pf.m_fx = lcfx;
 
-  const bool amModel =
-      !cell.isEmpty() && cell.m_level->getType() == AM_XSHLEVEL;
-  if (amModel) {
+  const bool nativeModel =
+      !cell.isEmpty() && isNativeModelLevel(cell.m_level->getType());
+  if (nativeModel) {
     // The shared snapshot already includes the model's full 3D placement and
     // per-vertex camera perspective. Do not apply the old planar column affine
     // a second time. FxBuilder applies the camera's final affine once later.
     pf.m_fx =
-        makeAMLevelRenderFx(m_xsh, pf.m_columnIndex, m_frame, m_isPreview);
+        makeNativeModelRenderFx(m_xsh, pf.m_columnIndex, m_frame, m_isPreview);
     pf.m_aff = TAffine();
     columnVisible =
         true;  // Near-plane clipping is per triangle, not per origin.
@@ -981,7 +982,7 @@ PlacedFx FxBuilder::makePF(TLevelColumnFx *lcfx) {
         pf.m_fx = TFxUtil::makeAffine(pf.m_fx, dpiAff);
         if (pf.m_fx) pf.m_fx->setName(L"LevelColumn AffineFx");
       }
-    } else if (!amModel) {
+    } else if (!nativeModel) {
       // Okay, weird code ensues. This is what happens on non-common image
       // cases, which should be:
 
@@ -1024,7 +1025,7 @@ PlacedFx FxBuilder::makePF(TLevelColumnFx *lcfx) {
                                                     TPixel32::maxChannelValue);
         // Keep model geometry available to downstream 3D FX; a raster-only
         // wrapper here would discard the native source contract.
-        if (!amModel ||
+        if (!nativeModel ||
             !setAMLevelColorFilter(
                 dynamic_cast<TRasterFx *>(pf.m_fx.getPointer()), colorScale))
           pf.m_fx = TFxUtil::makeColumnColorFilter(pf.m_fx, colorScale);

@@ -51,6 +51,7 @@
 #include "toonz/toonzscene.h"
 #include "toonz/tproject.h"
 #include "toonz/txshamlevel.h"
+#include "toonz/txshglblevel.h"
 #include "toonz/txshexrlevel.h"
 #include "toonz/txshsimplelevel.h"
 #include "toonz/txshchildlevel.h"
@@ -711,6 +712,9 @@ class ChildLevelResourceImporter final : public ResourceProcessor {
   ResourceImportStrategy &m_importStrategy;
   TFilePath m_levelSetFolder;
 
+  template <class Level>
+  void importModel(Level *level);
+
 public:
   ChildLevelResourceImporter(ToonzScene *parentScene, ToonzScene *childScene,
                              ResourceImportStrategy &importStrategy);
@@ -723,6 +727,7 @@ public:
   void process(TXshPaletteLevel *sl) override;
   void process(TXshSoundLevel *sl) override;
   void process(TXshAMLevel *sl) override;
+  void process(TXshGlbLevel *sl) override;
   bool aborted() const override { return m_importStrategy.aborted(); }
 };
 
@@ -806,7 +811,8 @@ void ChildLevelResourceImporter::process(TXshSimpleLevel *sl) {
 
 //---------------------------------------------------------------------------
 
-void ChildLevelResourceImporter::process(TXshAMLevel *level) {
+template <class Level>
+void ChildLevelResourceImporter::importModel(Level *level) {
   auto *levels = m_parentScene->getLevelSet();
   const auto path =
       m_importStrategy.process(m_parentScene, m_childScene, level->getPath());
@@ -815,7 +821,7 @@ void ChildLevelResourceImporter::process(TXshAMLevel *level) {
   do {
     name = names.getNext();
   } while (levels->hasLevel(name));
-  TXshAMLevelP keepAlive(level);
+  TXshLevelP keepAlive(level);
   m_childScene->getLevelSet()->removeLevel(level);
   level->setName(name);
   level->setScene(m_parentScene);
@@ -823,6 +829,14 @@ void ChildLevelResourceImporter::process(TXshAMLevel *level) {
   levels->insertLevel(level);
   if (!m_levelSetFolder.isEmpty())
     levels->moveLevelToFolder(m_levelSetFolder, level);
+}
+
+void ChildLevelResourceImporter::process(TXshAMLevel *level) {
+  importModel(level);
+}
+
+void ChildLevelResourceImporter::process(TXshGlbLevel *level) {
+  importModel(level);
 }
 
 void ChildLevelResourceImporter::process(TXshPaletteLevel *pl) {
@@ -1107,8 +1121,8 @@ TXshLevel *loadLevel(ToonzScene *scene,
         int first, last;
         target->getCellColumn()->getRange(first, last);
         const auto &old = target->getCellColumn()->getCell(first);
-        if (!old.isEmpty() && ((old.m_level->getType() == AM_XSHLEVEL) !=
-                               (levelType == AM_XSHLEVEL))) {
+        if (!old.isEmpty() && nativeModelColumnKind(old.m_level->getType()) !=
+                                  nativeModelColumnKind(levelType)) {
           scene->getXsheet()->insertColumn(col0);
           columnInserted = true;
         }
@@ -1251,7 +1265,7 @@ TXshLevel *loadResource(ToonzScene *scene,
   actualRd.m_path = scene->decodeFilePath(rd.m_path);
 
   TFileType::Type type = TFileType::getInfo(actualRd.m_path);
-  if (type == TFileType::AM_MODEL_LEVEL) {
+  if (TFileType::isModelLevel(type)) {
     actualRd.m_options = boost::none;
     fIds.assign(1, TFrameId(1));
     // Drawing subsequences, DPI and arrangement settings do not describe a
@@ -2727,7 +2741,7 @@ int IoCmd::loadResources(LoadResourceArguments &args, bool updateRecentFile,
     TFilePath path   = rd.m_path;
     QString origName = path.withoutParentDir().getQString();
 
-    if (TFileType::getInfo(path) != TFileType::AM_MODEL_LEVEL &&
+    if (!TFileType::isModelLevel(TFileType::getInfo(path)) &&
         !path.isLevelName())
       path = TFilePath(path.getLevelNameW()).withParentDir(path.getParentDir());
 

@@ -34,6 +34,7 @@ set(MOC_HEADERS
 
 set(HEADERS
     ../include/toonz/txshamlevel.h
+    ../include/toonz/txshglblevel.h
     ../include/toonz/amlevelrender.h
     ${MOC_HEADERS}
     autoadjust.h
@@ -175,6 +176,7 @@ set(HEADERS
 
 set(SOURCES
     txshamlevel.cpp
+    txshglblevel.cpp
     amlevelrender.cpp
     autoadjust.cpp
     autoclose.cpp

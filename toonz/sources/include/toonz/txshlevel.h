@@ -21,6 +21,7 @@
 //=============================================================================
 // forward declarations
 class TXshAMLevel;
+class TXshGlbLevel;
 class TXshSimpleLevel;
 class TXshChildLevel;
 class TXshZeraryFxLevel;
@@ -96,6 +97,7 @@ Set scene to which level belongs to \b scene.
   virtual TXshSimpleLevel *getSimpleLevel() { return 0; }
 
   virtual TXshAMLevel *getAMLevel() { return nullptr; }
+  virtual TXshGlbLevel *getGlbLevel() { return nullptr; }
 
   //! Method (to be overridden in subclasses) to downcast to \b TXshChildLevel
   virtual TXshChildLevel *getChildLevel() { return 0; }

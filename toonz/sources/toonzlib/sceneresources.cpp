@@ -6,6 +6,7 @@
 #include "toonz/levelset.h"
 #include "toonz/txshsimplelevel.h"
 #include "toonz/txshamlevel.h"
+#include "toonz/txshglblevel.h"
 #include "toonz/txshexrlevel.h"
 #include "toonz/txshpalettelevel.h"
 #include "toonz/levelproperties.h"
@@ -27,19 +28,22 @@
 namespace {
 //=============================================================================
 
-// Recode the same read-only MDL on Save As; moving the scene must not turn a
+// Recode the same read-only model on Save As; moving the scene must not turn a
 // scene-relative model reference into an unrelated/missing file.
-class SceneAMModel final : public SceneResource {
-  TXshAMLevel *m_level;
+template <class Level>
+class SceneNativeModel final : public SceneResource {
+  Level *m_level;
   TFilePath m_original, m_physical;
 
 public:
-  SceneAMModel(ToonzScene *scene, TXshAMLevel *level)
+  SceneNativeModel(ToonzScene *scene, Level *level)
       : SceneResource(scene)
       , m_level(level)
       , m_original(level->getPath())
       , m_physical(scene->decodeFilePath(level->getPath())) {}
-  bool save() override { return true; }  // No native MDL write-back.
+  bool save() override {
+    return true;
+  }  // External model references are read-only.
   void updatePath() override {
     m_level->setPath(m_scene->codeFilePath(m_physical), true);
   }
@@ -655,7 +659,11 @@ void SceneResources::getResources() {
 
   for (it = levels.begin(); it != levels.end(); ++it) {
     if (auto *am = (*it)->getAMLevel()) {
-      m_resources.push_back(new SceneAMModel(scene, am));
+      m_resources.push_back(new SceneNativeModel<TXshAMLevel>(scene, am));
+      continue;
+    }
+    if (auto *glb = (*it)->getGlbLevel()) {
+      m_resources.push_back(new SceneNativeModel<TXshGlbLevel>(scene, glb));
       continue;
     }
     TXshSimpleLevel *sl = (*it)->getSimpleLevel();
@@ -984,7 +992,15 @@ void ResourceImporter::process(TXshAMLevel *level) {
   level->setPath(path, true);
 }
 
-void ResourceCollector::process(TXshAMLevel *level) {
+void ResourceImporter::process(TXshGlbLevel *level) {
+  if (level->getPath().isAbsolute()) return;
+  const auto path =
+      m_importStrategy.process(m_dstScene, m_scene, level->getPath());
+  level->setPath(path, true);
+}
+
+template <class Level>
+void ResourceCollector::collectModel(Level *level) {
   const auto path = level->getPath();
   auto cached     = m_collectedFiles.find(path);
   if (cached != m_collectedFiles.end()) {
@@ -1007,7 +1023,11 @@ void ResourceCollector::process(TXshAMLevel *level) {
     m_collectedFiles[path] = collected;
     ++m_count;
   } catch (...) {
-    TLogger::error() << "Cannot collect A:M source " << source;
+    TLogger::error() << "Cannot collect model source " << source;
     // Keep the valid original reference if copying fails.
   }
 }
+
+void ResourceCollector::process(TXshAMLevel *level) { collectModel(level); }
+
+void ResourceCollector::process(TXshGlbLevel *level) { collectModel(level); }

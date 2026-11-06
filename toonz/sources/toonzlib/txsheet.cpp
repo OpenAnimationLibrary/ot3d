@@ -282,7 +282,7 @@ bool TXsheet::setCell(int row, int col, const TXshCell &cell) {
 
   if (!cell.isEmpty())
     getStageObject(TStageObjectId::ColumnId(col))
-        ->enableAMTransform(cell.m_level->getType() == AM_XSHLEVEL);
+        ->enableAMTransform(isNativeModelLevel(cell.m_level->getType()));
   TFx *fx = cellColumn->getFx();
   if (wasColumnEmpty && fx && fx->getOutputConnectionCount() == 0 &&
       cellColumn->getPaletteColumn() == nullptr)
@@ -368,7 +368,7 @@ bool TXsheet::setCells(int row, int col, int rowCount, const TXshCell cells[]) {
   }
   if (i < rowCount)
     getStageObject(TStageObjectId::ColumnId(col))
-        ->enableAMTransform(cells[i].m_level->getType() == AM_XSHLEVEL);
+        ->enableAMTransform(isNativeModelLevel(cells[i].m_level->getType()));
   int newColRowCount = column->getMaxFrame() + 1;
 
   TFx *fx = column->getFx();
@@ -1270,8 +1270,8 @@ void TXsheet::loadData(TIStream &is) {
     int first, last;
     column->getRange(first, last);
     getStageObject(TStageObjectId::ColumnId(c))
-        ->enableAMTransform(column->getCell(first).m_level->getType() ==
-                            AM_XSHLEVEL);
+        ->enableAMTransform(
+            isNativeModelLevel(column->getCell(first).m_level->getType()));
   }
   updateFrameCount();
 }

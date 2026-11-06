@@ -1,6 +1,8 @@
 // Native integration regression; synthetic fixtures, no A:M host or graphics
 // context.
 #include "amfixture.h"
+#include "../../glb/tests/glbfixture.h"
+#include "toonz/txshglblevel.h"
 #include "toonz/txshamlevel.h"
 #include "toonz/amlevelrender.h"
 #include "toonz/toonzscene.h"
@@ -180,6 +182,42 @@ int main(int argc, char **argv) {
     legacy->setKeyframeWithoutUndo(0);
     check(!legacy->getParam(TStageObject::T_RotationX)->isKeyframe(0),
           "ordinary global key added AM channels");
+    const auto glbPath = temp.filePath("model.001.GLB");
+    {
+      QFile file(glbPath);
+      const auto bytes = triangleGlb();
+      check(file.open(QIODevice::WriteOnly), "write GLB fixture");
+      check(file.write(reinterpret_cast<const char *>(bytes.data()),
+                       qint64(bytes.size())) == qint64(bytes.size()),
+            "write complete GLB fixture");
+    }
+    check(
+        TFileType::getInfo(TFilePath(glbPath)) == TFileType::GLB_MODEL_LEVEL &&
+            isResource(glbPath),
+        "GLB is not recognized as a native resource");
+    auto *loadedGlb = scene.loadLevel(TFilePath(glbPath));
+    auto *glb       = loadedGlb ? loadedGlb->getGlbLevel() : nullptr;
+    check(glb && glb->asset() && glb->getType() == GLB_XSHLEVEL &&
+              !glb->getAMLevel() && !glb->getSimpleLevel() &&
+              glb->getFrameCount() == 1,
+          "GLB did not load as a distinct native level");
+    check(
+        xsheet->setCell(0, 3, TXshCell(glb, TFrameId(1))) &&
+            !xsheet->setCell(1, 3, TXshCell(level, TFrameId(1))) &&
+            !xsheet->setCell(1, 3, TXshCell(drawing.getPointer(), TFrameId(1))),
+        "GLB column exposure or type isolation failed");
+    auto *glbObject = xsheet->getStageObject(TStageObjectId::ColumnId(3));
+    check(glbObject->is3DTransformEnabled(), "GLB spatial channels missing");
+    const auto glbBase = prepareNativeModelGeometry(xsheet, 3, 0, false);
+    check(glbBase && !glbBase->triangles.empty() &&
+              !prepareAMLevelGeometry(xsheet, 3, 0, false),
+          "GLB render geometry failed or was classified as A:M");
+    glbObject->getParam(TStageObject::T_RotationY)->setValue(0, 35);
+    glbObject->setKeyframeWithoutUndo(0);
+    const auto glbMoved = prepareNativeModelGeometry(xsheet, 3, 0, false);
+    check(glbMoved &&
+              glbMoved->triangles[0].vertices != glbBase->triangles[0].vertices,
+          "GLB stage rotation did not reach render geometry");
     // Serialization includes new native resource and ordinary stage channel
     // keys.
     const TFilePath serialized(temp.path() + "/sheet.xml");
@@ -212,6 +250,15 @@ int main(int argc, char **argv) {
     check(!restored->getStageObject(TStageObjectId::ColumnId(2))
                ->isAMTransformEnabled(),
           "2D level changed on reopen");
+    auto *restoredGlb = restored->getCell(0, 3).m_level->getGlbLevel();
+    check(restoredGlb && !restoredGlb->getAMLevel(), "GLB type lost on reopen");
+    restoredGlb->setScene(&scene);
+    restoredGlb->load();
+    check(bool(restoredGlb->asset()), "GLB source did not reload");
+    nearlyEqual(restored->getStageObject(TStageObjectId::ColumnId(3))
+                    ->getParam(TStageObject::T_RotationY)
+                    ->getValue(0),
+                35);
     // The same evaluated mesh drives the final raster adapter (opaque static
     // subset).
     auto projected = prepareAMLevelGeometry(xsheet, 1, 0, true);
@@ -225,6 +272,13 @@ int main(int argc, char **argv) {
     }
     check(raster->pixels(64)[64].m == 255,
           "model final-render adapter did not draw");
+    TRasterFxP glbFx(makeNativeModelRenderFx(xsheet, 3, 0, false));
+    raster->clear();
+    {
+      NativeRenderSession renderSession;
+      glbFx->compute(tile, 0, settings);
+    }
+    check(raster->pixels(64)[64].m > 0, "GLB render snapshot did not draw");
     level->save();
     check(readFile(source).toStdString() == amtest::source,
           "source rewritten by save");

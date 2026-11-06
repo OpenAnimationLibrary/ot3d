@@ -1013,9 +1013,10 @@ void ArrowToolOptionsBox::updateStatus() {
                             : nullptr;
   auto *cells         = column ? column->getCellColumn() : nullptr;
   int first = 0, last = -1;
-  const bool model = cells && cells->getRange(first, last) > 0 &&
-                     !cells->getCell(first).isEmpty() &&
-                     cells->getCell(first).m_level->getType() == AM_XSHLEVEL;
+  const bool model =
+      cells && cells->getRange(first, last) > 0 &&
+      !cells->getCell(first).isEmpty() &&
+      isNativeModelLevel(cells->getCell(first).m_level->getType());
   if (object && objectId.isColumn()) object->enableAMTransform(model);
   const bool spatial = model || objectId.isCamera();
   m_amRotationButton->setVisible(spatial);
