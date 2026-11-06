@@ -34,6 +34,8 @@
 #include <QDebug>
 #include <QApplication>
 #include <QDesktopWidget>
+#include <cmath>
+#include <stdexcept>
 
 //=============================================================================
 // Scale Constraints
@@ -445,6 +447,86 @@ a = m_viewer->mouseToTool(gc) - m_curCenter;
   }
 };
 
+// A screen-space controller keeps the gesture independent of viewer orbit,
+// stage scale and changes to the camera while editing its rotation.
+class DragSpatialRotationTool final : public DragChannelTool {
+public:
+  enum Axis { X, Y, Z, Free };
+
+private:
+  Axis m_axis;
+  Axis m_shiftAxis = Free;
+  TPointD m_lastScreenPos;
+  TPointD m_screenCenter;
+  double m_deviceScale;
+
+  static TStageObject::Channel channel(Axis axis) {
+    switch (axis) {
+    case Y:
+      return TStageObject::T_RotationY;
+    case Z:
+      return TStageObject::T_Angle;
+    default:
+      return TStageObject::T_RotationX;
+    }
+  }
+
+public:
+  DragSpatialRotationTool(Axis axis, const TPointD &center, double deviceScale,
+                          bool globalKeyframes)
+      : DragChannelTool(channel(axis), channel(axis == Free ? Y : axis),
+                        globalKeyframes)
+      , m_axis(axis)
+      , m_screenCenter(center)
+      , m_deviceScale(deviceScale) {}
+
+  void leftButtonDown(const TPointD &, const TMouseEvent &event) override {
+    m_lastScreenPos = event.m_pos;
+  }
+
+  void leftButtonDrag(const TPointD &, const TMouseEvent &event) override {
+    const TPointD previous = m_lastScreenPos;
+    m_lastScreenPos        = event.m_pos;
+    const TPointD delta    = (event.m_pos - previous) * (0.5 / m_deviceScale);
+    if (delta == TPointD()) return;
+
+    const double precision = event.isAltPressed() ? 0.1 : 1.0;
+    if (m_axis == Z) {
+      const TPointD a = previous - m_screenCenter;
+      const TPointD b = event.m_pos - m_screenCenter;
+      if (norm2(a) < 1.0 || norm2(b) < 1.0) return;
+      const double angle = std::atan2(cross(a, b), a.x * b.x + a.y * b.y);
+      if (angle == 0.0) return;
+      if (!m_isStarted) start();
+      setValue(getValue(0) + angle * M_180_PI * precision);
+      return;
+    }
+
+    double rx = -delta.y;
+    double ry = delta.x;
+    if (m_axis == Free) {
+      if (!event.isShiftPressed())
+        m_shiftAxis = Free;
+      else if (m_shiftAxis == Free)
+        m_shiftAxis = std::abs(rx) >= std::abs(ry) ? X : Y;
+      if (m_shiftAxis == X) ry = 0.0;
+      if (m_shiftAxis == Y) rx = 0.0;
+      if (rx == 0.0 && ry == 0.0) return;
+      if (!m_isStarted) start();
+      setValues(getValue(0) + rx * precision, getValue(1) + ry * precision);
+    } else {
+      const double angle = m_axis == X ? rx : ry;
+      if (angle == 0.0) return;
+      if (!m_isStarted) start();
+      setValue(getValue(0) + angle * precision);
+    }
+  }
+
+  void leftButtonUp(const TPointD &, const TMouseEvent &) override {
+    DragChannelTool::leftButtonUp();
+  }
+};
+
 //=============================================================================
 // DragIsotropicScaleTool
 //-----------------------------------------------------------------------------
@@ -831,7 +913,8 @@ void EditTool::mouseMove(const TPointD &, const TMouseEvent &e) {
   /*-- Pick screen only when the FxGadget is displayed or
        when the "All" axis is selected. --*/
   int selectedDevice = -1;
-  if (m_fxGadgetController->hasGadget() || m_activeAxis.getValue() == L"All")
+  if (m_fxGadgetController->hasGadget() || m_activeAxis.getValue() == L"All" ||
+      hasSpatialRotationHandle())
     selectedDevice = pick(e.m_pos);
 
   if (selectedDevice <= 0) {
@@ -889,7 +972,20 @@ void EditTool::leftButtonDown(const TPointD &ppos, const TMouseEvent &e) {
 
   assert(m_dragTool == 0);
 
-  if (m_highlightedDevice >= 1000) {
+  if (hasSpatialRotationHandle() && transformEnabled()) {
+    const int hit       = pick(e.m_pos);
+    m_highlightedDevice = hit > 0 ? hit : Rotation;
+    if (hit >= SpatialRotateX && hit <= SpatialRotateFree) {
+      if (!m_lockRotation.getValue())
+        m_dragTool = new DragSpatialRotationTool(
+            static_cast<DragSpatialRotationTool::Axis>(hit - SpatialRotateX),
+            m_spatialRotationCenter,
+            getDevicePixelRatio(m_viewer->viewerWidget()),
+            m_globalKeyframes.getValue());
+    }
+  }
+
+  if (!m_dragTool && m_highlightedDevice >= 1000) {
     m_dragTool = m_fxGadgetController->createDragTool(m_highlightedDevice);
   }
 
@@ -1298,6 +1394,102 @@ void EditTool::drawMainHandle() {
 }
 //-----------------------------------------------------------------------------
 
+bool EditTool::hasSpatialRotationHandle() const {
+  if (m_activeAxis.getValue() != L"Rotation" ||
+      getObjectId() == TStageObjectId::NoneId)
+    return false;
+  auto *xsheet       = getXsheet();
+  const auto *object = xsheet ? xsheet->getStageObject(getObjectId()) : nullptr;
+  return object && object->is3DTransformEnabled();
+}
+
+void EditTool::drawSpatialRotationHandle() {
+  auto *object         = getXsheet()->getStageObject(getObjectId());
+  const int frame      = getFrame();
+  const TPointD center = object->getCenter(frame) * Stage::inch;
+  TPointD world;
+  double z = 0.0;
+  if (getViewer()->is3DView()) {
+    try {
+      const auto placement = object->getAMPlacement(frame);
+      const double centerZ =
+          object->getParam(TStageObject::T_CenterZ)->getValue(frame) *
+          Stage::inch;
+      world = TPointD(placement[0] * center.x + placement[1] * center.y +
+                          placement[2] * centerZ + placement[3],
+                      placement[4] * center.x + placement[5] * center.y +
+                          placement[6] * centerZ + placement[7]);
+      z     = placement[8] * center.x + placement[9] * center.y +
+          placement[10] * centerZ + placement[11];
+    } catch (const std::runtime_error &) {
+      return;
+    }
+  } else {
+    world = object->getPlacement(frame) * center;
+  }
+
+  const auto anchor = getMatrix().inv() * world;
+  glPushMatrix();
+  glTranslated(anchor.x, anchor.y, z);
+  GLdouble modelview[16];
+  glGetDoublev(GL_MODELVIEW_MATRIX, modelview);
+  m_spatialRotationCenter = TPointD(modelview[12], modelview[13]);
+
+  // The viewer's orthographic projection uses window pixels. Keep controls
+  // facing the screen and sized independently of the stage object and zoom.
+  glLoadIdentity();
+  glTranslated(modelview[12], modelview[13], modelview[14]);
+  const double unit = getDevicePixelRatio(m_viewer->viewerWidget()) *
+                      Preferences::instance()->getAnimateToolHandleSize();
+  glScaled(unit, unit, 1.0);
+  glPushAttrib(GL_ENABLE_BIT);
+  glDisable(GL_DEPTH_TEST);
+
+  const TPixel32 colors[] = {TPixel32(238, 106, 106), TPixel32(120, 225, 130),
+                             TPixel32(113, 171, 255), TPixel32(215, 215, 215)};
+  auto selectColor        = [&](int id) {
+    tglColor(m_lockRotation.getValue()   ? TPixel32(130, 130, 130)
+                    : m_highlightedDevice == id ? TPixel32::White
+                                                : colors[id - SpatialRotateX]);
+  };
+
+  selectColor(SpatialRotateZ);
+  glPushName(SpatialRotateZ);
+  if (isPicking()) {
+    glBegin(GL_QUAD_STRIP);
+    for (int i = 0; i <= 64; ++i) {
+      const double angle = degree2rad(i * (360.0 / 64));
+      glVertex2d(43 * std::cos(angle), 43 * std::sin(angle));
+      glVertex2d(51 * std::cos(angle), 51 * std::sin(angle));
+    }
+    glEnd();
+  } else {
+    tglDrawCircle(TPointD(), 47);
+  }
+  glPopName();
+
+  const TPointD knobs[] = {TPointD(29, 0), TPointD(0, 29), TPointD(0, 47),
+                           TPointD()};
+  const char *labels[]  = {"X", "Y", "Z", "+"};
+  for (int i = 0; i < 4; ++i) {
+    const int id = SpatialRotateX + i;
+    selectColor(id);
+    glPushName(id);
+    tglDrawDisk(knobs[i], 9);
+    if (!isPicking()) {
+      tglColor(TPixel32(28, 28, 28));
+      glPushMatrix();
+      glTranslated(knobs[i].x - 3.5, knobs[i].y - 4.0, 0);
+      glScaled(1.1, 1.1, 1);
+      tglDrawText(TPointD(), labels[i]);
+      glPopMatrix();
+    }
+    glPopName();
+  }
+  glPopAttrib();
+  glPopMatrix();
+}
+
 void EditTool::draw() {
   // the tool is using the coordinate system of the parent object
   // glColor3d(1,0,1);
@@ -1309,6 +1501,12 @@ void EditTool::draw() {
   // if the column and its children are all hidden, only draw fx gadgets
   if (!transformEnabled()) {
     m_fxGadgetController->draw(isPicking());
+    return;
+  }
+
+  if (hasSpatialRotationHandle()) {
+    drawSpatialRotationHandle();
+    if (!getViewer()->is3DView()) m_fxGadgetController->draw(isPicking());
     return;
   }
 

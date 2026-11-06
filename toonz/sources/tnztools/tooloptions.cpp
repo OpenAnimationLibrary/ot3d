@@ -501,9 +501,9 @@ ArrowToolOptionsBox::ArrowToolOptionsBox(
   m_amRotationButton = new QToolButton(this);
   m_amRotationButton->setText(tr("3D Rotation"));
   m_amRotationButton->setToolTip(
-      tr("Rotate the model or camera about X, Y or Z. The standard canvas "
-         "rotation "
-         "remains Z."));
+      tr("Edit the X, Y and Z rotation values. In Animate Rotation mode, "
+         "drag the canvas axis handles or drag the center to tilt. Hold "
+         "Shift to lock the tilt to one axis."));
   m_amRotationButton->setPopupMode(QToolButton::InstantPopup);
   auto *rotationMenu   = new QMenu(m_amRotationButton);
   auto *rotationPanel  = new QWidget(rotationMenu);

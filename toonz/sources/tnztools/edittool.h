@@ -34,6 +34,10 @@ class EditTool final : public QObject, public TTool {
     Center,
     ZTranslation,
     Shear,
+    SpatialRotateX,
+    SpatialRotateY,
+    SpatialRotateZ,
+    SpatialRotateFree,
   };
 
   // DragInfo m_dragInfo;
@@ -83,6 +87,10 @@ class EditTool final : public QObject, public TTool {
 
   TPropertyGroup m_prop;
 
+  TPointD m_spatialRotationCenter;
+
+  bool hasSpatialRotationHandle() const;
+  void drawSpatialRotationHandle();
   void drawMainHandle();
   void onEditAllLeftButtonDown(TPointD& pos, const TMouseEvent& e);
 
