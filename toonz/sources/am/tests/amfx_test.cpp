@@ -35,7 +35,7 @@
 
 // An animated linear HDR panorama tests real upstream compute and render
 // caches.
-class EnvironmentTestImageFx final : public TStandardRasterFx {
+class EnvironmentTestImageFx final : public TStandardZeraryFx {
   FX_PLUGIN_DECLARATION(EnvironmentTestImageFx)
 public:
   static int computes;
@@ -158,6 +158,30 @@ TRasterFP evaluateEnvironmentFloat(TRasterFx &fx, double frame) {
   renderer.uninstall();
   return raster;
 }
+void testEnvironmentRenderTree(ToonzScene &sourceScene, TFx &fx,
+                               const TRenderSettings &settings) {
+  // Generators are exposed through zerary columns in real scenes. A bare
+  // zero-port FX has no column placement and is skipped by FxBuilder.
+  ToonzScene scene;
+  auto *sheet = scene.getXsheet();
+  require(sheet->setCell(0, 0, sourceScene.getXsheet()->getCell(0, 0)),
+          "environment tree model exposure");
+  TFxP image                      = new EnvironmentTestImageFx;
+  TXshZeraryFxColumnP imageColumn = new TXshZeraryFxColumn(2);
+  imageColumn->getZeraryColumnFx()->setZeraryFx(image.getPointer());
+  sheet->insertColumn(1, imageColumn.getPointer());
+  TFxP root = fx.clone(false);
+  root->getInputPort(0)->setFx(sheet->getColumn(0)->getFx());
+  root->getInputPort(1)->setFx(imageColumn->getZeraryColumnFx());
+  sheet->getFxDag()->getInternalFxs()->addFx(root.getPointer());
+  const auto tree = buildSceneFx(&scene, 0, sheet, root, BSFX_NO_TR);
+  auto *typed     = dynamic_cast<T3DRenderSource *>(tree.getPointer());
+  require(typed, "environment tree lost typed geometry");
+  const auto result = evaluateEnvironment(*typed, 0, settings);
+  require(result && result->sampleShader,
+          "environment lost during production render-tree expansion");
+}
+
 void testEnvironment(ToonzScene &scene, TFx *column, TRasterFx *snapshot,
                      const QString &path) {
   TFxP imageOwner = new EnvironmentTestImageFx;
@@ -209,12 +233,7 @@ void testEnvironment(ToonzScene &scene, TFx *column, TRasterFx *snapshot,
               restored->getInputPort("Source")->getFx() &&
               restored->getInputPort("Environment")->getFx(),
           "environment port persistence");
-  scene.getXsheet()->getFxDag()->getInternalFxs()->addFx(&fx);
-  const auto tree =
-      buildSceneFx(&scene, 0, scene.getXsheet(), owner, BSFX_NO_TR);
-  auto *typed = dynamic_cast<T3DRenderSource *>(tree.getPointer());
-  require(typed && evaluateEnvironment(*typed, 0, settings)->sampleShader,
-          "environment lost during production render-tree expansion");
+  testEnvironmentRenderTree(scene, fx, settings);
   // Imported reflectivity and additive/blended mode are evaluated per surface.
   const auto materialPath = path + ".mat";
   {
