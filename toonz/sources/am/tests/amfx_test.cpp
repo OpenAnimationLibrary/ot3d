@@ -131,6 +131,9 @@ void testMaterials(ToonzScene &scene, TXshLevel *level, TFx *column,
   require(glossEnabled, "fileless gloss control");
   glossEnabled->setValue(true);
   set(gloss, "specularIntensity", 0);
+  require(gloss.getAMMaterialSummary(0).find(L"Inherited from input") !=
+              std::wstring::npos,
+          "fileless inspection reported defaults as inherited values");
   const auto overlay   = gloss.get3DRenderScene(0, nullptr);
   const auto preserved = otglb::renderTile(*overlay, tile)[16 * 32 + 16];
   require(std::abs(preserved.alpha - p.alpha) < 1e-6 &&

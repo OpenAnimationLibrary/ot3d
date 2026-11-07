@@ -147,7 +147,7 @@ public:
     out.imbue(std::locale::classic());
     out << std::setprecision(6);
     out << L"Material: "
-        << (m_materialFile->getValue().empty() ? L"Level Palette"
+        << (m_materialFile->getValue().empty() ? L"Input Surface"
                                                : m_materialFile->getValue())
         << L"\nAssignment: "
         << (evaluated.group.empty()
@@ -155,7 +155,7 @@ public:
                 : QString::fromUtf8(evaluated.group.c_str()).toStdWString())
         << L"\nSpecular Source: "
         << (m_overrideSpecular->getValue()       ? L"OT3D Override"
-            : m_materialFile->getValue().empty() ? L"Disabled"
+            : m_materialFile->getValue().empty() ? L"No Override"
                                                  : L"Material File")
         << L"\nSpecular Size: " << s.specularSize * 100 << L"%"
         << L"\nSpecular Intensity: " << s.specularIntensity * 100 << L"%";
@@ -169,15 +169,21 @@ public:
         out << L"Follows Diffuse Color";
     };
     printColor(L"Specular Color (RGB)", s.specularColor);
-    if (evaluated.paletteColor || !s.diffuse)
-      out << L"\nDiffuse Color: Level Palette";
-    else
-      printColor(L"Diffuse Color (RGB)", s.diffuse);
-    out << L"\nDiffuse Falloff: " << s.diffuseFalloff * 100 << L"%"
-        << L"\nAmbiance: " << s.ambiance * 100 << L"%" << L"\nTransparency: "
-        << s.transparency * 100 << L"%" << L"\nReflectivity: "
-        << s.reflectivity * 100 << L"% (scene reflections deferred)"
-        << L"\n\nHighlights respond to direct lights and camera position."
+    if (evaluated.specularOnly) {
+      out << L"\nDiffuse / Ambiance / Transparency: Inherited from input"
+          << L"\n(Level Palette when no upstream material is assigned.)"
+          << L"\nScene reflections: Deferred";
+    } else {
+      if (evaluated.paletteColor || !s.diffuse)
+        out << L"\nDiffuse Color: Level Palette";
+      else
+        printColor(L"Diffuse Color (RGB)", s.diffuse);
+      out << L"\nDiffuse Falloff: " << s.diffuseFalloff * 100 << L"%"
+          << L"\nAmbiance: " << s.ambiance * 100 << L"%" << L"\nTransparency: "
+          << s.transparency * 100 << L"%" << L"\nReflectivity: "
+          << s.reflectivity * 100 << L"% (scene reflections deferred)";
+    }
+    out << L"\n\nHighlights respond to direct lights and camera position."
         << L"\nExact A:M highlight matching is not yet validated.";
     for (const auto &attribute : evaluated.material.unsupported)
       out << L"\n"

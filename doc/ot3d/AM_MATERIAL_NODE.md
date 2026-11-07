@@ -42,7 +42,7 @@ the cache after external edits, including edits that preserve size/timestamps.
 There is an 8 MiB file limit and 64-assignment chain limit.
 
 **Inspect** displays the evaluated specular values, diffuse source, ambiance,
-transparency, deferred reflections and unsupported attributes at the current
+transparency (or inherited-surface status), deferred reflections and unsupported attributes at the current
 frame. **Clear** removes the reference without deleting its source file.
 
 ## Working on shine
