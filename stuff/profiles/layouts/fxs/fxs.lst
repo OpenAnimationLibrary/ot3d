@@ -198,6 +198,7 @@
     STD_imagePlaneFx
     STD_transform3DFx
     STD_amMaterialFx
+    STD_imageBasedLightingFx
     STD_environmentReflectionFx
     STD_threePointLightFx
     STD_merge3DFx

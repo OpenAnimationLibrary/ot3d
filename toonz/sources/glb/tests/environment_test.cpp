@@ -150,6 +150,103 @@ int main() {
     const auto layered = renderTile(group, single)[0];
     near(srgbToLinear(layered.r), 2);
     near(srgbToLinear(layered.b), .5f);
+    // Diffuse convolution has a calibrated constant response: a white
+    // Lambertian surface under radiance L returns L, including HDR and 1x1
+    // maps.
+    auto irradiance = uniform->irradiance(n);
+    near(irradiance[0], 4);
+    near(irradiance[1], .5f);
+    near(uniform->irradiance({{0, 1, 0}})[0], 4);
+    near(uniform->irradiance(n, .5)[0], 6);
+    near(uniform->irradiance(n, 0)[0], 8);
+    EnvironmentLayer ibl;
+    ibl.map             = uniform;
+    ibl.diffuseLighting = true;
+    auto diffuseLit = shadeEnvironment({{0, 0, 0}}, n, v, {ibl}, 0, 0, 0, base);
+    near(diffuseLit[0], 1);
+    near(diffuseLit[1], .125f);
+    // Diffuse illumination is applied before reflection in either node order.
+    auto a = shadeEnvironment(base, n, v, {ibl, layer}, 0, 0, 0, base);
+    auto b = shadeEnvironment(base, n, v, {layer, ibl}, 0, 0, 0, base);
+    near(a[0], b[0]);
+    near(a[0], 2.625f);
+    constexpr double pi = 3.14159265358979323846;
+    const int w = 128, h = 64;
+    std::vector<EnvironmentColor> gradient(w * h);
+    for (int y = 0; y < h; ++y) {
+      const double theta = pi * ((y + .5) / h - .5);
+      for (int x = 0; x < w; ++x)
+        gradient[y * w + x] = {{float(1 + std::sin(theta)), 0, 0}};
+    }
+    EnvironmentMap sky(w, h, std::move(gradient));
+    near(sky.irradiance({{0, 1, 0}})[0], 1 + 2.f / 3, .001f);
+    near(sky.irradiance({{0, -1, 0}})[0], 1 - 2.f / 3, .001f);
+    near(sky.irradiance({{1, 0, 0}})[0], 1, .001f);
+    // Rotation changes incoming light, not normals or projection geometry.
+    EnvironmentLayer rotatedIbl;
+    rotatedIbl.diffuseLighting = true;
+    rotatedIbl.map             = std::make_shared<EnvironmentMap>(
+        w, h, std::vector<EnvironmentColor>(std::size_t(w) * h, {{1, 1, 1}}));
+    rotatedIbl.setRotation({{0, 0, 90}});
+    const auto rotatedNormal = rotatedIbl.direction({{1, 0, 0}});
+    near(float(rotatedNormal[1]), -1);
+    EnvironmentMap retry(1, 1, {{{1, 1, 1}}});
+    int cancelIbl = 1;
+    require(!retry.prepareIrradiance(&cancelIbl),
+            "irradiance cancellation ignored");
+    cancelIbl = 0;
+    require(retry.prepareIrradiance(&cancelIbl),
+            "cancelled irradiance poisoned cache");
+    near(retry.irradiance(n)[0], 1);
+    // The GLB source uses unlit albedo, preserving explicit lights separately.
+    options                       = RenderOptions();
+    options.materialColors        = true;
+    options.useLightingRig        = true;
+    options.lighting.environments = {ibl};
+    auto iblScene                 = prepareRender(triangle(), options);
+    auto iblPixel                 = renderTile(iblScene, tile)[5];
+    near(srgbToLinear(iblPixel.r), 1);
+    near(srgbToLinear(iblPixel.g), .125f);
+    options.lighting.ambient = 1;
+    auto combinedScene       = prepareRender(triangle(), options);
+    near(srgbToLinear(renderTile(combinedScene, tile)[5].r), 1.25f);
+    options.lighting.master = 0;
+    near(
+        srgbToLinear(renderTile(prepareRender(triangle(), options), tile)[5].r),
+        1);
+    // World-space reflection follows mesh normals and camera pose, rather than
+    // being painted on projected screen coordinates.
+    std::vector<EnvironmentColor> directional(w * h);
+    for (int y = 0; y < h; ++y) {
+      const double theta = pi * ((y + .5) / h - .5);
+      for (int x = 0; x < w; ++x) {
+        const double phi       = 2 * pi * ((x + .5) / w - .5);
+        directional[y * w + x] = {
+            {float(1 + std::cos(theta) * std::cos(phi)), 0, 0}};
+      }
+    }
+    EnvironmentLayer mirror;
+    mirror.overrideMaterial = true;
+    mirror.reflectivity     = 1;
+    mirror.map = std::make_shared<EnvironmentMap>(w, h, std::move(directional));
+    options    = RenderOptions();
+    options.useLightingRig                   = true;
+    options.lighting.preserveDefaultLighting = true;
+    options.lighting.environments            = {mirror};
+    const std::array<double, 3> center{{1.0 / 3, 1.0 / 3, 1.0 / 3}};
+    auto facingScene = prepareRender(triangle(), options);
+    near(srgbToLinear(facingScene.sampleShader(0, center).r), 2, .002f);
+    options.rotation = {{0, 45, 0}};
+    auto turned      = prepareRender(triangle(), options);
+    near(srgbToLinear(turned.sampleShader(0, center).r), 1, .002f);
+    options.rotation = {{0, 0, 0}};
+    ModelTransform camera;
+    camera.camera      = true;
+    camera.rotation    = {{0, 30, 0}};
+    options.transforms = {camera};
+    auto cameraTurned  = prepareRender(triangle(), options);
+    near(srgbToLinear(cameraTurned.sampleShader(0, center).r),
+         float(1 + std::cos(pi / 6)), .002f);
     std::cout << "Environment sampling, material mixing, GLB projection and "
                  "HDR passed\n";
     return 0;
