@@ -119,7 +119,8 @@ perspective correction. Specular and positional lighting are evaluated at each
 coverage sample. Camera motion changes the eye without moving world lights.
 
 The shared tile renderer's optional immutable sample evaluator keeps all
-material-bearing intersections until depth sorting. Coincident tessellation
+transparent intersections until depth sorting. Opaque material hits use the
+nearest-depth buffer and occlude transparent hits behind them. Coincident tessellation
 edge hits are deduplicated so alpha is not applied twice. Fragment storage is
 bounded by the existing 256 MiB tile budget, with explicit failure if exhausted.
 Existing opaque GLB/Image Plane rasterization keeps its original path. 3D Merge

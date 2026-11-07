@@ -200,6 +200,18 @@ int main() {
       std::reverse(scene.triangles.begin(), scene.triangles.end());
       shade(scene);
       equal(full, renderTile(scene, tile()));
+      auto cover  = scene.triangles.front();
+      cover.color = {{0, 1, 0}};
+      for (auto &v : cover.vertices) v.depth += 10;
+      scene.triangles.push_back(cover);
+      shade(scene);
+      const auto hidden = renderTile(scene, tile())[40 * 80 + 40];
+      near(hidden.g, 1);
+      near(hidden.r, 0);
+      near(hidden.b, 0);
+      near(hidden.alpha, 1);
+      scene.triangles.pop_back();
+      shade(scene);
       // Coincident tessellation edges must not double the surface's opacity.
       scene.triangles.resize(1);
       scene.triangles.push_back(scene.triangles[0]);
@@ -220,6 +232,26 @@ int main() {
       int canceled = 1;
       check(renderTile(scene, tile(), &canceled).empty(),
             "material cancellation ignored");
+    });
+    run("opaque material overdraw does not exhaust transparency budget", [] {
+      RenderScene scene;
+      RenderTriangle t;
+      t.vertices = {{{-1, -1, 0}, {2048, -1, 0}, {-1, 256, 0}}};
+      t.edges    = {{true, true, true}};
+      t.color    = {{.2f, .3f, .4f}};
+      for (int i = 0; i < 12; ++i) {
+        for (auto &v : t.vertices) v.depth = i;
+        scene.triangles.push_back(t);
+      }
+      scene.sampleShader = [](std::size_t, const std::array<double, 3> &) {
+        return ColorPixel{.2f, .3f, .4f, 1};
+      };
+      RenderTile request;
+      request.width    = 1024;
+      request.height   = 128;
+      const auto image = renderTile(scene, request);
+      near(image[32 * 1024 + 32].alpha, 1);
+      near(image[32 * 1024 + 32].r, .2);
     });
     run("wireframe keeps interiors transparent and hides occluded edges", [] {
       auto s = prepareRender(triangle(), {}); const auto solid = renderTile(s, tile());
