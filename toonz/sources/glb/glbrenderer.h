@@ -1,6 +1,9 @@
 #pragma once
 
 #include "glbloader.h"
+#include "environment.h"
+#include <algorithm>
+#include <type_traits>
 #include <memory>
 #include <functional>
 #include <optional>
@@ -44,10 +47,14 @@ struct LightingRig {
   double ambient = 0.0;
   double master = 1.0;
   std::vector<DiffuseLight> lights;
+  std::vector<EnvironmentLayer> environments;
+  // Environment reflections alone preserve the source's default lighting.
+  bool preserveDefaultLighting = false;
 
   bool operator==(const LightingRig &other) const {
     return ambient == other.ambient && master == other.master &&
-           lights == other.lights;
+           lights == other.lights && environments == other.environments &&
+           preserveDefaultLighting == other.preserveDefaultLighting;
   }
 };
 
@@ -168,6 +175,16 @@ RenderScene prepareImagePlane(
 RenderScene projectImagePlane(int width, int height,
                               const std::vector<ModelTransform> &transforms);
 
+// Extended transfer retains HDR for floating output; integer outputs clamp
+// here.
+float linearToSrgbExtended(float value);
+template <class Channel>
+Channel displayChannel(float value, double maximum) {
+  if constexpr (std::is_floating_point<Channel>::value)
+    return Channel(std::max(0.0f, value));
+  else
+    return Channel(std::clamp(value, 0.0f, 1.0f) * maximum + .5);
+}
 float linearToSrgb(float value);
 float srgbToLinear(float value);
 std::array<float, 3> materialColor(const Asset &asset, std::size_t index);

@@ -76,6 +76,16 @@
   <item>"STD_amMaterialFx.group" "Group (empty = whole model)" </item>
   <item>"STD_amMaterialFx.diffuseSource" "Diffuse Color Source" </item>
   <item>"STD_amMaterialFx.unsupportedAttributes" "Unsupported Attributes" </item>
+  <item>"STD_environmentReflectionFx" "Environment Reflections" </item>
+  <item>"STD_environmentReflectionFx.materialMode" "Reflectivity Source" </item>
+  <item>"STD_environmentReflectionFx.reflectivity" "Override Reflectivity (%)" </item>
+  <item>"STD_environmentReflectionFx.reflectiveBlend" "Override Blend (%)" </item>
+  <item>"STD_environmentReflectionFx.intensity" "Intensity (%)" </item>
+  <item>"STD_environmentReflectionFx.exposure" "Exposure (stops)" </item>
+  <item>"STD_environmentReflectionFx.tint" "Tint" </item>
+  <item>"STD_environmentReflectionFx.rotationX" "Rotation X" </item>
+  <item>"STD_environmentReflectionFx.rotationY" "Rotation Y" </item>
+  <item>"STD_environmentReflectionFx.rotationZ" "Rotation Z" </item>
   <item>"STD_threePointLightFx" "Three-Point Light" </item>
   <item>"STD_merge3DFx" "3D Merge" </item>
   <item>"STD_threePointLightFx.masterIntensity" "Master Intensity (%)" </item>

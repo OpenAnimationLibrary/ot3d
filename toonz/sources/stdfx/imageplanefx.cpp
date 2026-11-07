@@ -13,7 +13,6 @@ void copyPixels(TRasterPT<PIXEL> raster,
                 const std::vector<otglb::ColorPixel> &pixels, int offset) {
   using Channel        = typename PIXEL::Channel;
   const double maximum = PIXEL::maxChannelValue;
-  const double round   = std::is_floating_point<Channel>::value ? 0.0 : 0.5;
   raster->lock();
   const int width = raster->getLx();
   const int rows  = int(pixels.size() / width);
@@ -21,9 +20,10 @@ void copyPixels(TRasterPT<PIXEL> raster,
     auto *row = raster->pixels(y + offset);
     for (int x = 0; x < width; ++x) {
       const auto &p = pixels[std::size_t(y) * width + x];
-      row[x]        = PIXEL(
-                 Channel(p.r * maximum + round), Channel(p.g * maximum + round),
-                 Channel(p.b * maximum + round), Channel(p.alpha * maximum + round));
+      row[x]        = PIXEL(otglb::displayChannel<Channel>(p.r, maximum),
+                            otglb::displayChannel<Channel>(p.g, maximum),
+                            otglb::displayChannel<Channel>(p.b, maximum),
+                            otglb::displayChannel<Channel>(p.alpha, maximum));
     }
   }
   raster->unlock();

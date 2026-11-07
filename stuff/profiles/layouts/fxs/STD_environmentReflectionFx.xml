@@ -1,0 +1,19 @@
+<fxlayout>
+  <page name="Reflections">
+    <label>"Connect a model to Source and a 360 degree equirectangular image to Environment. Reflects the image without changing the camera background."</label>
+    <control>materialMode</control>
+    <control>reflectivity</control>
+    <control>reflectiveBlend</control>
+    <label>"Override Material uses these amounts for all surfaces. A:M Material uses each assigned material's Reflectivity and Blend; finite reflection falloff excludes the infinite map."</label>
+    <control>intensity</control>
+    <control>exposure</control>
+    <control>tint</control>
+    <label>"Sharp environment reflections only. Scene object reflections, rough reflections and occlusion are not included."</label>
+  </page>
+  <page name="Orientation">
+    <control>rotationX</control>
+    <control>rotationY</control>
+    <control>rotationZ</control>
+    <label>"World axes: +Y is up; +Z is the panorama center. Rotation applies X, then Y, then Z. Limit: 4 megapixels; resize or crop larger images before connecting."</label>
+  </page>
+</fxlayout>
