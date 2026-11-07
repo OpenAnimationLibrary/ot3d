@@ -161,7 +161,7 @@ Material parseMaterial(std::string source, const Limits &limits) {
   }
   if (s.roughness > 0) result.unsupported.push_back("Roughness turbulence");
   if (s.reflectivity > 0)
-    result.unsupported.push_back("raytraced Reflectivity");
+    result.deferred.push_back("scene reflections (Reflectivity/Falloff/Blend)");
   if (s.transparency > 0 && s.refraction != 1)
     result.unsupported.push_back("raytraced Refraction");
   if (s.transparency > 0 && s.density > 0)
@@ -189,11 +189,12 @@ Color shadeSurface(const Surface &s, const Color &diffuse, const Vec3 &normal,
     for (int k = 0; k < 3; ++k) half[k] = view[k] + light.direction[k];
     const double length = std::sqrt(dot(half, half));
     double highlight    = 0;
-    if (s.specularSize > 0 && ndotl > 0 && length > 1e-12) {
+    if (s.specularSize > 0 && s.specularIntensity > 0 && ndotl > 0 &&
+        dot(normal, view) > 0 && length > 1e-12) {
       for (double &v : half) v /= length;
       // Monotonic Blinn preview width. Hash's exact lobe is not published.
       const double exponent = std::max(0.01, 2.0 / s.specularSize);
-      highlight             = s.specularIntensity *
+      highlight             = s.specularIntensity * ndotl *
                   std::pow(std::max(0.0, dot(normal, half)), exponent);
     }
     for (int k = 0; k < 3; ++k) {

@@ -1,6 +1,7 @@
 #include "stdfx.h"
 #include "t3dsource.h"
 #include "tfxparam.h"
+#include "tparamset.h"
 #include "tnotanimatableparam.h"
 #include "ammaterial.h"
 
@@ -41,6 +42,9 @@ class AMMaterialFx final : public TStandardRasterFx, public T3DRenderSource {
   T3DSourcePort m_source;
   TStringParamP m_materialFile, m_group;
   TIntEnumParamP m_diffuseSource, m_unsupportedMode;
+  TBoolParamP m_overrideSpecular;
+  TDoubleParamP m_specularSize, m_specularIntensity;
+  TPixelParamP m_specularColor;
   struct Cache {
     QMutex mutex;
     QByteArray digest;
@@ -60,21 +64,34 @@ class AMMaterialFx final : public TStandardRasterFx, public T3DRenderSource {
       throw std::runtime_error("A:M material changed while reading");
     return bytes;
   }
-  otam::MaterialBinding binding() const {
-    const auto bytes = sourceBytes();
-    const auto digest =
-        QCryptographicHash::hash(bytes, QCryptographicHash::Sha256);
-    QMutexLocker lock(&m_cache->mutex);
-    if (!m_cache->material || m_cache->digest != digest) {
-      auto material = std::make_shared<otam::Material>(
-          otam::parseMaterial(std::string(bytes.constData(), bytes.size())));
-      m_cache->material = std::move(material);
-      m_cache->digest   = digest;
-    }
+  otam::MaterialBinding binding(double frame) const {
     otam::MaterialBinding result;
-    result.material = *m_cache->material;
+    if (!m_materialFile->getValue().empty()) {
+      const auto bytes = sourceBytes();
+      const auto digest =
+          QCryptographicHash::hash(bytes, QCryptographicHash::Sha256);
+      QMutexLocker lock(&m_cache->mutex);
+      if (!m_cache->material || m_cache->digest != digest) {
+        auto material = std::make_shared<otam::Material>(
+            otam::parseMaterial(std::string(bytes.constData(), bytes.size())));
+        m_cache->material = std::move(material);
+        m_cache->digest   = digest;
+      }
+      result.material = *m_cache->material;
+    }
+    if (m_overrideSpecular->getValue()) {
+      auto &surface             = result.material.surface;
+      surface.specularSize      = m_specularSize->getValue(frame) / 100.0;
+      surface.specularIntensity = m_specularIntensity->getValue(frame) / 100.0;
+      const auto color          = m_specularColor->getValueD(frame);
+      surface.specularColor =
+          otam::Color{{float(std::clamp(color.r, 0.0, 1.0)),
+                       float(std::clamp(color.g, 0.0, 1.0)),
+                       float(std::clamp(color.b, 0.0, 1.0))}};
+    }
     result.group =
         QString::fromStdWString(m_group->getValue()).toUtf8().toStdString();
+    result.specularOnly       = m_materialFile->getValue().empty();
     result.paletteColor       = m_diffuseSource->getValue() == 1;
     result.previewUnsupported = m_unsupportedMode->getValue() == 1;
     return result;
@@ -85,7 +102,11 @@ public:
       : m_materialFile(new TStringParam())
       , m_group(new TStringParam())
       , m_diffuseSource(new TIntEnumParam(0, "Material File"))
-      , m_unsupportedMode(new TIntEnumParam(0, "Report Error")) {
+      , m_unsupportedMode(new TIntEnumParam(0, "Report Error"))
+      , m_overrideSpecular(false)
+      , m_specularSize(25.0)
+      , m_specularIntensity(100.0)
+      , m_specularColor(TPixel32::White) {
     addInputPort("Source", m_source);
     m_diffuseSource->addItem(1, "Level Palette");
     m_unsupportedMode->addItem(1, "Supported Attributes Preview");
@@ -93,6 +114,13 @@ public:
     bindParam(this, "group", m_group);
     bindParam(this, "diffuseSource", m_diffuseSource);
     bindParam(this, "unsupportedAttributes", m_unsupportedMode);
+    bindParam(this, "overrideSpecular", m_overrideSpecular);
+    bindParam(this, "specularSize", m_specularSize);
+    bindParam(this, "specularIntensity", m_specularIntensity);
+    bindParam(this, "specularColor", m_specularColor);
+    m_specularColor->enableMatte(false);
+    m_specularSize->setValueRange(0.0, 10000.0);
+    m_specularIntensity->setValueRange(0.0, 100000.0);
     enableComputeInFloat(true);
   }
   TFx *clone(bool recursive = true) const override {
@@ -114,7 +142,7 @@ public:
       }
     }
     return TStandardRasterFx::getAlias(frame, info) +
-           "[AMMaterial-v1:" + digest + "]";
+           "[AMMaterial-v2:" + digest + "]";
   }
   std::shared_ptr<const otglb::RenderScene> get3DRenderScene(
       double frame, const int *canceled,
@@ -125,7 +153,8 @@ public:
     auto *source = m_source.source();
     if (!source || (canceled && *canceled)) return {};
     otam::MaterialBindings materials;
-    if (!m_materialFile->getValue().empty()) materials.push_back(binding());
+    if (!m_materialFile->getValue().empty() || m_overrideSpecular->getValue())
+      materials.push_back(binding(frame));
     if (downstream)
       materials.insert(materials.end(), downstream->begin(), downstream->end());
     if (materials.size() > 64)

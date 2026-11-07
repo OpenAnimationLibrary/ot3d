@@ -20,11 +20,14 @@ struct Material {
   std::string source, name, version;
   Surface surface;
   std::vector<std::string> unsupported;
+  std::vector<std::string>
+      deferred;  // Retained scene reflections; no ray scene yet.
 };
 struct MaterialBinding {
   Material material;
   std::string group;  // Empty selects the whole model; otherwise exact name.
   bool paletteColor       = false;
+  bool specularOnly = false;  // Fileless controls preserve an upstream surface.
   bool previewUnsupported = false;
 };
 using MaterialBindings = std::vector<MaterialBinding>;

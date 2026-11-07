@@ -3,6 +3,8 @@
 This is a draft implementation of the native material path. It does **not** yet
 meet the goal of accurately rendering every basic A:M surface attribute. The
 remaining gates below are part of that goal, not optional substitutes for it.
+The current milestone prioritizes **direct-light specularity/shine**. Environment
+and inter-object reflections are deferred until there is a reflection scene.
 
 ## Use
 
@@ -26,13 +28,36 @@ later nodes override earlier nodes on overlapping selections.
 Materials pass through geometry/camera transforms, chained lighting and 3D Merge
 before rasterization. Place a group-specific node on its model branch before a
 merge to avoid targeting unrelated branches. An A:M material on a GLB or Image
-Plane reports an incompatible-source error. An empty file path passes through.
+Plane reports an incompatible-source error. An empty file path passes through unless Override Specular is enabled.
 
 The node stores its file path, group and options in the scene. Files stay
 externally linked, using the current string-path convention of GLB Model FX;
 Save Assets does not yet collect material dependencies. Content hashes invalidate
 the cache after external edits, including edits that preserve size/timestamps.
 There is an 8 MiB file limit and 64-assignment chain limit.
+
+## Working on shine
+
+On the **Specular** page, enable **Override Specular** to key Specular Size,
+Specular Intensity and Specular Color in OT3D. With this switch off, imported
+values stay authoritative. With no material file, the node adds shine to the
+level's existing palette surface. A fileless specular node after another material
+changes only its specular attributes, preserving that material's color, ambiance
+and opacity. A node with a file still assigns a complete surface.
+
+Start with a Three-Point Light, reduce fill/rim intensity, and move the key light
+while watching Preview. Size controls highlight width; intensity controls its
+strength. Either at zero disables the highlight. Specular Color tints the light's
+color. Ambient light contributes diffuse illumination and produces no highlight.
+Rig master and each direct light's intensity affect shine. Positional lights also
+change direction and attenuation across the surface. Chained rigs add their
+independent highlights; moving the camera's eye changes the view-dependent
+response. Reflections are not required for any of these controls.
+
+Imported Reflectivity, Reflectivity Falloff and Reflective Blend remain stored.
+Active reflections add a **Deferred A:M scene reflections** diagnostic, rather
+than blocking the material. This is independent of Unsupported Attributes mode;
+other unavailable active effects still follow that mode.
 
 ## Surface coverage
 
@@ -41,10 +66,10 @@ There is an 8 MiB file limit and 64-assignment chain limit.
 | Diffuse Color | File RGB or evaluated Level Palette color; converted to linear light for shading |
 | Diffuse Falloff | SDK Lambert sample rule: clamped `N.L / falloff`; zero removes front-side falloff |
 | Ambiance Color / Intensity / Blend | Unset color follows diffuse; self illumination and diffuse blending; independent of light-rig master |
-| Specular Color / Size / Intensity | Per-sample view-dependent Blinn preview; unset color follows diffuse; zero size disables highlights |
+| Specular Color / Size / Intensity | Per-sample view-dependent Blinn preview with direct-light incidence; keyable node overrides; zero size/intensity disables highlights |
 | Transparency | Constant surface alpha; depth-ordered, premultiplied compositing in linear light within one native source |
 | Roughness / Roughness Scale | Parsed and retained; A:M turbulence/normal perturbation is not implemented |
-| Reflectivity / Falloff / Reflective Blend | Parsed and retained; scene reflection rays and Fresnel behavior are not implemented |
+| Reflectivity / Falloff / Reflective Blend | Parsed and retained; explicitly deferred without blocking direct-light shine |
 | Index of Refraction | Parsed and retained; refracted rays are not implemented |
 | Density | Parsed and retained; thickness-dependent absorption is not implemented |
 | Translucency | Parsed and retained; raytraced back lighting and occlusion are not implemented |
@@ -52,7 +77,7 @@ There is an 8 MiB file limit and 64-assignment chain limit.
 | Glow | Parsed and retained; choreography-dependent glow post processing is not implemented |
 
 **Unsupported Attributes: Report Error** is the default. An active unsupported
-effect blocks rendering with the attribute name. **Supported Attributes Preview**
+effect blocks rendering with the attribute name, except explicitly deferred scene reflections. **Supported Attributes Preview**
 explicitly omits those effects and adds diagnostics to the render snapshot.
 Neither setting promises A:M renderer parity: in particular, Hash's exact
 specular lobe has not been validated. Roughness is never mapped to a PBR
@@ -68,8 +93,12 @@ MFC code or SDK runtime is loaded.
 ## Rendering contract and limits
 
 Assignments reach the immutable native model snapshot before lighting or
-projection. Material normals are geometric normals of the existing approximate
-preview tessellation. Near-clipped triangles retain patch selection; world sample
+projection. Four-corner preview patches supply smooth normals from finite differences of
+that same approximate patch surface, before tessellation. Normals are transformed
+with the inverse transpose for nonuniform model scale, clipped with the surface
+and kept in world space during projection. They are interpolated per coverage
+sample and normalized for shading. Three-corner/manual meshes retain geometric
+normal fallback. There is no smoothing across independent patch boundaries. Near-clipped triangles retain patch selection; world sample
 positions are reconstructed from the source camera and interpolated with
 perspective correction. Specular and positional lighting are evaluated at each
 coverage sample. Camera motion changes the eye without moving world lights.
@@ -89,7 +118,7 @@ The material's opacity multiplies the native column's opacity at raster output.
 ## References and completion gates
 
 Semantic reference: [A:M SDK 19.5](https://github.com/OpenAnimationLibrary/amsdk/tree/ee3dd9fb82bf80de8cdd75e00273e2eeab925e33),
-`HAttrProperty`/`HMaterialNode`, `Include/OldAttr.h` and the Lambert shader sample.
+`HAttrProperty`/`HMaterialNode`, `Include/OldAttr.h` and the Lambert/BlinnPhong shader samples.
 No SDK code is copied or linked. The
 [Hash Technical Reference](https://www.hash.com/ftp/pub/docs/TECHREF.pdf)
 distinguishes turbulence roughness, specular width, density and raytraced
@@ -104,7 +133,7 @@ Before this can claim the requested basic-surface fidelity:
    color-management, highlight-width and ambiance-blend reference values and
    tolerances, including camera motion, curved patches and nonuniform scaling.
 2. Carry validated smooth patch normals and source-space sampling coordinates;
-   implement and compare A:M turbulence roughness and scale. The existing
+   validate continuity across patch boundaries; implement and compare A:M turbulence roughness and scale. The existing
    approximate patch evaluation remains a separate fidelity limitation.
 3. Establish a common ray-query scene with bounded acceleration structures,
    source/object identities, shadows and reflection/refraction recursion. Add
@@ -117,8 +146,10 @@ Before this can claim the requested basic-surface fidelity:
    scene-relative paths. Unsupported operators must remain explicit.
 
 Portable tests cover parsing, units/defaults, malformed data, unsupported-feature
-diagnostics and local illumination. Shared-renderer tests cover transparent depth
+diagnostics, direct-light specularity, camera/light angles, colored and multiple lights,
+zero controls, normal interpolation, clipping and nonuniform scaling. Shared-renderer tests cover transparent depth
 order, linear blending, coincident hits, tile seams and cancellation. Native
 `amfx` coverage includes assignment, pixels, palette selection, light ordering,
-cloning, persistence, file invalidation, empty exposure and render-tree expansion.
+cloning, persistence, file invalidation, empty exposure, render-tree expansion,
+fileless/keyed specular overrides and highlights on reflective source materials.
 Native application/Windows and visual A:M comparisons are still required.

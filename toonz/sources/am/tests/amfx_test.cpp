@@ -116,6 +116,19 @@ void testMaterials(ToonzScene &scene, TXshLevel *level, TFx *column,
   require(
       std::abs(p.alpha - .5f) < 1e-5 && p.b > .49 && p.r > .24 && p.g < .001,
       "material color/transparency or tessellation seam mismatch");
+  TFxP glossOwner = new AMMaterialFx;
+  auto &gloss     = *static_cast<AMMaterialFx *>(glossOwner.getPointer());
+  gloss.getInputPort(0)->setFx(&material);
+  auto *glossEnabled = dynamic_cast<TBoolParam *>(
+      gloss.getParams()->getParam("overrideSpecular"));
+  require(glossEnabled, "fileless gloss control");
+  glossEnabled->setValue(true);
+  set(gloss, "specularIntensity", 0);
+  const auto overlay   = gloss.get3DRenderScene(0, nullptr);
+  const auto preserved = otglb::renderTile(*overlay, tile)[16 * 32 + 16];
+  require(std::abs(preserved.alpha - p.alpha) < 1e-6 &&
+              std::abs(preserved.b - p.b) < 1e-6,
+          "fileless specular controls discarded upstream color/opacity");
   TRaster32P r(32, 32);
   TTile output(r, TPointD(-16, -16));
   TRenderSettings settings;
@@ -167,7 +180,7 @@ void testMaterials(ToonzScene &scene, TXshLevel *level, TFx *column,
   require(rejected, "misspelled material group silently ignored");
   stringParam("group")->setValue(L"");
   const auto alias = material.getAlias(0, settings);
-  write("DiffuseColor=0 0 255\nAmbiance=100\nReflectivity=50");
+  write("DiffuseColor=0 0 255\nAmbiance=100\nRoughness=50");
   require(material.getAlias(0, settings) != alias,
           "external material reload did not invalidate cache");
   rejected = false;
@@ -176,7 +189,7 @@ void testMaterials(ToonzScene &scene, TXshLevel *level, TFx *column,
   } catch (const std::runtime_error &) {
     rejected = true;
   }
-  require(rejected, "unsupported reflectivity silently rendered");
+  require(rejected, "unsupported roughness silently rendered");
   auto *mode = dynamic_cast<TIntEnumParam *>(
       material.getParams()->getParam("unsupportedAttributes"));
   require(mode, "preview selector");
@@ -206,6 +219,105 @@ void testMaterials(ToonzScene &scene, TXshLevel *level, TFx *column,
   require(level->getAMLevel()->mesh() == original,
           "material modified source geometry");
   scene.getXsheet()->getFxDag()->getInternalFxs()->removeFx(&material);
+}
+void testShine(ToonzScene &scene, const QString &path) {
+  TRasterFxP snapshot = makeAMLevelRenderFx(scene.getXsheet(), 0, 0);
+  TFxP owner          = new AMMaterialFx;
+  auto &fx            = *static_cast<AMMaterialFx *>(owner.getPointer());
+  fx.getInputPort(0)->setFx(snapshot.getPointer());
+  auto *enabled =
+      dynamic_cast<TBoolParam *>(fx.getParams()->getParam("overrideSpecular"));
+  auto *color =
+      dynamic_cast<TPixelParam *>(fx.getParams()->getParam("specularColor"));
+  auto *intensity = dynamic_cast<TDoubleParam *>(
+      fx.getParams()->getParam("specularIntensity"));
+  auto *file =
+      dynamic_cast<TStringParam *>(fx.getParams()->getParam("materialFile"));
+  require(enabled && color && intensity && file, "shine controls missing");
+  require(!enabled->getValue(), "shine override changed file defaults");
+  enabled->setValue(true);
+  set(fx, "specularSize", 10);
+  set(fx, "specularIntensity", 25);
+  otglb::LightingRig rig;
+  rig.lights.push_back(otglb::DiffuseLight{});
+  const auto sample = [&](double frame, const otglb::LightingRig &lights) {
+    auto rendered = fx.get3DRenderScene(frame, nullptr, &lights);
+    require(rendered && bool(rendered->sampleShader),
+            "no direct-light material shader");
+    return rendered->sampleShader(0, {{1.0 / 3, 1.0 / 3, 1.0 / 3}});
+  };
+  const auto white = sample(0, rig);
+  require(white.b > .5,
+          "fileless shine did not add a white highlight to red palette");
+  color->setValue(0, TPixel32::Red);
+  require(sample(0, rig).b < .001, "specular color not applied");
+  color->setValue(0, TPixel32::White);
+  set(fx, "specularSize", 0);
+  require(sample(0, rig).b < .001, "zero-size shine remained visible");
+  set(fx, "specularSize", 10);
+  intensity->setValue(1, 0.0);
+  require(sample(1, rig).b < .001 && sample(0, rig).b > .5,
+          "animated shine intensity not sampled");
+  TRenderSettings settings;
+  require(fx.getAlias(0, settings) != fx.getAlias(1, settings),
+          "animated shine shared cache entry");
+  const QString saved = path + ".xml";
+  {
+    TOStream os{TFilePath(saved)};
+    os << owner.getPointer();
+  }
+  TPersist *persist = nullptr;
+  {
+    TIStream is{TFilePath(saved)};
+    is >> persist;
+  }
+  TFxP restored = dynamic_cast<TFx *>(persist);
+  auto *restoredIntensity =
+      restored ? dynamic_cast<TDoubleParam *>(
+                     restored->getParams()->getParam("specularIntensity"))
+               : nullptr;
+  require(restoredIntensity && restoredIntensity->getValue(1) == 0 &&
+              restoredIntensity->getValue(0) == 25,
+          "keyed shine did not survive persistence");
+  // Imported reflective materials still provide direct-light highlights.
+  {
+    QFile f(path);
+    require(f.open(QIODevice::WriteOnly), "write shine material");
+    f.write(
+        "<MATERIALFILE>\nProductVersion=19.5\n<MATERIALS><MATERIAL><ATTRIBUTE>"
+        "\nDiffuseColor=0 0 0\nSpecularColor=255 255 "
+        "255\nSpecularSize=10\nSpecularIntensity=25\nReflectivity=60\n</"
+        "ATTRIBUTE></MATERIAL></MATERIALS></MATERIALFILE>");
+  }
+  file->setValue(path.toStdWString());
+  enabled->setValue(false);
+  const auto imported = sample(0, rig);
+  require(imported.r > .5 && imported.g > .5 && imported.b > .5,
+          "reflectivity blocked imported shine");
+  const auto noLights = sample(0, otglb::LightingRig{});
+  require(noLights.r < .001, "unlit material produced a specular highlight");
+  otglb::LightingRig ambient;
+  ambient.ambient = 1;
+  require(sample(0, ambient).r < .001, "ambient light produced shine");
+  rig.lights[0].color = {{0, 0, 1}};
+  const auto blue     = sample(0, rig);
+  require(blue.r < .001 && blue.b > .5,
+          "direct light color did not tint shine");
+  rig.lights[0].color = {{1, 1, 1}};
+  const auto result   = fx.get3DRenderScene(0, nullptr, &rig);
+  require(!result->warnings.empty(), "deferred reflection diagnostic missing");
+  otglb::ModelTransform camera;
+  camera.camera      = true;
+  camera.position[0] = 1000;
+  const std::vector<otglb::ModelTransform> moves{camera};
+  const auto moved = fx.get3DRenderScene(0, nullptr, &rig, &moves);
+  require(moved && moved->sampleShader(0, {{1.0 / 3, 1.0 / 3, 1.0 / 3}}).r <
+                       imported.r * .8,
+          "camera movement did not change specular response");
+  enabled->setValue(true);
+  set(fx, "specularIntensity", 0);
+  require(sample(0, rig).r < .001,
+          "zero-intensity override did not suppress imported shine");
 }
 void testRenderModes(ToonzScene &scene, TXshLevel *level, const QString &path) {
   auto *sheet  = scene.getXsheet();
@@ -322,6 +434,7 @@ int main(int argc, char **argv) {
     auto *column = xsheet->getColumn(0)->getFx();
     require(isAMModelColumn(column), "native column classification");
     testMaterials(scene, level, column, temp.filePath("surface.mat"));
+    testShine(scene, temp.filePath("shine.mat"));
     const auto original = level->getAMLevel()->mesh();
     TFxP transformOwner = new Transform3DFx;
     auto &transform =

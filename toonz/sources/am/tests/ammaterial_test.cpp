@@ -42,7 +42,7 @@ int main() {
     near(m.surface.refraction, 1.5);
     near(m.surface.density, 2);
     near(m.surface.roughness, .14);
-    check(m.unsupported.size() == 7,
+    check(m.unsupported.size() == 6 && m.deferred.size() == 1,
           "unsupported surface effects not identified");
     check(!m.source.empty(), "source not retained");
     const auto empty = otam::parseMaterial(material(""));
@@ -100,6 +100,47 @@ int main() {
     s.specularSize    = 1;
     check(otam::shadeSurface(s, white, n, v, {light}, 0, 1)[0] > narrow,
           "specular size does not widen highlight");
+    // Highlights follow the view and direct-light geometry, independent of
+    // ambient energy. They retain intensity/color scaling in linear light.
+    otam::Surface shiny;
+    shiny.specularSize  = .1;
+    shiny.specularColor = white;
+    const otam::Color black{{0, 0, 0}};
+    otam::SurfaceLight key;
+    auto peak = otam::shadeSurface(shiny, black, n, v, {key}, 0, 1);
+    near(peak[0], 1);
+    const otam::Vec3 angledView{{std::sqrt(.75), 0, .5}};
+    const auto offAxis =
+        otam::shadeSurface(shiny, black, n, angledView, {key}, 0, 1);
+    check(offAxis[0] < peak[0] * .1, "camera angle did not move highlight");
+    key.direction = {{-std::sqrt(.75), 0, .5}};
+    // Opposing light/view tangents produce the half-vector normal.
+    near(otam::shadeSurface(shiny, black, n, angledView, {key}, 0, 1)[0], .5);
+    shiny.specularIntensity = .4;
+    near(otam::shadeSurface(shiny, black, n, angledView, {key}, 0, 1)[0], .2);
+    key.intensity = .5;
+    near(otam::shadeSurface(shiny, black, n, angledView, {key}, 0, 1)[0], .1);
+    near(otam::shadeSurface(shiny, black, n, angledView, {key}, 0, .5)[0], .05);
+    near(otam::shadeSurface(shiny, black, n, v, {}, 1, 1)[0], 0);
+    key.direction = {{0, 0, -1}};
+    near(otam::shadeSurface(shiny, black, n, v, {key}, 0, 1)[0], 0);
+    key.direction = {{0, 0, 1}};
+    key.intensity = 1;
+    key.color     = {{1, 0, 0}};
+    peak          = otam::shadeSurface(shiny, black, n, v, {key}, 0, 1);
+    near(peak[0], .4);
+    near(peak[1], 0);
+    near(peak[2], 0);
+    key.color        = {{0, 0, 1}};
+    const auto mixed = otam::shadeSurface(shiny, black, n, v,
+                                          {key, otam::SurfaceLight{}}, 0, 1);
+    near(mixed[0], .4);
+    near(mixed[2], .8);
+    shiny.specularSize = 0;
+    near(otam::shadeSurface(shiny, black, n, v, {key}, 0, 1)[2], 0);
+    check(otam::parseMaterial(material("Reflectivity=60\nSpecularSize=25"))
+              .unsupported.empty(),
+          "deferred reflections blocked direct-light shine");
     std::cout << "A:M material parser, diagnostics and local shading passed\n";
     return 0;
   } catch (const std::exception &e) {

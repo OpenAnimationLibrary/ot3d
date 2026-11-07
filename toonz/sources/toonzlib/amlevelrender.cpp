@@ -19,6 +19,7 @@
 #include <cmath>
 #include <limits>
 #include <map>
+#include <set>
 #include <stdexcept>
 
 namespace {
@@ -156,6 +157,11 @@ public:
                        int(3 * sizeof(double)));
         hash.addData(reinterpret_cast<const char *>(triangle.color.data()),
                      int(3 * sizeof(float)));
+        hash.addData(triangle.hasNormals ? "smooth" : "flat");
+        if (triangle.hasNormals)
+          for (const auto &n : triangle.normals)
+            hash.addData(reinterpret_cast<const char *>(n.data()),
+                         int(3 * sizeof(double)));
       }
     if (m_geometry) {
       for (const auto &groups : m_geometry->patchGroups) {
@@ -210,6 +216,12 @@ public:
           "A:M Material requires a native A:M model source");
     // Resolve assignments against all patch memberships, including groups with
     // no diffuse color. Downstream assignments win over upstream assignments.
+    struct ResolvedSurface {
+      otam::Surface surface;
+      bool paletteColor;
+    };
+    std::vector<ResolvedSurface> surfaces;
+    std::map<std::pair<std::size_t, std::size_t>, std::size_t> combinations;
     std::map<std::size_t, std::size_t> assigned;
     if (materials)
       for (std::size_t i = 0; i < materials->size(); ++i) {
@@ -220,15 +232,38 @@ public:
                                    binding.material.unsupported.front() +
                                    "; use Supported Attributes Preview to "
                                    "inspect the supported subset");
+        const std::size_t base = surfaces.size();
+        surfaces.push_back({binding.material.surface, binding.paletteColor});
         bool matched = false;
+        std::set<std::size_t> visited;
         for (const auto &triangle : m_geometry->triangles) {
           const auto p       = triangle.patch;
+          if (!visited.insert(p).second) continue;
           const auto &groups = m_geometry->patchGroups;
           if (binding.group.empty() ||
               (p < groups.size() &&
                std::find(groups[p].begin(), groups[p].end(), binding.group) !=
                    groups[p].end())) {
-            assigned[p] = i;
+            auto previous        = assigned.find(p);
+            std::size_t selected = base;
+            if (binding.specularOnly && previous != assigned.end()) {
+              const auto key = std::make_pair(i, previous->second);
+              auto merged    = combinations.find(key);
+              if (merged == combinations.end()) {
+                auto combined = surfaces[previous->second];
+                combined.surface.specularSize =
+                    binding.material.surface.specularSize;
+                combined.surface.specularIntensity =
+                    binding.material.surface.specularIntensity;
+                combined.surface.specularColor =
+                    binding.material.surface.specularColor;
+                const auto index = surfaces.size();
+                surfaces.push_back(combined);
+                merged = combinations.emplace(key, index).first;
+              }
+              selected = merged->second;
+            }
+            assigned[p] = selected;
             matched     = true;
           }
         }
@@ -320,7 +355,8 @@ public:
     }
     if (!assigned.empty()) {
       struct MaterialSample {
-        std::array<otam::Vec3, 3> positions;
+        std::array<otam::Vec3, 3> positions, normals;
+        bool hasNormals = false;
         otam::Color color;
         int binding = -1;
       };
@@ -330,6 +366,8 @@ public:
       for (const auto &triangle : mesh.triangles) {
         MaterialSample sample;
         sample.positions = triangle.vertices;
+        sample.normals    = triangle.normals;
+        sample.hasNormals = triangle.hasNormals;
         sample.color     = triangle.color;
         auto found       = assigned.find(triangle.patch);
         if (found != assigned.end()) sample.binding = int(found->second);
@@ -349,7 +387,7 @@ public:
       const auto rig         = lighting ? *lighting : otglb::LightingRig();
       const otam::Vec3 eye{{cameraPose[3], cameraPose[7], cameraPose[11]}};
       const auto triangles = scene->triangles;
-      scene->sampleShader  = [samples = std::move(samples), bindings,
+      scene->sampleShader  = [samples = std::move(samples), surfaces,
                              perspective, useRig, rig, eye,
                              triangles](std::size_t index,
                                         const std::array<double, 3> &bary) {
@@ -357,8 +395,8 @@ public:
         if (sample.binding < 0)
           return otglb::ColorPixel{sample.color[0], sample.color[1],
                                    sample.color[2], 1};
-        const auto &binding = bindings.at(sample.binding);
-        const auto &surface = binding.material.surface;
+        const auto &binding = surfaces.at(sample.binding);
+        const auto &surface = binding.surface;
         auto weights        = bary;
         if (perspective) {
           double sum = 0;
@@ -381,6 +419,13 @@ public:
         };
         normal = {{a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2],
                    a[0] * b[1] - a[1] * b[0]}};
+        if (sample.hasNormals) {
+          otam::Vec3 smooth{};
+          for (int k = 0; k < 3; ++k)
+            for (int j = 0; j < 3; ++j)
+              smooth[k] += weights[j] * sample.normals[j][k];
+          if (dot(smooth, smooth) > 1e-20) normal = smooth;
+        }
         const double nl = std::sqrt(dot(normal, normal));
         const double vl = std::sqrt(dot(view, view));
         if (nl < 1e-15 || vl < 1e-15) return otglb::ColorPixel{};
@@ -416,6 +461,9 @@ public:
                                  otglb::linearToSrgb(color[1]) * alpha,
                                  otglb::linearToSrgb(color[2]) * alpha, alpha};
       };
+      for (const auto &binding : bindings)
+        for (const auto &attribute : binding.material.deferred)
+          scene->warnings.push_back("Deferred A:M " + attribute);
       for (const auto &binding : bindings)
         for (const auto &attribute : binding.material.unsupported)
           scene->warnings.push_back("Supported Attributes Preview omits " +
