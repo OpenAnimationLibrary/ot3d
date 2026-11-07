@@ -197,6 +197,7 @@
     STD_glbModelFx
     STD_imagePlaneFx
     STD_transform3DFx
+    STD_amMaterialFx
     STD_threePointLightFx
     STD_merge3DFx
   </3D>

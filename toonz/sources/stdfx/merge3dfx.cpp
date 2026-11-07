@@ -39,7 +39,8 @@ class Merge3DFx final : public TStandardRasterFx,
   std::shared_ptr<const otglb::RenderScene> scene(
       double frame, const int *canceled, const otglb::LightingRig *lighting,
       const std::vector<otglb::ModelTransform> *transforms,
-      const TRenderSettings *settings, bool geometryOnly) const {
+      const TRenderSettings *settings, bool geometryOnly,
+      const otam::MaterialBindings *materials = nullptr) const {
     auto result                  = std::make_shared<otglb::RenderScene>();
     const T3DSourcePort *ports[] = {&m_foreground, &m_background};
     TRectD bounds;
@@ -47,11 +48,11 @@ class Merge3DFx final : public TStandardRasterFx,
       if (canceled && *canceled) return {};
       auto *source = ports[i]->source();
       if (!source) continue;
-      auto child = geometryOnly
-                       ? source->get3DRenderGeometry(frame, canceled,
-                                                     transforms, settings)
-                       : source->get3DRenderScene(frame, canceled, lighting,
-                                                  transforms, settings);
+      auto child = geometryOnly ? source->get3DRenderGeometry(
+                                      frame, canceled, transforms, settings)
+                                : source->get3DRenderScene(frame, canceled,
+                                                           lighting, transforms,
+                                                           settings, materials);
       if (!child || child->empty()) continue;
       const auto &a = m_affines[i];
       const auto &b = child->bounds;
@@ -60,6 +61,11 @@ class Merge3DFx final : public TStandardRasterFx,
           {child, {{a.a11, a.a12, a.a13, a.a21, a.a22, a.a23}}});
       result->warnings.insert(result->warnings.end(), child->warnings.begin(),
                               child->warnings.end());
+      for (const auto &group : child->materialGroups)
+        if (std::find(result->materialGroups.begin(),
+                      result->materialGroups.end(),
+                      group) == result->materialGroups.end())
+          result->materialGroups.push_back(group);
     }
     result->bounds = {{bounds.x0, bounds.y0, bounds.x1, bounds.y1}};
     return result;
@@ -93,8 +99,10 @@ public:
       double frame, const int *canceled,
       const otglb::LightingRig *lighting                   = nullptr,
       const std::vector<otglb::ModelTransform> *transforms = nullptr,
-      const TRenderSettings *settings = nullptr) const override {
-    return scene(frame, canceled, lighting, transforms, settings, false);
+      const TRenderSettings *settings                      = nullptr,
+      const otam::MaterialBindings *materials = nullptr) const override {
+    return scene(frame, canceled, lighting, transforms, settings, false,
+                 materials);
   }
   std::shared_ptr<const otglb::RenderScene> get3DRenderGeometry(
       double frame, const int *canceled,

@@ -175,6 +175,84 @@ int main() {
       near(prepareRender(a, o).triangles[0].color[0], .8);
       o.rotation[0] = 60; near(prepareRender(a, o).triangles[0].color[0], .5);
     });
+    run("material fragments composite in depth order and linear light", [] {
+      auto scene  = prepareRender(triangle(), {});
+      auto front  = scene.triangles.front();
+      front.color = {{1, 0, 0}};
+      for (auto &v : front.vertices) v.depth += 1;
+      scene.triangles[0].color = {{0, 0, 1}};
+      scene.triangles.push_back(front);
+      const auto shade = [](RenderScene &s) {
+        const auto triangles = s.triangles;
+        s.sampleShader       = [triangles](std::size_t i,
+                                     const std::array<double, 3> &) {
+          const auto &c     = triangles[i].color;
+          const float alpha = c[0] > 0 ? .5f : 1.f;
+          return ColorPixel{c[0] * alpha, c[1] * alpha, c[2] * alpha, alpha};
+        };
+      };
+      shade(scene);
+      const auto full = renderTile(scene, tile());
+      const auto p    = full[40 * 80 + 40];
+      near(p.r, linearToSrgb(.5f));
+      near(p.b, linearToSrgb(.5f));
+      near(p.alpha, 1);
+      std::reverse(scene.triangles.begin(), scene.triangles.end());
+      shade(scene);
+      equal(full, renderTile(scene, tile()));
+      auto cover  = scene.triangles.front();
+      cover.color = {{0, 1, 0}};
+      for (auto &v : cover.vertices) v.depth += 10;
+      scene.triangles.push_back(cover);
+      shade(scene);
+      const auto hidden = renderTile(scene, tile())[40 * 80 + 40];
+      near(hidden.g, 1);
+      near(hidden.r, 0);
+      near(hidden.b, 0);
+      near(hidden.alpha, 1);
+      scene.triangles.pop_back();
+      shade(scene);
+      // Coincident tessellation edges must not double the surface's opacity.
+      scene.triangles.resize(1);
+      scene.triangles.push_back(scene.triangles[0]);
+      shade(scene);
+      near(renderTile(scene, tile())[40 * 80 + 40].alpha, .5);
+      auto left = tile(), right = tile();
+      left.width       = 37;
+      right.width      = 43;
+      right.x          = 37;
+      const auto image = renderTile(scene, tile()), l = renderTile(scene, left),
+                 r = renderTile(scene, right);
+      for (int y = 0; y < 80; ++y)
+        for (int x = 0; x < 80; ++x) {
+          const auto q = x < 37 ? l[y * 37 + x] : r[y * 43 + x - 37];
+          near(q.r, image[y * 80 + x].r);
+          near(q.alpha, image[y * 80 + x].alpha);
+        }
+      int canceled = 1;
+      check(renderTile(scene, tile(), &canceled).empty(),
+            "material cancellation ignored");
+    });
+    run("opaque material overdraw does not exhaust transparency budget", [] {
+      RenderScene scene;
+      RenderTriangle t;
+      t.vertices = {{{-1, -1, 0}, {2048, -1, 0}, {-1, 256, 0}}};
+      t.edges    = {{true, true, true}};
+      t.color    = {{.2f, .3f, .4f}};
+      for (int i = 0; i < 12; ++i) {
+        for (auto &v : t.vertices) v.depth = i;
+        scene.triangles.push_back(t);
+      }
+      scene.sampleShader = [](std::size_t, const std::array<double, 3> &) {
+        return ColorPixel{.2f, .3f, .4f, 1};
+      };
+      RenderTile request;
+      request.width    = 1024;
+      request.height   = 128;
+      const auto image = renderTile(scene, request);
+      near(image[32 * 1024 + 32].alpha, 1);
+      near(image[32 * 1024 + 32].r, .2);
+    });
     run("wireframe keeps interiors transparent and hides occluded edges", [] {
       auto s = prepareRender(triangle(), {}); const auto solid = renderTile(s, tile());
       s.wireframe = true; const auto wire = renderTile(s, tile());
