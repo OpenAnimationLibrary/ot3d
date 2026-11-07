@@ -83,6 +83,7 @@ class EnvironmentFxBase : public TStandardRasterFx, public T3DRenderSource {
   }
 
 protected:
+  virtual bool suppliesLighting() const { return false; }
   virtual otglb::EnvironmentLayer layer(
       double frame, std::shared_ptr<const otglb::EnvironmentMap> map) const {
     otglb::EnvironmentLayer result;
@@ -105,7 +106,7 @@ protected:
   }
 
 public:
-  EnvironmentFxBase()
+  explicit EnvironmentFxBase(bool reflections = true)
       : m_intensity(100.0)
       , m_exposure(0.0)
       , m_rotationX(0.0)
@@ -124,9 +125,11 @@ public:
     bindParam(this, "rotationY", m_rotationY);
     bindParam(this, "rotationZ", m_rotationZ);
     m_materialMode->addItem(1, "A:M Material");
-    bindParam(this, "materialMode", m_materialMode);
-    bindParam(this, "reflectivity", m_reflectivity);
-    bindParam(this, "reflectiveBlend", m_blend);
+    if (reflections) {
+      bindParam(this, "materialMode", m_materialMode);
+      bindParam(this, "reflectivity", m_reflectivity);
+      bindParam(this, "reflectiveBlend", m_blend);
+    }
     m_intensity->setValueRange(0.0, 1000.0);
     m_exposure->setValueRange(-20.0, 20.0);
     m_reflectivity->setValueRange(0.0, 100.0);
@@ -157,6 +160,10 @@ public:
     if (!map) return {};
     auto rig = downstream ? *downstream : otglb::LightingRig();
     if (!downstream) rig.preserveDefaultLighting = true;
+    if (suppliesLighting()) {
+      rig.preserveDefaultLighting = false;
+      if (!map->prepareIrradiance(canceled)) return {};
+    }
     rig.environments.insert(rig.environments.begin(),
                             layer(frame, std::move(map)));
     return source->get3DRenderScene(frame, canceled, &rig, transforms, settings,

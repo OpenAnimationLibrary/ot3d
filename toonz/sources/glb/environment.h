@@ -2,6 +2,7 @@
 
 #include <array>
 #include <memory>
+#include <mutex>
 #include <vector>
 
 namespace otglb {
@@ -13,11 +14,18 @@ using EnvironmentDirection = std::array<double, 3>;
 class EnvironmentMap {
   int m_width, m_height;
   std::vector<EnvironmentColor> m_pixels;
+  mutable std::once_flag m_irradianceOnce;
+  mutable std::array<double, 3> m_mean{};
+  mutable std::array<std::array<double, 3>, 9> m_sh{};
 
 public:
   static constexpr std::size_t MaxPixels = 4 * 1024 * 1024;
   EnvironmentMap(int width, int height, std::vector<EnvironmentColor> pixels);
   EnvironmentColor sample(const EnvironmentDirection &direction) const;
+  bool prepareIrradiance(const int *canceled = nullptr) const;
+  // E/pi: Lambert irradiance, or A:M's min(1,N.L/falloff) kernel.
+  EnvironmentColor irradiance(const EnvironmentDirection &normal,
+                              double diffuseFalloff = 1) const;
 };
 
 struct EnvironmentLayer {
@@ -26,6 +34,7 @@ struct EnvironmentLayer {
   std::array<double, 9> worldToMap{{1, 0, 0, 0, 1, 0, 0, 0, 1}};
   EnvironmentColor gain{{1, 1, 1}};
   bool overrideMaterial = false;
+  bool diffuseLighting  = false;
   double reflectivity = .5, blend = 1;
   void setRotation(const EnvironmentDirection &degrees);
   EnvironmentDirection direction(const EnvironmentDirection &world) const;
@@ -40,6 +49,8 @@ EnvironmentColor shadeEnvironment(EnvironmentColor local,
                                   const EnvironmentDirection &view,
                                   const std::vector<EnvironmentLayer> &layers,
                                   double reflectivity = 0, double blend = 0,
-                                  double distanceFalloff = 0);
+                                  double distanceFalloff   = 0,
+                                  EnvironmentColor diffuse = {{1, 1, 1}},
+                                  double diffuseFalloff    = 1);
 
 }  // namespace otglb

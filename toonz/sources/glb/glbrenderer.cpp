@@ -237,6 +237,7 @@ RenderScene prepareRender(const Asset &asset, const RenderOptions &o,
   struct EnvironmentSample {
     std::array<EnvironmentDirection, 3> positions;
     EnvironmentDirection normal;
+    EnvironmentColor albedo;
   };
   std::vector<EnvironmentSample> environmentSamples;
   bool hasPointLights = false;
@@ -407,7 +408,9 @@ RenderScene prepareRender(const Asset &asset, const RenderOptions &o,
           for (int channel = 0; channel < 3; ++channel) {
             const double linear = srgbToLinear(surface[channel]) *
                                   illumination[channel] * o.lighting.master;
-            color[channel] = linearToSrgb(float(linear));
+            color[channel] = hasEnvironment
+                                 ? linearToSrgbExtended(float(linear))
+                                 : linearToSrgb(float(linear));
           }
         }
 
@@ -426,11 +429,15 @@ RenderScene prepareRender(const Asset &asset, const RenderOptions &o,
           }
           for (const auto &v : triangle.vertices) {
             out.bounds[0] = std::min(out.bounds[0], v.x); out.bounds[1] = std::min(out.bounds[1], v.y);
-            out.bounds[2] = std::max(out.bounds[2], v.x); out.bounds[3] = std::max(out.bounds[3], v.y);
+            out.bounds[2] = std::max(out.bounds[2], v.x);
+            out.bounds[3] = std::max(out.bounds[3], v.y);
           }
           out.triangles.push_back(triangle);
           if (hasEnvironment) {
             EnvironmentSample sample;
+            for (int k = 0; k < 3; ++k)
+              sample.albedo[k] =
+                  srgbToLinear(o.materialColors ? base[k] : .75f);
             const Vec corners[] = {polygon[0], polygon[j], polygon[j + 1]};
             for (int k = 0; k < 3; ++k) {
               const auto w        = instance.worldSpace(corners[k]);
@@ -481,7 +488,7 @@ RenderScene prepareRender(const Asset &asset, const RenderOptions &o,
           EnvironmentColor color;
           for (int k = 0; k < 3; ++k)
             color[k] = srgbToLinear(triangles[index].color[k]);
-          color = shadeEnvironment(color, n, v, layers);
+          color = shadeEnvironment(color, n, v, layers, 0, 0, 0, s.albedo);
           return ColorPixel{linearToSrgbExtended(color[0]),
                             linearToSrgbExtended(color[1]),
                             linearToSrgbExtended(color[2]), 1};
@@ -516,8 +523,10 @@ std::vector<ColorPixel> renderLayeredTile(const RenderScene &scene,
                               4 * sizeof(Sample)),
       "GLB tile exceeds the 256 MiB render budget; reduce the render tile "
       "size.");
-  for (double value : tile.affine) require(std::isfinite(value), "Invalid GLB image affine.");
-  require(std::isfinite(tile.x) && std::isfinite(tile.y), "Invalid GLB tile origin.");
+  for (double value : tile.affine)
+    require(std::isfinite(value), "Invalid GLB image affine.");
+  require(std::isfinite(tile.x) && std::isfinite(tile.y),
+          "Invalid GLB tile origin.");
   std::vector<ColorPixel> output(count);
   if (!count || scene.empty()) return output;
   require(nesting < 64, "3D Merge nesting exceeds the render limit.");
