@@ -278,7 +278,11 @@ public:
       double frame, const int *canceled,
       const otglb::LightingRig *lighting                   = nullptr,
       const std::vector<otglb::ModelTransform> *transforms = nullptr,
-      const TRenderSettings *renderSettings = nullptr) const override {
+      const TRenderSettings *renderSettings                = nullptr,
+      const otam::MaterialBindings *materials = nullptr) const override {
+    if (materials && !materials->empty())
+      throw std::runtime_error(
+          "A:M Material requires a native A:M model source");
     return projected(frame, canceled, lighting, transforms, renderSettings);
   }
 

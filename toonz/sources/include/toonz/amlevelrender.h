@@ -1,5 +1,6 @@
 #pragma once
 #include "ammodel.h"
+#include "ammaterial.h"
 #include "glbrenderer.h"
 #include "tpixel.h"
 #include "trasterfx.h"
@@ -38,4 +39,5 @@ prepareNativeModelColumnRenderScene(
     TLevelColumnFx *column, double frame, const int *canceled,
     const otglb::LightingRig *lighting                   = nullptr,
     const std::vector<otglb::ModelTransform> *transforms = nullptr,
-    const TRenderSettings *settings                      = nullptr);
+    const TRenderSettings *settings                      = nullptr,
+    const otam::MaterialBindings *materials              = nullptr);

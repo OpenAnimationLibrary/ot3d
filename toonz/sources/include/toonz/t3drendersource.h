@@ -1,6 +1,7 @@
 #pragma once
 
 #include "glbrenderer.h"
+#include "ammaterial.h"
 #include <memory>
 class TRenderSettings;
 class TAffine;
@@ -16,7 +17,8 @@ public:
       double frame, const int *canceled,
       const otglb::LightingRig *lighting                   = nullptr,
       const std::vector<otglb::ModelTransform> *transforms = nullptr,
-      const TRenderSettings *renderSettings                = nullptr) const = 0;
+      const TRenderSettings *renderSettings                = nullptr,
+      const otam::MaterialBindings *materials              = nullptr) const = 0;
 
   // Bounds queries must not evaluate a raster input outside a render session.
   virtual std::shared_ptr<const otglb::RenderScene> get3DRenderGeometry(

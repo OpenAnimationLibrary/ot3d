@@ -1,5 +1,6 @@
 // Production FX and native-column regression, without an application or GL
 // context.
+#include "../../stdfx/ammaterialfx.cpp"
 #include "../../stdfx/transform3dfx.cpp"
 #include "../../stdfx/threepointlightfx.cpp"
 #include "../../stdfx/merge3dfx.cpp"
@@ -75,6 +76,136 @@ TRaster32P render(ToonzScene &scene, const TRenderSettings &settings) {
   renderer.declareRenderEnd(id);
   renderer.uninstall();
   return raster;
+}
+void testMaterials(ToonzScene &scene, TXshLevel *level, TFx *column,
+                   const QString &path) {
+  TFxP owner     = new AMMaterialFx;
+  auto &material = *static_cast<AMMaterialFx *>(owner.getPointer());
+  material.getInputPort(0)->setFx(column);
+  auto stringParam = [&](const char *name) {
+    auto *p =
+        dynamic_cast<TStringParam *>(material.getParams()->getParam(name));
+    require(p, "missing material parameter");
+    return p;
+  };
+  const auto write = [&](const QByteArray &attributes) {
+    QFile f(path);
+    require(f.open(QIODevice::WriteOnly | QIODevice::Truncate),
+            "write material");
+    const auto bytes = QByteArray(
+                           "<MATERIALFILE>\nProductVersion=19.5\n<MATERIALS><"
+                           "MATERIAL><ATTRIBUTE>\n") +
+                       attributes +
+                       "\n</ATTRIBUTE></MATERIAL></MATERIALS></MATERIALFILE>";
+    require(f.write(bytes) == bytes.size(), "complete material write");
+  };
+  write(
+      "DiffuseColor=128 0 "
+      "255\nAmbiance=100\nAmbianceBlend=100\nTransparency=50");
+  stringParam("materialFile")->setValue(path.toStdWString());
+  stringParam("group")->setValue(L"Red");
+  const auto original = level->getAMLevel()->mesh();
+  const auto prepared = material.get3DRenderScene(0, nullptr);
+  require(prepared && bool(prepared->sampleShader),
+          "material was flattened before shading");
+  otglb::RenderTile tile;
+  tile.width = tile.height = 32;
+  tile.x = tile.y   = -16;
+  const auto pixels = otglb::renderTile(*prepared, tile);
+  const auto p      = pixels[16 * 32 + 16];
+  require(
+      std::abs(p.alpha - .5f) < 1e-5 && p.b > .49 && p.r > .24 && p.g < .001,
+      "material color/transparency or tessellation seam mismatch");
+  TRaster32P r(32, 32);
+  TTile output(r, TPointD(-16, -16));
+  TRenderSettings settings;
+  material.doCompute(output, 0, settings);
+  require(r->pixels(16)[16].m == 128, "material FX raster output");
+  TFxP clone = material.clone(false);
+  require(clone->getAlias(0, settings) == material.getAlias(0, settings),
+          "material clone alias");
+  // Production render-tree expansion must forward assignments into snapshots.
+  scene.getXsheet()->getFxDag()->getInternalFxs()->addFx(&material);
+  const auto tree =
+      buildSceneFx(&scene, 0, scene.getXsheet(), owner, BSFX_NO_TR);
+  auto *source = dynamic_cast<T3DRenderSource *>(tree.getPointer());
+  require(source && bool(source->get3DRenderScene(0, nullptr)->sampleShader),
+          "material lost during render-tree expansion");
+  const QString saved = path + ".xml";
+  {
+    TOStream os{TFilePath(saved)};
+    os << owner.getPointer();
+  }
+  TPersist *persist = nullptr;
+  {
+    TIStream is{TFilePath(saved)};
+    is >> persist;
+  }
+  TFxP reopened = dynamic_cast<TFx *>(persist);
+  require(reopened && reopened->getInputPort(0)->getFx(),
+          "material scene persistence");
+  auto *restored =
+      dynamic_cast<TStringParam *>(reopened->getParams()->getParam("group"));
+  require(restored && restored->getValue() == L"Red",
+          "material group persistence");
+  // Diffuse color can follow the already evaluated level palette.
+  auto *diffuse = dynamic_cast<TIntEnumParam *>(
+      material.getParams()->getParam("diffuseSource"));
+  require(diffuse, "diffuse selector");
+  diffuse->setValue(1);
+  const auto palette = material.get3DRenderScene(0, nullptr);
+  const auto q       = otglb::renderTile(*palette, tile)[16 * 32 + 16];
+  require(q.r > .49 && q.b < .001, "level palette color was replaced");
+  diffuse->setValue(0);
+  stringParam("group")->setValue(L"Missing");
+  bool rejected = false;
+  try {
+    material.get3DRenderScene(0, nullptr);
+  } catch (const std::runtime_error &) {
+    rejected = true;
+  }
+  require(rejected, "misspelled material group silently ignored");
+  stringParam("group")->setValue(L"");
+  const auto alias = material.getAlias(0, settings);
+  write("DiffuseColor=0 0 255\nAmbiance=100\nReflectivity=50");
+  require(material.getAlias(0, settings) != alias,
+          "external material reload did not invalidate cache");
+  rejected = false;
+  try {
+    material.get3DRenderScene(0, nullptr);
+  } catch (const std::runtime_error &) {
+    rejected = true;
+  }
+  require(rejected, "unsupported reflectivity silently rendered");
+  auto *mode = dynamic_cast<TIntEnumParam *>(
+      material.getParams()->getParam("unsupportedAttributes"));
+  require(mode, "preview selector");
+  mode->setValue(1);
+  const auto preview = material.get3DRenderScene(0, nullptr);
+  require(preview && !preview->warnings.empty(), "preview missing diagnostics");
+  // Lights on either side of the material node must contribute before shading.
+  TFxP lightingOwner = new ThreePointLightFx;
+  auto &lighting =
+      *static_cast<ThreePointLightFx *>(lightingOwner.getPointer());
+  lighting.getInputPort(0)->setFx(&material);
+  const auto after =
+      lighting.get3DRenderScene(0, nullptr, nullptr, nullptr, &settings);
+  lighting.getInputPort(0)->setFx(column);
+  material.getInputPort(0)->setFx(&lighting);
+  const auto before =
+      material.get3DRenderScene(0, nullptr, nullptr, nullptr, &settings);
+  const auto a = otglb::renderTile(*after, tile)[16 * 32 + 16];
+  const auto b = otglb::renderTile(*before, tile)[16 * 32 + 16];
+  require(std::abs(a.b - b.b) < 1e-6,
+          "lighting order changed material shading");
+  material.getInputPort(0)->setFx(column);
+  int canceled = 1;
+  require(!material.get3DRenderScene(0, &canceled), "material cancellation");
+  require(!material.get3DRenderScene(1, nullptr),
+          "material ignored empty exposure");
+  require(level->getAMLevel()->mesh() == original,
+          "material modified source geometry");
+  scene.getXsheet()->getFxDag()->getInternalFxs()->removeFx(&material);
 }
 void testRenderModes(ToonzScene &scene, TXshLevel *level, const QString &path) {
   auto *sheet  = scene.getXsheet();
@@ -190,6 +321,7 @@ int main(int argc, char **argv) {
             "expose model");
     auto *column = xsheet->getColumn(0)->getFx();
     require(isAMModelColumn(column), "native column classification");
+    testMaterials(scene, level, column, temp.filePath("surface.mat"));
     const auto original = level->getAMLevel()->mesh();
     TFxP transformOwner = new Transform3DFx;
     auto &transform =

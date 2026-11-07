@@ -1,0 +1,10 @@
+<fxlayout>
+  <page name="Material">
+    <label>"Experimental A:M surface preview. Connect a native A:M model, then a lighting node. Highlights use a preview shader; Hash render parity is not validated."</label>
+    <control>materialFile</control>
+    <control>group</control>
+    <control>diffuseSource</control>
+    <control>unsupportedAttributes</control>
+    <label>"Report Error identifies attributes the renderer cannot reproduce. Supported Attributes Preview omits those attributes. Procedural and plugin material trees are not yet supported."</label>
+  </page>
+</fxlayout>

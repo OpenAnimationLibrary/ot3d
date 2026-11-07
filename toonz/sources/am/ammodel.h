@@ -72,10 +72,16 @@ struct Triangle {
   int colorGroup    = -1;  // -1 is the default surface.
 };
 struct Mesh {
+  // All containing groups, independent of the palette color winner.
+  std::vector<std::vector<std::string>> patchGroups;
+  bool amMaterials = true;
   std::vector<Triangle> triangles;
   std::vector<std::string> warnings;
 };
 
+// Bounded native tagged-source reader shared by model and material documents.
+Document parseSource(std::string source, const std::string &root,
+                     const Limits &limits = Limits());
 Document parse(std::string source, const Limits &limits = Limits());
 Mesh previewMesh(const Document &document, std::size_t model = 0,
                  unsigned subdivisions = 6, const Limits &limits = Limits());

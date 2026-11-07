@@ -111,7 +111,8 @@ void resolve(Model &m) {
 }
 }  // namespace
 
-Document parse(std::string source, const Limits &limits) {
+Document parseSource(std::string source, const std::string &root,
+                     const Limits &limits) {
   if (source.empty() || source.size() > limits.bytes)
     fail("file size exceeds limit or is empty");
   if (source.find('\0') != std::string::npos)
@@ -166,11 +167,16 @@ Document parse(std::string source, const Limits &limits) {
     }
     pos = end + 1;
   }
-  if (!stack.empty() || d.nodes.empty() || d.nodes[0].name != "MODELFILE")
-    fail("expected a complete MODELFILE document");
+  if (!stack.empty() || d.nodes.empty() || d.nodes[0].name != root)
+    fail("expected a complete " + root + " document");
   for (const auto &line : lines(d, d.nodes[0]))
     if (line.compare(0, 15, "ProductVersion=") == 0)
       d.version = line.substr(15);
+  return d;
+}
+
+Document parse(std::string source, const Limits &limits) {
+  Document d = parseSource(std::move(source), "MODELFILE", limits);
   if (d.version != "19.5")
     warn(d.warnings,
          "File version is not the 19.5 reference dialect; compatibility is "
@@ -305,6 +311,7 @@ Mesh previewMesh(const Document &d, std::size_t modelIndex,
   const auto ids = index(m);
   Mesh out;
   out.warnings = d.warnings;
+  out.patchGroups.resize(m.patches.size());
   warn(out.warnings,
        "Experimental A:M control-surface preview; Hash patch/bias evaluation "
        "fidelity is not validated.");
@@ -388,6 +395,11 @@ Mesh previewMesh(const Document &d, std::size_t modelIndex,
       warn(out.warnings,
            "Patch orientation/special flags are retained; preview uses "
            "recorded corner order.");
+    for (std::size_t g = 0; g < m.groups.size(); ++g)
+      if (std::all_of(heads.begin(), heads.end(), [&](std::size_t h) {
+            return memberships[g].count(h) != 0;
+          }))
+        out.patchGroups[p].push_back(m.groups[g].name);
     Color color{{0.65f, 0.65f, 0.65f}};
     int colorGroup = -1;
     for (std::size_t g = 0; g < m.groups.size(); ++g)
@@ -395,7 +407,7 @@ Mesh previewMesh(const Document &d, std::size_t modelIndex,
           std::all_of(heads.begin(), heads.end(), [&](std::size_t h) {
             return memberships[g].count(h) != 0;
           })) {
-        color = m.groups[g].color;
+        color      = m.groups[g].color;
         colorGroup = int(g);
       }
     const std::size_t count =
@@ -530,6 +542,8 @@ Mesh projected(const Mesh &mesh, double cx, double cy, double cz, double focus,
     fail("invalid camera");
   Mesh out;
   out.warnings        = mesh.warnings;
+  out.patchGroups     = mesh.patchGroups;
+  out.amMaterials     = mesh.amMaterials;
   const double zLimit = focus + cz - nearPlane;
   for (const auto &t : mesh.triangles) {
     std::vector<Vec3> polygon;
