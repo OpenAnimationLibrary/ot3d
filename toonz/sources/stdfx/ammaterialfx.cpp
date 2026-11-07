@@ -4,6 +4,7 @@
 #include "tparamset.h"
 #include "tnotanimatableparam.h"
 #include "ammaterial.h"
+#include "tfxammaterial.h"
 
 #include <QCryptographicHash>
 #include <QFile>
@@ -14,6 +15,9 @@
 #include <cmath>
 #include <limits>
 #include <stdexcept>
+#include <sstream>
+#include <iomanip>
+#include <locale>
 #include <type_traits>
 
 namespace {
@@ -37,7 +41,9 @@ void copyAMMaterialPixels(TRasterPT<PIXEL> raster,
 }
 }  // namespace
 
-class AMMaterialFx final : public TStandardRasterFx, public T3DRenderSource {
+class AMMaterialFx final : public TStandardRasterFx,
+                           public T3DRenderSource,
+                           public TFxAMMaterialSource {
   FX_PLUGIN_DECLARATION(AMMaterialFx)
   T3DSourcePort m_source;
   TStringParamP m_materialFile, m_group;
@@ -122,6 +128,63 @@ public:
     m_specularSize->setValueRange(0.0, 10000.0);
     m_specularIntensity->setValueRange(0.0, 100000.0);
     enableComputeInFloat(true);
+  }
+  std::vector<std::wstring> getAMMaterialGroups(double frame) const override {
+    auto *source = m_source.source();
+    const auto geometry =
+        source ? source->get3DRenderGeometry(frame, nullptr) : nullptr;
+    std::vector<std::wstring> result;
+    if (geometry)
+      for (const auto &group : geometry->materialGroups)
+        result.push_back(
+            QString::fromUtf8(group.data(), int(group.size())).toStdWString());
+    return result;
+  }
+  std::wstring getAMMaterialSummary(double frame) const override {
+    const auto evaluated = binding(frame);
+    const auto &s        = evaluated.material.surface;
+    std::wostringstream out;
+    out.imbue(std::locale::classic());
+    out << std::setprecision(6);
+    out << L"Material: "
+        << (m_materialFile->getValue().empty() ? L"Level Palette"
+                                               : m_materialFile->getValue())
+        << L"\nAssignment: "
+        << (evaluated.group.empty()
+                ? L"Whole Model"
+                : QString::fromUtf8(evaluated.group.c_str()).toStdWString())
+        << L"\nSpecular Source: "
+        << (m_overrideSpecular->getValue()       ? L"OT3D Override"
+            : m_materialFile->getValue().empty() ? L"Disabled"
+                                                 : L"Material File")
+        << L"\nSpecular Size: " << s.specularSize * 100 << L"%"
+        << L"\nSpecular Intensity: " << s.specularIntensity * 100 << L"%";
+    const auto printColor = [&](const wchar_t *name,
+                                const std::optional<otam::Color> &color) {
+      out << L"\n" << name << L": ";
+      if (color)
+        out << (*color)[0] * 255 << L" " << (*color)[1] * 255 << L" "
+            << (*color)[2] * 255;
+      else
+        out << L"Follows Diffuse Color";
+    };
+    printColor(L"Specular Color (RGB)", s.specularColor);
+    if (evaluated.paletteColor || !s.diffuse)
+      out << L"\nDiffuse Color: Level Palette";
+    else
+      printColor(L"Diffuse Color (RGB)", s.diffuse);
+    out << L"\nDiffuse Falloff: " << s.diffuseFalloff * 100 << L"%"
+        << L"\nAmbiance: " << s.ambiance * 100 << L"%" << L"\nTransparency: "
+        << s.transparency * 100 << L"%" << L"\nReflectivity: "
+        << s.reflectivity * 100 << L"% (scene reflections deferred)"
+        << L"\n\nHighlights respond to direct lights and camera position."
+        << L"\nExact A:M highlight matching is not yet validated.";
+    for (const auto &attribute : evaluated.material.unsupported)
+      out << L"\n"
+          << (evaluated.previewUnsupported ? L"Preview omits: "
+                                           : L"Cannot render: ")
+          << QString::fromUtf8(attribute.c_str()).toStdWString();
+    return out.str();
   }
   TFx *clone(bool recursive = true) const override {
     auto *result    = static_cast<AMMaterialFx *>(TFx::clone(recursive));

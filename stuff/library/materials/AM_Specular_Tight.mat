@@ -1,0 +1,12 @@
+<MATERIALFILE>
+ProductVersion=19.5
+<MATERIALS><MATERIAL>
+Name=Specular Tight
+<ATTRIBUTE>
+DiffuseColor=48 48 96
+SpecularColor=255 255 255
+SpecularSize=10
+SpecularIntensity=80
+</ATTRIBUTE>
+</MATERIAL></MATERIALS>
+</MATERIALFILE>

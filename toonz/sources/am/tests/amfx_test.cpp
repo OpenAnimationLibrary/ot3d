@@ -104,6 +104,13 @@ void testMaterials(ToonzScene &scene, TXshLevel *level, TFx *column,
       "255\nAmbiance=100\nAmbianceBlend=100\nTransparency=50");
   stringParam("materialFile")->setValue(path.toStdWString());
   stringParam("group")->setValue(L"Red");
+  const auto discovered = material.getAMMaterialGroups(0);
+  require(discovered.size() == 1 && discovered[0] == L"Red",
+          "material group chooser discovery");
+  const auto summary = material.getAMMaterialSummary(0);
+  require(summary.find(L"Specular Size:") != std::wstring::npos &&
+              summary.find(L"Transparency: 50%") != std::wstring::npos,
+          "material inspection omitted evaluated surface attributes");
   const auto original = level->getAMLevel()->mesh();
   const auto prepared = material.get3DRenderScene(0, nullptr);
   require(prepared && bool(prepared->sampleShader),
@@ -236,6 +243,9 @@ void testShine(ToonzScene &scene, const QString &path) {
   require(enabled && color && intensity && file, "shine controls missing");
   require(!enabled->getValue(), "shine override changed file defaults");
   enabled->setValue(true);
+  require(
+      fx.getAMMaterialSummary(0).find(L"OT3D Override") != std::wstring::npos,
+      "inspection did not identify specular override");
   set(fx, "specularSize", 10);
   set(fx, "specularIntensity", 25);
   otglb::LightingRig rig;

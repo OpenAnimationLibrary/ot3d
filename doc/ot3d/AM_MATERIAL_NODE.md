@@ -1,19 +1,24 @@
-# A:M Material node — experimental foundation
+# A:M Material node and direct-light shine
 
-This is a draft implementation of the native material path. It does **not** yet
-meet the goal of accurately rendering every basic A:M surface attribute. The
-remaining gates below are part of that goal, not optional substitutes for it.
-The current milestone prioritizes **direct-light specularity/shine**. Environment
-and inter-object reflections are deferred until there is a reflection scene.
+The current delivery is the **direct-light material/shine workflow**: choose a
+constant A:M material, choose its target group, inspect the evaluated settings,
+and render or key its specular response to lights. The shipped sample materials
+provide a starting point for visual testing. Environment and inter-object
+reflections are deferred until there is a reflection scene.
+
+This delivery does not claim exact A:M renderer parity or support for every
+surface feature. The coverage table and later fidelity gates state those limits;
+they remain future work rather than hidden approximations.
 
 ## Use
 
 Add **3D > A:M Material** in the FX Schematic. Connect a native A:M model column
-to **Source**, enter the absolute path to a `.mat` file, and connect the result
+to **Source**, use **Browse...** to select a `.mat` file, and connect the result
 to **Three-Point Light** or the Xsheet. Enable Preview to see FX shading.
 The ordinary non-Preview model display still shows the level palette.
 
-Leave **Group** empty for the whole model, or enter an exact A:M group name.
+Use **Group > Choose...** to select a group from the exposed model at the current
+frame. Leave Group empty for the whole model. Exact names can also be typed.
 Membership uses all patch corners' resolved CP heads, including groups that do
 not supply a diffuse color. A missing group with no renderable patches reports
 an error. Equal group names target all matching memberships. No model source,
@@ -36,6 +41,10 @@ Save Assets does not yet collect material dependencies. Content hashes invalidat
 the cache after external edits, including edits that preserve size/timestamps.
 There is an 8 MiB file limit and 64-assignment chain limit.
 
+**Inspect** displays the evaluated specular values, diffuse source, ambiance,
+transparency, deferred reflections and unsupported attributes at the current
+frame. **Clear** removes the reference without deleting its source file.
+
 ## Working on shine
 
 On the **Specular** page, enable **Override Specular** to key Specular Size,
@@ -44,6 +53,12 @@ values stay authoritative. With no material file, the node adds shine to the
 level's existing palette surface. A fileless specular node after another material
 changes only its specular attributes, preserving that material's color, ambiance
 and opacity. A node with a file still assigns a complete surface.
+
+Three sample materials are included in `stuff/library/materials`:
+`AM_Specular_Matte.mat`, `AM_Specular_Tight.mat` and
+`AM_Specular_Broad.mat`. They share the same diffuse color and specular intensity,
+so switching files isolates highlight width. The matte sample disables the
+highlight. Use the Inspect button to verify the selected values.
 
 Start with a Three-Point Light, reduce fill/rim intensity, and move the key light
 while watching Preview. Size controls highlight width; intensity controls its

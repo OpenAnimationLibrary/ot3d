@@ -128,6 +128,8 @@ struct RenderScene {
       sampleShader;
   std::array<double, 4> bounds{};  // x0, y0, x1, y1 in the fixed image plane.
   std::vector<std::string> warnings;
+  std::vector<std::string>
+      materialGroups;  // Native patch assignment discovery.
   bool wireframe = false;
   int textureWidth = 0, textureHeight = 0;
   std::shared_ptr<const std::vector<ColorPixel>> texture;

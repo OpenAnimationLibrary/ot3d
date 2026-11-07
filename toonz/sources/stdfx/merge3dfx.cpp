@@ -61,6 +61,11 @@ class Merge3DFx final : public TStandardRasterFx,
           {child, {{a.a11, a.a12, a.a13, a.a21, a.a22, a.a23}}});
       result->warnings.insert(result->warnings.end(), child->warnings.begin(),
                               child->warnings.end());
+      for (const auto &group : child->materialGroups)
+        if (std::find(result->materialGroups.begin(),
+                      result->materialGroups.end(),
+                      group) == result->materialGroups.end())
+          result->materialGroups.push_back(group);
     }
     result->bounds = {{bounds.x0, bounds.y0, bounds.x1, bounds.y1}};
     return result;
