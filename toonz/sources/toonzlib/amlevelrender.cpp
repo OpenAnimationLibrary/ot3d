@@ -237,7 +237,7 @@ public:
         bool matched = false;
         std::set<std::size_t> visited;
         for (const auto &triangle : m_geometry->triangles) {
-          const auto p       = triangle.patch;
+          const auto p = triangle.patch;
           if (!visited.insert(p).second) continue;
           const auto &groups = m_geometry->patchGroups;
           if (binding.group.empty() ||
@@ -365,11 +365,11 @@ public:
       const auto imageInverse = otam::inverse(m_camera.imageToStage);
       for (const auto &triangle : mesh.triangles) {
         MaterialSample sample;
-        sample.positions = triangle.vertices;
+        sample.positions  = triangle.vertices;
         sample.normals    = triangle.normals;
         sample.hasNormals = triangle.hasNormals;
-        sample.color     = triangle.color;
-        auto found       = assigned.find(triangle.patch);
+        sample.color      = triangle.color;
+        auto found        = assigned.find(triangle.patch);
         if (found != assigned.end()) sample.binding = int(found->second);
         if (m_project)
           for (auto &p : sample.positions) {

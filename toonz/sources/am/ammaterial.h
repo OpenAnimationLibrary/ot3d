@@ -26,7 +26,7 @@ struct Material {
 struct MaterialBinding {
   Material material;
   std::string group;  // Empty selects the whole model; otherwise exact name.
-  bool paletteColor       = false;
+  bool paletteColor = false;
   bool specularOnly = false;  // Fileless controls preserve an upstream surface.
   bool previewUnsupported = false;
 };
