@@ -7,6 +7,14 @@
 namespace otglb {
 namespace {
 constexpr double Pi = 3.14159265358979323846;
+std::array<double, 9> harmonics(const EnvironmentDirection &n) {
+  const double x = n[0], y = n[1], z = n[2];
+  return {{.28209479177387814, .4886025119029199 * y, .4886025119029199 * z,
+           .4886025119029199 * x, 1.0925484305920792 * x * y,
+           1.0925484305920792 * y * z, .31539156525252005 * (3 * z * z - 1),
+           1.0925484305920792 * x * z, .5462742152960396 * (x * x - y * y)}};
+}
+struct IrradianceCanceled {};
 }
 EnvironmentMap::EnvironmentMap(int width, int height,
                                std::vector<EnvironmentColor> pixels)
@@ -43,6 +51,75 @@ EnvironmentColor EnvironmentMap::sample(const EnvironmentDirection &d) const {
     }
   return result;
 }
+// Degree-two SH convolution of distant diffuse illumination. See Ramamoorthi
+// and Hanrahan, SIGGRAPH 2001, https://graphics.stanford.edu/papers/envmap/.
+// Integrate solid angle, not pixel count (polar texels cover less of the
+// sphere).
+bool EnvironmentMap::prepareIrradiance(const int *canceled) const {
+  try {
+    std::call_once(m_irradianceOnce, [&] {
+      std::array<double, 3> mean{};
+      std::array<std::array<double, 3>, 9> sh{};
+      for (int y = 0; y < m_height; ++y) {
+        if (canceled && *canceled) throw IrradianceCanceled{};
+        const double low    = Pi * (double(y) / m_height - .5);
+        const double high   = Pi * (double(y + 1) / m_height - .5);
+        const double weight = (std::sin(high) - std::sin(low)) / (2 * m_width);
+        for (int x = 0; x < m_width; ++x)
+          for (int k = 0; k < 3; ++k)
+            mean[k] += weight * m_pixels[std::size_t(y) * m_width + x][k];
+      }
+      std::vector<std::array<double, 2>> longitude(m_width);
+      for (int x = 0; x < m_width; ++x) {
+        const double phi = 2 * Pi * ((x + .5) / m_width - .5);
+        longitude[x]     = {{std::sin(phi), std::cos(phi)}};
+      }
+      for (int y = 0; y < m_height; ++y) {
+        if (canceled && *canceled) throw IrradianceCanceled{};
+        const double theta = Pi * ((y + .5) / m_height - .5);
+        const double low   = Pi * (double(y) / m_height - .5);
+        const double high  = Pi * (double(y + 1) / m_height - .5);
+        const double weight =
+            2 * Pi / m_width * (std::sin(high) - std::sin(low));
+        for (int x = 0; x < m_width; ++x) {
+          const auto basis =
+              harmonics({{longitude[x][0] * std::cos(theta), std::sin(theta),
+                          longitude[x][1] * std::cos(theta)}});
+          // Integrating only the residual makes constant maps exact at every
+          // resolution, including 1x1. l=0 is supplied separately by the mean.
+          for (int k = 0; k < 3; ++k) {
+            const double residual =
+                weight * (m_pixels[std::size_t(y) * m_width + x][k] - mean[k]);
+            for (int i = 1; i < 9; ++i) sh[i][k] += residual * basis[i];
+          }
+        }
+      }
+      m_mean = mean;
+      m_sh   = sh;
+    });
+    return !(canceled && *canceled);
+  } catch (const IrradianceCanceled &) {
+    return false;
+  }
+}
+EnvironmentColor EnvironmentMap::irradiance(const EnvironmentDirection &n,
+                                            double falloff) const {
+  const double length = std::hypot(n[0], n[1], n[2]);
+  if (!(length > 0) || !std::isfinite(length)) return {};
+  prepareIrradiance();
+  const auto basis = harmonics({{n[0] / length, n[1] / length, n[2] / length}});
+  const double f   = std::clamp(falloff, 0.0, 1.0);
+  // 2 * integral[0,1] min(1,t/f) P_l(t) dt, normalized by pi.
+  const double kernel[] = {2 - f, 1 - f * f / 3, f / 2 - f * f * f / 4};
+  EnvironmentColor result;
+  for (int k = 0; k < 3; ++k) {
+    double value = m_mean[k] * kernel[0];
+    for (int i = 1; i < 9; ++i)
+      value += m_sh[i][k] * basis[i] * kernel[i < 4 ? 1 : 2];
+    result[k] = float(std::max(0.0, value));
+  }
+  return result;
+}
 void EnvironmentLayer::setRotation(const EnvironmentDirection &degrees) {
   for (double v : degrees)
     if (!std::isfinite(v))
@@ -66,19 +143,28 @@ EnvironmentDirection EnvironmentLayer::direction(
 bool EnvironmentLayer::operator==(const EnvironmentLayer &o) const {
   return map == o.map && worldToMap == o.worldToMap && gain == o.gain &&
          overrideMaterial == o.overrideMaterial &&
+         diffuseLighting == o.diffuseLighting &&
          reflectivity == o.reflectivity && blend == o.blend;
 }
-EnvironmentColor shadeEnvironment(EnvironmentColor local,
-                                  const EnvironmentDirection &n,
-                                  const EnvironmentDirection &v,
-                                  const std::vector<EnvironmentLayer> &layers,
-                                  double reflectivity, double blend,
-                                  double distanceFalloff) {
+EnvironmentColor shadeEnvironment(
+    EnvironmentColor local, const EnvironmentDirection &n,
+    const EnvironmentDirection &v, const std::vector<EnvironmentLayer> &layers,
+    double reflectivity, double blend, double distanceFalloff,
+    EnvironmentColor diffuse, double diffuseFalloff) {
+  // Illuminate the local surface before mixing its reflected fraction,
+  // regardless of the relative order of IBL and reflection nodes.
+  for (const auto &layer : layers) {
+    if (!layer.map || !layer.diffuseLighting) continue;
+    const auto energy =
+        layer.map->irradiance(layer.direction(n), diffuseFalloff);
+    for (int k = 0; k < 3; ++k)
+      local[k] += diffuse[k] * layer.gain[k] * energy[k];
+  }
   const double nv = n[0] * v[0] + n[1] * v[1] + n[2] * v[2];
   const EnvironmentDirection reflected{
       {2 * nv * n[0] - v[0], 2 * nv * n[1] - v[1], 2 * nv * n[2] - v[2]}};
   for (const auto &layer : layers) {
-    if (!layer.map) continue;
+    if (!layer.map || layer.diffuseLighting) continue;
     const double r = layer.overrideMaterial
                          ? layer.reflectivity
                          : (distanceFalloff > 0 ? 0 : reflectivity);

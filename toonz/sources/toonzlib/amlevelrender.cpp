@@ -475,9 +475,14 @@ public:
         if (sample.binding < 0 && !useRig)
           for (int k = 0; k < 3; ++k)
             color[k] = otglb::srgbToLinear(diffuse[k]);
+        otglb::EnvironmentColor albedo;
+        for (int k = 0; k < 3; ++k)
+          albedo[k] = float(otglb::srgbToLinear(diffuse[k]) *
+                            (1 - surface.ambiance * surface.ambianceBlend));
         color = otglb::shadeEnvironment(
             color, normal, view, rig.environments, surface.reflectivity,
-            surface.reflectiveBlend, surface.reflectivityFalloff);
+            surface.reflectiveBlend, surface.reflectivityFalloff, albedo,
+            surface.diffuseFalloff);
         const float alpha  = float(1 - surface.transparency);
         return otglb::ColorPixel{otglb::linearToSrgbExtended(color[0]) * alpha,
                                  otglb::linearToSrgbExtended(color[1]) * alpha,

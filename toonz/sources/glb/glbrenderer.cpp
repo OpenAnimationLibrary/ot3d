@@ -236,6 +236,7 @@ RenderScene prepareRender(const Asset &asset, const RenderOptions &o,
   struct EnvironmentSample {
     std::array<EnvironmentDirection, 3> positions;
     EnvironmentDirection normal;
+    EnvironmentColor albedo;
   };
   std::vector<EnvironmentSample> environmentSamples;
   bool hasPointLights = false;
@@ -406,7 +407,9 @@ RenderScene prepareRender(const Asset &asset, const RenderOptions &o,
           for (int channel = 0; channel < 3; ++channel) {
             const double linear = srgbToLinear(surface[channel]) *
                                   illumination[channel] * o.lighting.master;
-            color[channel] = linearToSrgb(float(linear));
+            color[channel] = hasEnvironment
+                                 ? linearToSrgbExtended(float(linear))
+                                 : linearToSrgb(float(linear));
           }
         }
 
@@ -430,6 +433,9 @@ RenderScene prepareRender(const Asset &asset, const RenderOptions &o,
           out.triangles.push_back(triangle);
           if (hasEnvironment) {
             EnvironmentSample sample;
+            for (int k = 0; k < 3; ++k)
+              sample.albedo[k] =
+                  srgbToLinear(o.materialColors ? base[k] : .75f);
             const Vec corners[] = {polygon[0], polygon[j], polygon[j + 1]};
             for (int k = 0; k < 3; ++k) {
               const auto w        = instance.worldSpace(corners[k]);
@@ -480,7 +486,7 @@ RenderScene prepareRender(const Asset &asset, const RenderOptions &o,
           EnvironmentColor color;
           for (int k = 0; k < 3; ++k)
             color[k] = srgbToLinear(triangles[index].color[k]);
-          color = shadeEnvironment(color, n, v, layers);
+          color = shadeEnvironment(color, n, v, layers, 0, 0, 0, s.albedo);
           return ColorPixel{linearToSrgbExtended(color[0]),
                             linearToSrgbExtended(color[1]),
                             linearToSrgbExtended(color[2]), 1};

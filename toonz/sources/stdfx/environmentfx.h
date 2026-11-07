@@ -83,6 +83,7 @@ class EnvironmentFxBase : public TStandardRasterFx, public T3DRenderSource {
   }
 
 protected:
+  virtual bool suppliesLighting() const { return false; }
   virtual otglb::EnvironmentLayer layer(
       double frame, std::shared_ptr<const otglb::EnvironmentMap> map) const {
     otglb::EnvironmentLayer result;
@@ -105,7 +106,7 @@ protected:
   }
 
 public:
-  EnvironmentFxBase()
+  explicit EnvironmentFxBase(bool reflections = true)
       : m_intensity(100.0)
       , m_exposure(0.0)
       , m_rotationX(0.0)
@@ -124,9 +125,11 @@ public:
     bindParam(this, "rotationY", m_rotationY);
     bindParam(this, "rotationZ", m_rotationZ);
     m_materialMode->addItem(1, "A:M Material");
-    bindParam(this, "materialMode", m_materialMode);
-    bindParam(this, "reflectivity", m_reflectivity);
-    bindParam(this, "reflectiveBlend", m_blend);
+    if (reflections) {
+      bindParam(this, "materialMode", m_materialMode);
+      bindParam(this, "reflectivity", m_reflectivity);
+      bindParam(this, "reflectiveBlend", m_blend);
+    }
     m_intensity->setValueRange(0.0, 1000.0);
     m_exposure->setValueRange(-20.0, 20.0);
     m_reflectivity->setValueRange(0.0, 100.0);
@@ -152,6 +155,10 @@ public:
     if (!map) return {};
     auto rig = downstream ? *downstream : otglb::LightingRig();
     if (!downstream) rig.preserveDefaultLighting = true;
+    if (suppliesLighting()) {
+      rig.preserveDefaultLighting = false;
+      if (!map->prepareIrradiance(canceled)) return {};
+    }
     rig.environments.insert(rig.environments.begin(),
                             layer(frame, std::move(map)));
     return source->get3DRenderScene(frame, canceled, &rig, transforms, settings,
@@ -180,6 +187,34 @@ public:
       bbox = TRectD(-500, -500, 500, 500);
     }
     return true;
+  }
+  // Predict the actual full panorama request, independently of output zoom or
+  // tile placement. Source traversal also discovers upstream environment FX.
+  void transform(double frame, int port, const TRectD &rect,
+                 const TRenderSettings &info, TRectD &inputRect,
+                 TRenderSettings &inputInfo) override {
+    if (port != 1) {
+      TStandardRasterFx::transform(frame, port, rect, info, inputRect,
+                                   inputInfo);
+      return;
+    }
+    inputInfo                    = info;
+    inputInfo.m_affine           = TAffine();
+    inputInfo.m_bpp              = 128;
+    inputInfo.m_linearColorSpace = true;
+    inputRect                    = TRectD();
+    if (!m_environment.isConnected() || info.m_flatRender) return;
+    TRectD box;
+    if (!m_environment->doGetBBox(frame, box, inputInfo) || box.isEmpty())
+      return;
+    if (std::isfinite(box.x0) && std::isfinite(box.y0) &&
+        std::isfinite(box.x1) && std::isfinite(box.y1)) {
+      const TRectD rounded(std::floor(box.x0), std::floor(box.y0),
+                           std::ceil(box.x1), std::ceil(box.y1));
+      if (rounded.getLx() <= 8192 && rounded.getLy() <= 8192 &&
+          rounded.getLx() * rounded.getLy() <= otglb::EnvironmentMap::MaxPixels)
+        inputRect = rounded;
+    }
   }
   bool canHandle(const TRenderSettings &, double) override { return true; }
   bool toBeComputedInLinearColorSpace(bool, bool) const override {
