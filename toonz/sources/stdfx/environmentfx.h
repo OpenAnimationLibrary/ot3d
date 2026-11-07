@@ -137,6 +137,11 @@ public:
     }
     enableComputeInFloat(true);
   }
+  TFx *clone(bool recursive = true) const override {
+    auto *result    = static_cast<EnvironmentFxBase *>(TFx::clone(recursive));
+    result->m_cache = m_cache;
+    return result;
+  }
   std::shared_ptr<const otglb::RenderScene> get3DRenderScene(
       double frame, const int *canceled,
       const otglb::LightingRig *downstream                 = nullptr,
@@ -181,9 +186,37 @@ public:
     }
     return true;
   }
+  // Predict the actual full panorama request, independently of output zoom or
+  // tile placement. Source traversal also discovers upstream environment FX.
+  void transform(double frame, int port, const TRectD &rect,
+                 const TRenderSettings &info, TRectD &inputRect,
+                 TRenderSettings &inputInfo) override {
+    if (port != 1) {
+      TStandardRasterFx::transform(frame, port, rect, info, inputRect,
+                                   inputInfo);
+      return;
+    }
+    inputInfo                    = info;
+    inputInfo.m_affine           = TAffine();
+    inputInfo.m_bpp              = 128;
+    inputInfo.m_linearColorSpace = true;
+    inputRect                    = TRectD();
+    if (!m_environment.isConnected() || info.m_flatRender) return;
+    TRectD box;
+    if (!m_environment->doGetBBox(frame, box, inputInfo) || box.isEmpty())
+      return;
+    if (std::isfinite(box.x0) && std::isfinite(box.y0) &&
+        std::isfinite(box.x1) && std::isfinite(box.y1)) {
+      const TRectD rounded(std::floor(box.x0), std::floor(box.y0),
+                           std::ceil(box.x1), std::ceil(box.y1));
+      if (rounded.getLx() <= 8192 && rounded.getLy() <= 8192 &&
+          rounded.getLx() * rounded.getLy() <= otglb::EnvironmentMap::MaxPixels)
+        inputRect = rounded;
+    }
+  }
   bool canHandle(const TRenderSettings &, double) override { return true; }
-  bool toBeComputedInLinearColorSpace(bool, bool) const override {
-    return false;
+  bool toBeComputedInLinearColorSpace(bool, bool tileIsLinear) const override {
+    return tileIsLinear;
   }
   int getMemoryRequirement(const TRectD &r, double,
                            const TRenderSettings &) override {
@@ -224,7 +257,8 @@ public:
         raster->lock();
         for (int j = 0; j < request.height; ++j)
           for (int x = 0; x < request.width; ++x) {
-            const auto p = pixels[std::size_t(j) * request.width + x];
+            const auto p = otglb::outputPixel(
+                pixels[std::size_t(j) * request.width + x], raster->isLinear());
             if (rf)
               rf->pixels(y + j)[x] = TPixelF(p.r, p.g, p.b, p.alpha);
             else if (r32)

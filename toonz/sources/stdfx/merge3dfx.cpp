@@ -17,7 +17,8 @@ void copyMerge3DPixels(TRasterPT<PIXEL> raster,
   raster->lock();
   for (int y = 0; y < int(pixels.size() / raster->getLx()); ++y)
     for (int x = 0; x < raster->getLx(); ++x) {
-      const auto &p             = pixels[std::size_t(y) * raster->getLx() + x];
+      const auto p = otglb::outputPixel(
+          pixels[std::size_t(y) * raster->getLx() + x], raster->isLinear());
       raster->pixels(y + y0)[x] =
           PIXEL(otglb::displayChannel<Channel>(p.r, maximum),
                 otglb::displayChannel<Channel>(p.g, maximum),
@@ -58,6 +59,7 @@ class Merge3DFx final : public TStandardRasterFx,
       const auto &a = m_affines[i];
       const auto &b = child->bounds;
       bounds += a * TRectD(b[0], b[1], b[2], b[3]);
+      result->linearSampling |= child->linearSampling;
       result->layers.push_back(
           {child, {{a.a11, a.a12, a.a13, a.a21, a.a22, a.a23}}});
       result->warnings.insert(result->warnings.end(), child->warnings.begin(),
@@ -122,8 +124,8 @@ public:
     return !bbox.isEmpty();
   }
   bool canHandle(const TRenderSettings &, double) override { return true; }
-  bool toBeComputedInLinearColorSpace(bool, bool) const override {
-    return false;
+  bool toBeComputedInLinearColorSpace(bool, bool tileIsLinear) const override {
+    return tileIsLinear;
   }
   int getMemoryRequirement(const TRectD &rect, double,
                            const TRenderSettings &) override {

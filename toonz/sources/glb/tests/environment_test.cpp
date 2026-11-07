@@ -122,6 +122,34 @@ int main() {
     auto mixed = renderTile(transparent, tile)[5];
     near(mixed.alpha, .5f);
     near(srgbToLinear(mixed.r / mixed.alpha), 4);
+    // Coverage samples average radiance, preserving narrow HDR highlights.
+    auto samplingScene         = scene;
+    samplingScene.sampleShader = [](std::size_t,
+                                    const std::array<double, 3> &bary) {
+      return ColorPixel{bary[1] > bary[0] ? linearToSrgbExtended(4) : 0, 0, 0,
+                        1};
+    };
+    RenderTile single;
+    single.width = single.height = 1;
+    single.x = single.y = -.5;
+    const auto averaged = renderTile(samplingScene, single)[0];
+    near(srgbToLinear(averaged.r), 2);
+    near(linearPixel(averaged).r, 2);
+    near(displayPixel(linearPixel(averaged)).r, averaged.r);
+    RenderScene group;
+    group.linearSampling = true;
+    auto front           = std::make_shared<RenderScene>(scene);
+    front->sampleShader  = [](std::size_t, const std::array<double, 3> &) {
+      return ColorPixel{linearToSrgbExtended(4) * .5f, 0, 0, .5f};
+    };
+    auto back          = std::make_shared<RenderScene>(scene);
+    back->sampleShader = [](std::size_t, const std::array<double, 3> &) {
+      return ColorPixel{0, 0, 1, 1};
+    };
+    group.layers       = {{back}, {front}};
+    const auto layered = renderTile(group, single)[0];
+    near(srgbToLinear(layered.r), 2);
+    near(srgbToLinear(layered.b), .5f);
     std::cout << "Environment sampling, material mixing, GLB projection and "
                  "HDR passed\n";
     return 0;

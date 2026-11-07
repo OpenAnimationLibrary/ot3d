@@ -31,7 +31,8 @@ void copyAMMaterialPixels(TRasterPT<PIXEL> raster,
   const int rows = int(pixels.size() / raster->getLx());
   for (int y = 0; y < rows; ++y)
     for (int x = 0; x < raster->getLx(); ++x) {
-      const auto &p = pixels[std::size_t(y) * raster->getLx() + x];
+      const auto p = otglb::outputPixel(
+          pixels[std::size_t(y) * raster->getLx() + x], raster->isLinear());
       raster->pixels(y + yOffset)[x] =
           PIXEL(otglb::displayChannel<Channel>(p.r, maximum),
                 otglb::displayChannel<Channel>(p.g, maximum),
@@ -182,7 +183,11 @@ public:
       out << L"\nDiffuse Falloff: " << s.diffuseFalloff * 100 << L"%"
           << L"\nAmbiance: " << s.ambiance * 100 << L"%" << L"\nTransparency: "
           << s.transparency * 100 << L"%" << L"\nReflectivity: "
-          << s.reflectivity * 100 << L"% (scene reflections deferred)";
+          << s.reflectivity * 100 << L"%" << L"\nReflective Blend: "
+          << s.reflectiveBlend * 100 << L"%"
+          << L"\nReflection Falloff Distance: " << s.reflectivityFalloff
+          << L" (0 = infinite)"
+          << L"\nConnect Environment Reflections FX to evaluate reflections.";
     }
     out << L"\n\nHighlights respond to direct lights and camera position."
         << L"\nExact A:M highlight matching is not yet validated.";
@@ -270,8 +275,8 @@ public:
                         std::ceil(megabytes)));
   }
 
-  bool toBeComputedInLinearColorSpace(bool, bool) const override {
-    return false;
+  bool toBeComputedInLinearColorSpace(bool, bool tileIsLinear) const override {
+    return tileIsLinear;
   }
 
   void doCompute(TTile &tile, double frame,

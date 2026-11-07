@@ -131,6 +131,33 @@ std::shared_ptr<const otglb::RenderScene> evaluateEnvironment(
   renderer.uninstall();
   return result;
 }
+TRasterFP evaluateEnvironmentFloat(TRasterFx &fx, double frame) {
+  TRenderSettings settings;
+  settings.m_bpp              = 128;
+  settings.m_linearColorSpace = true;
+  settings.m_colorSpaceGamma = 1.8;  // Deliberately differs from sRGB transfer.
+  TRasterFP raster(32, 32);
+  raster->setLinear(true);
+  TTile tile(raster, TPointD(-16, -16));
+  TRenderer renderer(1);
+  renderer.enablePrecomputing(false);
+  const auto id = TRenderer::buildRenderId();
+  renderer.install(id);
+  renderer.declareRenderStart(id);
+  renderer.declareFrameStart(frame);
+  try {
+    fx.compute(tile, frame, settings);
+  } catch (...) {
+    renderer.declareFrameEnd(frame);
+    renderer.declareRenderEnd(id);
+    renderer.uninstall();
+    throw;
+  }
+  renderer.declareFrameEnd(frame);
+  renderer.declareRenderEnd(id);
+  renderer.uninstall();
+  return raster;
+}
 void testEnvironment(ToonzScene &scene, TFx *column, TRasterFx *snapshot,
                      const QString &path) {
   TFxP imageOwner = new EnvironmentTestImageFx;
@@ -152,10 +179,19 @@ void testEnvironment(ToonzScene &scene, TFx *column, TRasterFx *snapshot,
   const auto p        = otglb::renderTile(*redScene, tile)[16 * 32 + 16];
   require(p.r > 1 && p.g < .001 && p.alpha == 1,
           "native reflection or HDR missing");
+  const auto linearOutput = evaluateEnvironmentFloat(fx, 0);
+  require(
+      std::abs(linearOutput->pixels(16)[16].r - otglb::srgbToLinear(p.r)) <
+          .001,
+      "reflection float output reinterpreted the sRGB transfer as power gamma");
   require(EnvironmentTestImageFx::computes > before,
           "environment input was not evaluated");
   // Clones, scene ports and typed geometry must survive the real render graph.
   TFxP cloned = fx.clone(false);
+  require(cloned && !cloned->getInputPort(1)->getFx(),
+          "shallow clone contract");
+  cloned->getInputPort(0)->setFx(column);
+  cloned->getInputPort(1)->setFx(imageOwner.getPointer());
   require(cloned && cloned->getInputPort(1)->getFx() &&
               cloned->getAlias(0, settings) == fx.getAlias(0, settings),
           "environment clone");

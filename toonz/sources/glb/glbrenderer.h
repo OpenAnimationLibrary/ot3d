@@ -128,6 +128,8 @@ struct RenderScene {
   // wrapper which would prevent downstream geometry transforms/lighting.
   std::array<float, 4> colorScale{{0, 0, 0, 1}};
   std::vector<RenderTriangle> triangles;
+  // Environment radiance is integrated/composited in linear light.
+  bool linearSampling = false;
   // Optional immutable material evaluator. Barycentrics are screen-space;
   // the provider performs perspective-correct interpolation in its own space.
   // Results are premultiplied sRGB. Transparent hits composite in linear light.
@@ -187,6 +189,21 @@ Channel displayChannel(float value, double maximum) {
 }
 float linearToSrgb(float value);
 float srgbToLinear(float value);
+inline ColorPixel linearPixel(const ColorPixel &p) {
+  if (!(p.alpha > 0)) return {};
+  return {srgbToLinear(p.r / p.alpha) * p.alpha,
+          srgbToLinear(p.g / p.alpha) * p.alpha,
+          srgbToLinear(p.b / p.alpha) * p.alpha, p.alpha};
+}
+inline ColorPixel displayPixel(const ColorPixel &p) {
+  if (!(p.alpha > 0)) return {};
+  return {linearToSrgbExtended(p.r / p.alpha) * p.alpha,
+          linearToSrgbExtended(p.g / p.alpha) * p.alpha,
+          linearToSrgbExtended(p.b / p.alpha) * p.alpha, p.alpha};
+}
+inline ColorPixel outputPixel(const ColorPixel &p, bool linear) {
+  return linear ? linearPixel(p) : p;
+}
 std::array<float, 3> materialColor(const Asset &asset, std::size_t index);
 
 }  // namespace otglb

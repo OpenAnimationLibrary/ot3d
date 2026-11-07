@@ -342,6 +342,7 @@ public:
       mesh = otam::projected(mesh, cameraPose, m_camera.imageToStage);
     auto scene        = std::make_shared<otglb::RenderScene>();
     scene->warnings   = mesh.warnings;
+    scene->linearSampling = hasEnvironment;
     std::set<std::string> groups;
     for (const auto &patch : mesh.patchGroups)
       groups.insert(patch.begin(), patch.end());
@@ -504,8 +505,8 @@ public:
     return scene;
   }
   bool canHandle(const TRenderSettings &, double) override { return true; }
-  bool toBeComputedInLinearColorSpace(bool, bool) const override {
-    return false;
+  bool toBeComputedInLinearColorSpace(bool, bool tileIsLinear) const override {
+    return tileIsLinear;
   }
   bool doGetBBox(double frame, TRectD &bbox,
                  const TRenderSettings &info) override {
@@ -547,7 +548,8 @@ public:
       raster->lock();
       for (int y = 0; y < request.height; ++y)
         for (int x = 0; x < request.width; ++x) {
-          const auto &p = pixels[std::size_t(y) * request.width + x];
+          const auto p = otglb::outputPixel(
+              pixels[std::size_t(y) * request.width + x], raster->isLinear());
           if (r32)
             r32->pixels(y + y0)[x] =
                 TPixel32(otglb::displayChannel<UCHAR>(p.r, 255),

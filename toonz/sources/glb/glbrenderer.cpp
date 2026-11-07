@@ -233,6 +233,7 @@ RenderScene prepareRender(const Asset &asset, const RenderOptions &o,
                                  "Invalid GLB material color.");
   const bool hasEnvironment =
       o.useLightingRig && !o.lighting.environments.empty();
+  out.linearSampling = hasEnvironment;
   struct EnvironmentSample {
     std::array<EnvironmentDirection, 3> positions;
     EnvironmentDirection normal;
@@ -520,6 +521,9 @@ std::vector<ColorPixel> renderLayeredTile(const RenderScene &scene,
   std::vector<ColorPixel> output(count);
   if (!count || scene.empty()) return output;
   require(nesting < 64, "3D Merge nesting exceeds the render limit.");
+  bool linearSampling = scene.linearSampling;
+  for (const auto &layer : scene.layers)
+    linearSampling |= layer.scene && layer.scene->linearSampling;
   if (!scene.layers.empty()) {
     require(scene.triangles.empty(),
             "3D groups cannot also contain triangles.");
@@ -537,13 +541,15 @@ std::vector<ColorPixel> renderLayeredTile(const RenderScene &scene,
           renderLayeredTile(*layer.scene, request, canceled, nesting + 1);
       if (pixels.empty()) return {};
       for (std::size_t i = 0; i < count; ++i) {
-        const auto &p         = pixels[i];
+        const auto p          = outputPixel(pixels[i], linearSampling);
         auto &out             = output[i];
         const float remaining = 1 - p.alpha;
         out = {p.r + out.r * remaining, p.g + out.g * remaining,
                p.b + out.b * remaining, p.alpha + out.alpha * remaining};
       }
     }
+    if (linearSampling)
+      for (auto &p : output) p = displayPixel(p);
     applyColorScale(scene, output);
     return output;
   }
@@ -711,12 +717,14 @@ std::vector<ColorPixel> renderLayeredTile(const RenderScene &scene,
   }
   for (std::size_t i = 0; i < count; ++i)
     for (int s = 0; s < 4; ++s) {
-      const auto &c = samples[i * 4 + s].color;
+      const auto c = outputPixel(samples[i * 4 + s].color, linearSampling);
       output[i].r += c.r * 0.25f;
       output[i].g += c.g * 0.25f;
       output[i].b += c.b * 0.25f;
       output[i].alpha += c.alpha * 0.25f;
     }
+  if (linearSampling)
+    for (auto &p : output) p = displayPixel(p);
   applyColorScale(scene, output);
   return output;
 }
