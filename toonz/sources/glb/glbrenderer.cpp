@@ -161,6 +161,15 @@ void DiffuseLight::validate() const {
   for (float v : color)
     require(std::isfinite(v) && v >= 0.0f && v <= 1.0f,
             "3D light color must be finite and in [0,1].");
+  if (spot) {
+    require(point.has_value(), "Spotlight requires a position.");
+    const auto &c = *spot;
+    require(std::isfinite(c.inner) && std::isfinite(c.outer) && c.inner >= 0 &&
+                c.inner <= c.outer && c.outer < 90,
+            "Invalid spotlight cone angles.");
+    const double length = std::hypot(c.axis[0], c.axis[1], c.axis[2]);
+    require(std::isfinite(length) && length > 1e-9, "Invalid spotlight axis.");
+  }
   if (point) {
     for (double v : point->position)
       require(std::isfinite(v), "3D light position must be finite.");
@@ -190,6 +199,19 @@ double DiffuseLight::diffuse(const std::array<double, 3> &normal,
     // Keep the authored intensity at the rig radius and bound the near field.
     attenuation = 2.0 / (1.0 + ratio * ratio);
   }
+  if (spot) {
+    const auto &c       = *spot;
+    const double length = std::hypot(c.axis[0], c.axis[1], c.axis[2]);
+    const double cosine =
+        -(x * c.axis[0] + y * c.axis[1] + z * c.axis[2]) / (distance * length);
+    const double inner = std::cos(c.inner * Pi / 180);
+    const double outer = std::cos(c.outer * Pi / 180);
+    if (cosine < outer) return 0;
+    if (inner > outer && cosine < inner) {
+      const double t = std::clamp((cosine - outer) / (inner - outer), 0.0, 1.0);
+      attenuation *= t * t * (3 - 2 * t);
+    }
+  }
   return std::max(0.0, normal[0] * (x / distance) + normal[1] * (y / distance) +
                            normal[2] * (z / distance)) *
          intensity * attenuation;
@@ -218,8 +240,10 @@ RenderScene prepareRender(const Asset &asset, const RenderOptions &o,
               std::isfinite(o.cameraDistance) && o.cameraDistance > 0 &&
               std::isfinite(o.nearClip) && std::isfinite(o.farClip) &&
               o.nearClip > 0 && o.farClip > o.nearClip,
-          "GLB camera requires positive distances and Far Clip greater than Near Clip.");
-  require(o.perspective ? (std::isfinite(o.fieldOfView) && o.fieldOfView > 0 && o.fieldOfView < 180)
+          "GLB camera requires positive distances and Far Clip greater than "
+          "Near Clip.");
+  require(o.perspective ? (std::isfinite(o.fieldOfView) && o.fieldOfView > 0 &&
+                           o.fieldOfView < 180)
                         : (std::isfinite(o.orthoHeight) && o.orthoHeight > 0),
           "Invalid GLB projection height or field of view.");
   require(o.animation == NoIndex || std::isfinite(o.sourceSeconds),
@@ -233,6 +257,11 @@ RenderScene prepareRender(const Asset &asset, const RenderOptions &o,
                                  "Invalid GLB material color.");
   const bool hasEnvironment =
       o.useLightingRig && !o.lighting.environments.empty();
+  const bool sampleLights =
+      o.useLightingRig &&
+      std::any_of(o.lighting.lights.begin(), o.lighting.lights.end(),
+                  [](const DiffuseLight &l) { return l.point.has_value(); });
+  const bool sampleShading = hasEnvironment || sampleLights;
   out.linearSampling = hasEnvironment;
   struct EnvironmentSample {
     std::array<EnvironmentDirection, 3> positions;
@@ -247,7 +276,7 @@ RenderScene prepareRender(const Asset &asset, const RenderOptions &o,
             "3D lighting requires finite nonnegative Ambient and Master values.");
     for (const auto &light : o.lighting.lights) {
       light.validate();
-      hasPointLights |= light.point.has_value();
+      hasPointLights |= light.point.has_value() || light.worldDirection;
     }
   }
   out.wireframe = o.wireframe;
@@ -278,6 +307,41 @@ RenderScene prepareRender(const Asset &asset, const RenderOptions &o,
             "GLB projection exceeds the supported coordinate range.");
     return v;
   };
+  out.projectTriangle = [o](const RenderScene::WorldTriangle &vertices) {
+    const Instance camera(o);
+    std::vector<Vec> polygon;
+    for (const auto &v : vertices)
+      polygon.push_back(camera.cameraSpace({v[0], v[1], v[2]}));
+    polygon = clip(clip(polygon, o.nearClip, true), o.farClip, false);
+    const double f =
+        o.perspective
+            ? ProjectionHeight / (2 * std::tan(o.fieldOfView * Pi / 360))
+            : ProjectionHeight / o.orthoHeight;
+    auto project = [&](Vec p) {
+      const double k = o.perspective ? f / -p.z : f;
+      return ProjectedVertex{p.x * k, p.y * k, o.perspective ? 1 / -p.z : p.z};
+    };
+    std::vector<RenderTriangle> result;
+    for (std::size_t j = 1; j + 1 < polygon.size(); ++j)
+      result.push_back({{{project(polygon[0]), project(polygon[j]),
+                          project(polygon[j + 1])}},
+                        {{true, true, true}},
+                        {{1, 1, 1}}});
+    return result;
+  };
+  out.placeWorldPoint = [o, factor](const std::array<double, 3> &p,
+                                    const std::array<double, 6> &a) {
+    const Instance camera(o);
+    auto v = camera.cameraSpace({p[0], p[1], p[2]});
+    if (o.perspective && std::abs(v.z) < 1e-9) return p;
+    const double k = o.perspective ? factor / -v.z : factor;
+    const double x = v.x * k, y = v.y * k;
+    v.x = (a[0] * x + a[1] * y + a[2]) / k;
+    v.y = (a[3] * x + a[4] * y + a[5]) / k;
+    v   = camera.worldSpace(v);
+    return std::array<double, 3>{{v.x, v.y, v.z}};
+  };
+  std::optional<std::array<double, 6>> worldBounds;
   bool skipped = false;
   std::vector<int> pending = asset.scenes[scene].roots;
   std::size_t visited = 0;
@@ -356,6 +420,14 @@ RenderScene prepareRender(const Asset &asset, const RenderOptions &o,
         if ((i & 1023) == 0 && canceled && *canceled) return {};
         const Vec worldA = vertex(p.mode == 6 ? 0 : i - 2);
         const Vec worldB = vertex(i - 1), worldC = vertex(i);
+        for (const auto &v : {worldA, worldB, worldC}) {
+          const double values[] = {v.x, v.y, v.z};
+          if (!worldBounds) worldBounds = {{v.x, v.y, v.z, v.x, v.y, v.z}};
+          for (int k = 0; k < 3; ++k) {
+            (*worldBounds)[k]     = std::min((*worldBounds)[k], values[k]);
+            (*worldBounds)[k + 3] = std::max((*worldBounds)[k + 3], values[k]);
+          }
+        }
         const Vec a         = instance.cameraSpace(worldA);
         const Vec b         = instance.cameraSpace(worldB);
         const Vec c         = instance.cameraSpace(worldC);
@@ -401,7 +473,9 @@ RenderScene prepareRender(const Asset &asset, const RenderOptions &o,
                                               o.lighting.ambient}};
           for (const auto &source : o.lighting.lights) {
             const double diffuse = source.diffuse(
-                source.point ? worldNormal : cameraNormal, center);
+                (source.point || source.worldDirection) ? worldNormal
+                                                        : cameraNormal,
+                center);
             for (int channel = 0; channel < 3; ++channel)
               illumination[channel] += diffuse * srgbToLinear(source.color[channel]);
           }
@@ -433,7 +507,7 @@ RenderScene prepareRender(const Asset &asset, const RenderOptions &o,
             out.bounds[3] = std::max(out.bounds[3], v.y);
           }
           out.triangles.push_back(triangle);
-          if (hasEnvironment) {
+          if (sampleShading) {
             EnvironmentSample sample;
             for (int k = 0; k < 3; ++k)
               sample.albedo[k] =
@@ -452,13 +526,21 @@ RenderScene prepareRender(const Asset &asset, const RenderOptions &o,
       }
     }
   }
-  if (hasEnvironment) {
+  if (sampleShading) {
     const auto eye   = instance.worldSpace({0, 0, 0});
     const auto ortho = instance.worldSpace({0, 0, 1});
+    const auto cameraOrigin = instance.cameraSpace({0, 0, 0});
+    const auto axisX = sub(instance.cameraSpace({1, 0, 0}), cameraOrigin);
+    const auto axisY = sub(instance.cameraSpace({0, 1, 0}), cameraOrigin);
+    const auto axisZ = sub(instance.cameraSpace({0, 0, 1}), cameraOrigin);
+    // Cofactor columns transform normals correctly under camera scaling.
+    const std::array<Vec, 3> cameraNormals{
+        {cross(axisY, axisZ), cross(axisZ, axisX), cross(axisX, axisY)}};
     out.sampleShader =
         [samples = std::move(environmentSamples), triangles = out.triangles,
-         layers = o.lighting.environments, perspective = o.perspective, eye,
-         ortho](std::size_t index, const std::array<double, 3> &bary) {
+         layers = o.lighting.environments, rig = o.lighting, sampleLights,
+         perspective = o.perspective, eye, ortho,
+         cameraNormals](std::size_t index, const std::array<double, 3> &bary) {
           const auto &s = samples.at(index);
           auto weights  = bary;
           if (perspective) {
@@ -488,14 +570,147 @@ RenderScene prepareRender(const Asset &asset, const RenderOptions &o,
           EnvironmentColor color;
           for (int k = 0; k < 3; ++k)
             color[k] = srgbToLinear(triangles[index].color[k]);
+          if (sampleLights && !rig.preserveDefaultLighting) {
+            // World-space for new individual lights; preserve legacy camera
+            // directions by converting the normal back to camera space.
+            std::array<double, 3> cn{
+                {cameraNormals[0].x * n[0] + cameraNormals[1].x * n[1] +
+                     cameraNormals[2].x * n[2],
+                 cameraNormals[0].y * n[0] + cameraNormals[1].y * n[1] +
+                     cameraNormals[2].y * n[2],
+                 cameraNormals[0].z * n[0] + cameraNormals[1].z * n[1] +
+                     cameraNormals[2].z * n[2]}};
+            const double cnLength = std::hypot(cn[0], cn[1], cn[2]);
+            if (cnLength > 0)
+              for (auto &value : cn) value /= cnLength;
+            EnvironmentColor energy{
+                {float(rig.ambient), float(rig.ambient), float(rig.ambient)}};
+            for (const auto &light : rig.lights) {
+              const double d = light.diffuse(
+                  (light.point || light.worldDirection) ? n : cn, p);
+              for (int k = 0; k < 3; ++k)
+                energy[k] += float(d * srgbToLinear(light.color[k]));
+            }
+            for (int k = 0; k < 3; ++k)
+              color[k] = float(s.albedo[k] * energy[k] * rig.master);
+          }
           color = shadeEnvironment(color, n, v, layers, 0, 0, 0, s.albedo);
           return ColorPixel{linearToSrgbExtended(color[0]),
                             linearToSrgbExtended(color[1]),
                             linearToSrgbExtended(color[2]), 1};
         };
   }
-  if (skipped) out.warnings.push_back("Point/line primitives are not rendered; triangle surfaces only.");
+  if (worldBounds) {
+    std::array<double, 3> center{};
+    for (int k = 0; k < 3; ++k)
+      center[k] = ((*worldBounds)[k] + (*worldBounds)[k + 3]) / 2;
+    out.worldCenter = center;
+  }
+  if (skipped)
+    out.warnings.push_back(
+        "Point/line primitives are not rendered; triangle surfaces only.");
   return out;
+}
+
+std::optional<std::array<double, 3>> targetCenter(
+    const RenderScene &scene, const std::array<double, 6> &affine) {
+  if (scene.worldCenter) {
+    return scene.placeWorldPoint
+               ? scene.placeWorldPoint(*scene.worldCenter, affine)
+               : scene.worldCenter;
+  }
+  std::array<double, 3> sum{};
+  int count = 0;
+  for (const auto &layer : scene.layers) {
+    if (!layer.scene) continue;
+    const auto &a = affine;
+    const auto &b = layer.affine;
+    const std::array<double, 6> combined{
+        {a[0] * b[0] + a[1] * b[3], a[0] * b[1] + a[1] * b[4],
+         a[0] * b[2] + a[1] * b[5] + a[2], a[3] * b[0] + a[4] * b[3],
+         a[3] * b[1] + a[4] * b[4], a[3] * b[2] + a[4] * b[5] + a[5]}};
+    if (auto center = targetCenter(*layer.scene, combined)) {
+      for (int k = 0; k < 3; ++k) sum[k] += (*center)[k];
+      ++count;
+    }
+  }
+  if (!count) return {};
+  for (auto &v : sum) v /= count;
+  return sum;
+}
+
+void appendVisibleLight(RenderScene &scene,
+                        const std::array<double, 3> &position, double radius,
+                        const std::array<float, 3> &radiance) {
+  require(std::isfinite(radius) && radius > 0, "Invalid visible light size.");
+  for (double v : position)
+    require(std::isfinite(v), "Invalid visible light position.");
+  for (float v : radiance)
+    require(std::isfinite(v) && v >= 0, "Invalid light radiance.");
+  for (auto &layer : scene.layers) {
+    if (!layer.scene) continue;
+    auto copy = std::make_shared<RenderScene>(*layer.scene);
+    appendVisibleLight(*copy, position, radius, radiance);
+    layer.scene   = copy;
+    const auto &a = layer.affine;
+    const auto &b = copy->bounds;
+    for (int i = 0; i < 4; ++i) {
+      const double x = b[(i & 1) ? 2 : 0], y = b[(i & 2) ? 3 : 1];
+      const double px = a[0] * x + a[1] * y + a[2],
+                   py = a[3] * x + a[4] * y + a[5];
+      scene.bounds[0] = std::min(scene.bounds[0], px);
+      scene.bounds[1] = std::min(scene.bounds[1], py);
+      scene.bounds[2] = std::max(scene.bounds[2], px);
+      scene.bounds[3] = std::max(scene.bounds[3], py);
+    }
+  }
+  if (!scene.projectTriangle) return;
+  const std::size_t first = scene.triangles.size();
+  // A small tessellated sphere is emissive geometry, not a raster overlay.
+  auto vertex = [&](int row, int col) {
+    const double latitude  = -Pi / 2 + Pi * row / 12,
+                 longitude = 2 * Pi * col / 24;
+    return std::array<double, 3>{
+        {position[0] + radius * std::cos(latitude) * std::cos(longitude),
+         position[1] + radius * std::sin(latitude),
+         position[2] + radius * std::cos(latitude) * std::sin(longitude)}};
+  };
+  for (int row = 0; row < 12; ++row)
+    for (int col = 0; col < 24; ++col) {
+      const auto a = vertex(row, col), b = vertex(row, col + 1),
+                 c = vertex(row + 1, col + 1), d = vertex(row + 1, col);
+      for (const auto &world : {RenderScene::WorldTriangle{{a, b, c}},
+                                RenderScene::WorldTriangle{{a, c, d}}})
+        for (auto triangle : scene.projectTriangle(world)) {
+          triangle.color = radiance;
+          for (const auto &v : triangle.vertices) {
+            require(std::isfinite(v.x) && std::isfinite(v.y) &&
+                        std::isfinite(v.depth),
+                    "Invalid light projection.");
+            if (scene.triangles.empty()) scene.bounds = {{v.x, v.y, v.x, v.y}};
+            scene.bounds[0] = std::min(scene.bounds[0], v.x);
+            scene.bounds[1] = std::min(scene.bounds[1], v.y);
+            scene.bounds[2] = std::max(scene.bounds[2], v.x);
+            scene.bounds[3] = std::max(scene.bounds[3], v.y);
+          }
+          scene.triangles.push_back(triangle);
+        }
+    }
+  if (scene.triangles.size() == first) return;
+  const auto shader = scene.sampleShader;
+  std::vector<std::array<float, 3>> colors;
+  if (!shader) {
+    colors.reserve(first);
+    for (std::size_t i = 0; i < first; ++i)
+      colors.push_back(scene.triangles[i].color);
+  }
+  scene.sampleShader = [shader, first, colors = std::move(colors), radiance](
+                           std::size_t i, const std::array<double, 3> &bary) {
+    if (i >= first) return ColorPixel{radiance[0], radiance[1], radiance[2], 1};
+    if (shader) return shader(i, bary);
+    const auto &c = colors[i];
+    return ColorPixel{c[0], c[1], c[2], 1};
+  };
 }
 
 namespace {
@@ -599,77 +814,84 @@ std::vector<ColorPixel> renderLayeredTile(const RenderScene &scene,
                               std::hypot(v[0].x - v[2].x, v[0].y - v[2].y)};
     for (int y = bottom; y <= top; ++y) {
       if (canceled && *canceled) return {};
-      for (int x = left; x <= right; ++x) for (int s = 0; s < 4; ++s) {
-        const double px = x + 0.25 + 0.5 * (s & 1), py = y + 0.25 + 0.5 * (s >> 1);
-        const double e0 = edge(v[0], v[1], px, py), e1 = edge(v[1], v[2], px, py), e2 = edge(v[2], v[0], px, py);
-        const double a = e1 / area, b = e2 / area, c = e0 / area;
-        if (a < -1e-12 || b < -1e-12 || c < -1e-12) continue;
-        const double depth = a * v[0].depth + b * v[1].depth + c * v[2].depth;
-        Sample &sample = samples[(std::size_t(y) * tile.width + x) * 4 + s];
-        const bool line =
-            !scene.wireframe ||
-            (triangle.edges[0] && std::abs(e0) <= 0.65 * lengths[0]) ||
-            (triangle.edges[1] && std::abs(e1) <= 0.65 * lengths[1]) ||
-            (triangle.edges[2] && std::abs(e2) <= 0.65 * lengths[2]);
-        const double epsilon = 1e-10 * std::max(1.0, std::abs(depth));
-        if (scene.sampleShader || depth > sample.depth + epsilon) {
-          ColorPixel color{triangle.color[0], triangle.color[1],
-                           triangle.color[2], 1};
-          if (triangle.textured) {
-            color = {};
-            if (scene.texture && scene.textureWidth > 0 &&
-                scene.textureHeight > 0) {
-              // The plane uses an orthographic camera; UVs interpolate
-              // linearly.
-              {
-                const double u = a * triangle.uv[0][0] + b * triangle.uv[1][0] +
-                                 c * triangle.uv[2][0];
-                const double v = a * triangle.uv[0][1] + b * triangle.uv[1][1] +
-                                 c * triangle.uv[2][1];
-                if (u >= 0 && u <= 1 && v >= 0 && v <= 1) {
-                  const int tx = std::min(scene.textureWidth - 1,
-                                          int(u * scene.textureWidth));
-                  const int ty = std::min(scene.textureHeight - 1,
-                                          int(v * scene.textureHeight));
-                  color =
-                      (*scene.texture)[std::size_t(ty) * scene.textureWidth +
-                                       tx];
+      for (int x = left; x <= right; ++x)
+        for (int s = 0; s < 4; ++s) {
+          const double px = x + 0.25 + 0.5 * (s & 1),
+                       py = y + 0.25 + 0.5 * (s >> 1);
+          const double e0 = edge(v[0], v[1], px, py),
+                       e1 = edge(v[1], v[2], px, py),
+                       e2 = edge(v[2], v[0], px, py);
+          const double a = e1 / area, b = e2 / area, c = e0 / area;
+          if (a < -1e-12 || b < -1e-12 || c < -1e-12) continue;
+          const double depth = a * v[0].depth + b * v[1].depth + c * v[2].depth;
+          Sample &sample = samples[(std::size_t(y) * tile.width + x) * 4 + s];
+          const bool line =
+              !scene.wireframe ||
+              (triangle.edges[0] && std::abs(e0) <= 0.65 * lengths[0]) ||
+              (triangle.edges[1] && std::abs(e1) <= 0.65 * lengths[1]) ||
+              (triangle.edges[2] && std::abs(e2) <= 0.65 * lengths[2]);
+          const double epsilon = 1e-10 * std::max(1.0, std::abs(depth));
+          if (scene.sampleShader || depth > sample.depth + epsilon) {
+            ColorPixel color{triangle.color[0], triangle.color[1],
+                             triangle.color[2], 1};
+            if (triangle.textured) {
+              color = {};
+              if (scene.texture && scene.textureWidth > 0 &&
+                  scene.textureHeight > 0) {
+                // The plane uses an orthographic camera; UVs interpolate
+                // linearly.
+                {
+                  const double u = a * triangle.uv[0][0] +
+                                   b * triangle.uv[1][0] +
+                                   c * triangle.uv[2][0];
+                  const double v = a * triangle.uv[0][1] +
+                                   b * triangle.uv[1][1] +
+                                   c * triangle.uv[2][1];
+                  if (u >= 0 && u <= 1 && v >= 0 && v <= 1) {
+                    const int tx = std::min(scene.textureWidth - 1,
+                                            int(u * scene.textureWidth));
+                    const int ty = std::min(scene.textureHeight - 1,
+                                            int(v * scene.textureHeight));
+                    color =
+                        (*scene.texture)[std::size_t(ty) * scene.textureWidth +
+                                         tx];
+                  }
                 }
               }
             }
-          }
-          if (scene.sampleShader) {
-            color = scene.sampleShader(shaderIndex, {{a, b, c}});
-            require(std::isfinite(color.alpha) && color.alpha >= 0 &&
-                        color.alpha <= 1 && std::isfinite(color.r) &&
-                        std::isfinite(color.g) && std::isfinite(color.b),
-                    "Invalid material sample.");
-            if (color.alpha == 1) {
-              // Opaque material hits only need the closest depth, exactly as
-              // ordinary opaque geometry. Avoid allocating transparency hits
-              // for every back face of a shiny closed model.
-              if (depth > sample.depth + epsilon)
-                sample = {depth, line ? color : ColorPixel{}};
-              else if (scene.wireframe && line &&
-                       std::abs(depth - sample.depth) <= epsilon)
-                sample.color = color;
-            } else if (line && color.alpha > 0 &&
-                       depth > sample.depth + epsilon) {
-              require(fragments.size() < fragmentLimit,
-                      "Material transparency exceeds the 256 MiB tile budget; "
-                      "reduce tile size.");
-              fragments.push_back(
-                  {(std::size_t(y) * tile.width + x) * 4 + s, depth, color});
+            if (scene.sampleShader) {
+              color = scene.sampleShader(shaderIndex, {{a, b, c}});
+              require(std::isfinite(color.alpha) && color.alpha >= 0 &&
+                          color.alpha <= 1 && std::isfinite(color.r) &&
+                          std::isfinite(color.g) && std::isfinite(color.b),
+                      "Invalid material sample.");
+              if (color.alpha == 1) {
+                // Opaque material hits only need the closest depth, exactly as
+                // ordinary opaque geometry. Avoid allocating transparency hits
+                // for every back face of a shiny closed model.
+                if (depth > sample.depth + epsilon)
+                  sample = {depth, line ? color : ColorPixel{}};
+                else if (scene.wireframe && line &&
+                         std::abs(depth - sample.depth) <= epsilon)
+                  sample.color = color;
+              } else if (line && color.alpha > 0 &&
+                         depth > sample.depth + epsilon) {
+                require(
+                    fragments.size() < fragmentLimit,
+                    "Material transparency exceeds the 256 MiB tile budget; "
+                    "reduce tile size.");
+                fragments.push_back(
+                    {(std::size_t(y) * tile.width + x) * 4 + s, depth, color});
+              }
+              continue;
             }
-            continue;
+            // Transparent texels do not occlude other geometry.
+            if (color.alpha > 0) sample = {depth, line ? color : ColorPixel{}};
+          } else if (scene.wireframe && line &&
+                     std::abs(depth - sample.depth) <= epsilon) {
+            sample.color = {triangle.color[0], triangle.color[1],
+                            triangle.color[2], 1};
           }
-          // Transparent texels do not occlude other geometry.
-          if (color.alpha > 0) sample = {depth, line ? color : ColorPixel{}};
-        } else if (scene.wireframe && line &&
-                   std::abs(depth - sample.depth) <= epsilon) {
-          sample.color = {triangle.color[0], triangle.color[1],
-                          triangle.color[2], 1};
-        }
         }
     }
   }

@@ -295,6 +295,25 @@ public:
         }
       }
     const bool hasEnvironment = lighting && !lighting->environments.empty();
+    const bool sampleLights =
+        lighting &&
+        std::any_of(
+            lighting->lights.begin(), lighting->lights.end(),
+            [](const otglb::DiffuseLight &l) { return l.point.has_value(); });
+    std::optional<std::array<double, 6>> worldBounds;
+    for (const auto &triangle : mesh.triangles)
+      for (const auto &v : triangle.vertices) {
+        if (!worldBounds) worldBounds = {{v[0], v[1], v[2], v[0], v[1], v[2]}};
+        for (int k = 0; k < 3; ++k) {
+          (*worldBounds)[k]     = std::min((*worldBounds)[k], v[k]);
+          (*worldBounds)[k + 3] = std::max((*worldBounds)[k + 3], v[k]);
+        }
+      }
+    otam::Mesh unlitMesh;
+    if (sampleLights)
+      unlitMesh = m_project
+                      ? otam::projected(mesh, cameraPose, m_camera.imageToStage)
+                      : mesh;
     if (lighting) {
       if (!std::isfinite(lighting->ambient) || lighting->ambient < 0 ||
           !std::isfinite(lighting->master) || lighting->master < 0)
@@ -342,6 +361,49 @@ public:
       mesh = otam::projected(mesh, cameraPose, m_camera.imageToStage);
     auto scene        = std::make_shared<otglb::RenderScene>();
     scene->warnings   = mesh.warnings;
+    if (worldBounds) {
+      std::array<double, 3> center{};
+      for (int k = 0; k < 3; ++k)
+        center[k] = ((*worldBounds)[k] + (*worldBounds)[k + 3]) / 2;
+      scene->worldCenter = center;
+    }
+    const bool project      = m_project;
+    const auto imageToStage = m_camera.imageToStage;
+    scene->projectTriangle =
+        [project, cameraPose,
+         imageToStage](const otglb::RenderScene::WorldTriangle &vertices) {
+          otam::Mesh mesh;
+          otam::Triangle triangle{};
+          triangle.vertices = vertices;
+          mesh.triangles.push_back(triangle);
+          if (project) mesh = otam::projected(mesh, cameraPose, imageToStage);
+          std::vector<otglb::RenderTriangle> result;
+          for (const auto &t : mesh.triangles) {
+            otglb::RenderTriangle r{};
+            r.edges = {{true, true, true}};
+            for (int i = 0; i < 3; ++i)
+              r.vertices[i] = {t.vertices[i][0], t.vertices[i][1],
+                               t.vertices[i][2]};
+            result.push_back(r);
+          }
+          return result;
+        };
+    scene->placeWorldPoint = [project, cameraPose, imageToStage](
+                                 const otam::Vec3 &p,
+                                 const std::array<double, 6> &a) {
+      auto v = project ? otam::transform(otam::inverse(cameraPose), p) : p;
+      if (project && std::abs(v[2]) < 1e-9) return p;
+      const double k = project ? 1000.0 / -v[2] : 1;
+      otam::Vec3 screen{{v[0] * k, v[1] * k, project ? k : v[2]}};
+      if (project) screen = otam::transform(imageToStage, screen);
+      const double x = screen[0], y = screen[1];
+      screen[0] = a[0] * x + a[1] * y + a[2];
+      screen[1] = a[3] * x + a[4] * y + a[5];
+      if (!project) return screen;
+      screen = otam::transform(otam::inverse(imageToStage), screen);
+      return otam::transform(cameraPose,
+                             {{screen[0] / k, screen[1] / k, v[2]}});
+    };
     scene->linearSampling = hasEnvironment;
     std::set<std::string> groups;
     for (const auto &patch : mesh.patchGroups)
@@ -368,7 +430,7 @@ public:
       }
       scene->triangles.push_back(triangle);
     }
-    if (!assigned.empty() || hasEnvironment) {
+    if (!assigned.empty() || hasEnvironment || sampleLights) {
       struct MaterialSample {
         std::array<otam::Vec3, 3> positions, normals;
         bool hasNormals = false;
@@ -383,7 +445,9 @@ public:
         sample.positions  = triangle.vertices;
         sample.normals    = triangle.normals;
         sample.hasNormals = triangle.hasNormals;
-        sample.color      = triangle.color;
+        sample.color      = sampleLights
+                                ? unlitMesh.triangles.at(samples.size()).color
+                                : triangle.color;
         auto found        = assigned.find(triangle.patch);
         if (found != assigned.end()) sample.binding = int(found->second);
         if (m_project)
@@ -403,11 +467,11 @@ public:
       const otam::Vec3 eye{{cameraPose[3], cameraPose[7], cameraPose[11]}};
       const auto triangles = scene->triangles;
       scene->sampleShader  = [samples = std::move(samples), surfaces,
-                             perspective, useRig, rig, eye,
+                             perspective, useRig, rig, eye, sampleLights,
                              triangles](std::size_t index,
                                         const std::array<double, 3> &bary) {
         const auto &sample = samples.at(index);
-        if (sample.binding < 0 && rig.environments.empty())
+        if (sample.binding < 0 && rig.environments.empty() && !sampleLights)
           return otglb::ColorPixel{sample.color[0], sample.color[1],
                                    sample.color[2], 1};
         const ResolvedSurface fallback{otam::Surface(), true};

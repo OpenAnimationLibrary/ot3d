@@ -5,6 +5,7 @@
 #include "../../stdfx/ammaterialfx.cpp"
 #include "../../stdfx/transform3dfx.cpp"
 #include "../../stdfx/threepointlightfx.cpp"
+#include "../../stdfx/pointlightfx.cpp"
 #include "../../stdfx/merge3dfx.cpp"
 #include "../../stdfx/glbmodelfx.cpp"
 #include "../../glb/tests/glbfixture.h"
@@ -905,6 +906,38 @@ int main(int argc, char **argv) {
             "cancellation not honored");
     require(!transform.get3DRenderScene(1, nullptr),
             "empty exposure rendered a stale model");
+    {
+      TFxP pointOwner = new PointLightFx;
+      auto &point     = *static_cast<PointLightFx *>(pointOwner.getPointer());
+      point.getInputPort(0)->setFx(column);
+      set(point, "positionZ", 100);
+      set(point, "falloffRadius", 100);
+      const auto lit =
+          point.get3DRenderScene(0, nullptr, nullptr, nullptr, &info);
+      require(lit && lit->worldCenter && lit->projectTriangle &&
+                  lit->placeWorldPoint,
+              "native Point Light lost targeting/camera metadata");
+      otglb::RenderTile request;
+      request.width = request.height = 128;
+      request.x = request.y = -64;
+      const auto pixels     = otglb::renderTile(*lit, request);
+      bool illuminated      = false;
+      for (const auto &p : pixels) illuminated |= p.r > .01;
+      require(illuminated, "Point Light did not illuminate native A:M model");
+      auto *visible =
+          dynamic_cast<TBoolParam *>(point.getParams()->getParam("visible"));
+      visible->setValue(true);
+      set(point, "visibleSize", 5);
+      const auto drawn =
+          point.get3DRenderScene(0, nullptr, nullptr, nullptr, &info);
+      require(drawn->triangles.size() > lit->triangles.size(),
+              "visible Point Light lost native camera geometry");
+      point.getInputPort(1)->setFx(column);
+      const TFxP built =
+          buildSceneFx(&scene, 0, xsheet, pointOwner, BSFX_NO_TR);
+      require(dynamic_cast<PointLightFx *>(built.getPointer()),
+              "native Target expansion flattened Point Light");
+    }
     testRenderModes(scene, level, temp.filePath("render-settings.xml"));
     std::cout << "A:M native FX connections, transforms, lighting, filters and "
                  "render tree passed\n";

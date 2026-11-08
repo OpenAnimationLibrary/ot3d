@@ -93,6 +93,21 @@
   <item>"STD_environmentReflectionFx.rotationX" "Rotation X" </item>
   <item>"STD_environmentReflectionFx.rotationY" "Rotation Y" </item>
   <item>"STD_environmentReflectionFx.rotationZ" "Rotation Z" </item>
+  <item>"STD_pointLightFx" "Point Light" </item>
+  <item>"STD_pointLightFx.lightType" "Light Type" </item>
+  <item>"STD_pointLightFx.positionX" "Position X" </item>
+  <item>"STD_pointLightFx.positionY" "Position Y" </item>
+  <item>"STD_pointLightFx.positionZ" "Position Z" </item>
+  <item>"STD_pointLightFx.targetX" "Aim X / Target Offset X" </item>
+  <item>"STD_pointLightFx.targetY" "Aim Y / Target Offset Y" </item>
+  <item>"STD_pointLightFx.targetZ" "Aim Z / Target Offset Z" </item>
+  <item>"STD_pointLightFx.intensity" "Intensity (%)" </item>
+  <item>"STD_pointLightFx.color" "Color" </item>
+  <item>"STD_pointLightFx.falloffRadius" "Falloff Radius" </item>
+  <item>"STD_pointLightFx.coneAngle" "Cone Angle" </item>
+  <item>"STD_pointLightFx.coneSoftness" "Cone Softness (%)" </item>
+  <item>"STD_pointLightFx.visible" "Visible in Render" </item>
+  <item>"STD_pointLightFx.visibleSize" "Visible Source Radius" </item>
   <item>"STD_threePointLightFx" "Three-Point Light" </item>
   <item>"STD_merge3DFx" "3D Merge" </item>
   <item>"STD_threePointLightFx.masterIntensity" "Master Intensity (%)" </item>
