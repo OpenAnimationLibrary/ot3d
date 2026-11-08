@@ -2,6 +2,7 @@
 
 #include "sceneviewer.h"
 #include "sceneviewercontextmenu.h"
+#include "hybridsceneviewer.h"
 
 // Toonz includes
 #include "tapp.h"
@@ -48,6 +49,15 @@ SceneViewerContextMenu::SceneViewerContextMenu(SceneViewer *parent)
     QAction *action = addAction(tr("Reset Subcamera"));
     connect(action, &QAction::triggered, parent,
             &SceneViewer::doDeleteSubCamera);
+    addSeparator();
+  }
+
+  if (auto *hybrid = dynamic_cast<HybridSceneViewer *>(parent)) {
+    QAction *live = addAction(tr("Live Render"));
+    live->setCheckable(true);
+    live->setChecked(hybrid->isLiveRenderEnabled());
+    connect(live, &QAction::toggled, hybrid,
+            &HybridSceneViewer::setLiveRenderEnabled);
     addSeparator();
   }
 

@@ -676,6 +676,7 @@ QMenuBar *StackedMenuBar::createPltEditMenuBar() {
   QMenu *renderMenu = addMenu(tr("Render"), pltEditMenuBar);
   addMenuItem(renderMenu, MI_PreviewSettings);
   addMenuItem(renderMenu, MI_Preview);
+  addMenuItem(renderMenu, MI_LiveRender);
   addMenuItem(renderMenu, MI_SavePreviewedFrames);
   renderMenu->addSeparator();
   addMenuItem(renderMenu, MI_OutputSettings);
@@ -1042,6 +1043,7 @@ QMenuBar *StackedMenuBar::createXsheetMenuBar() {
   QMenu *renderMenu = addMenu(tr("Render"), xsheetMenuBar);
   addMenuItem(renderMenu, MI_PreviewSettings);
   addMenuItem(renderMenu, MI_Preview);
+  addMenuItem(renderMenu, MI_LiveRender);
   addMenuItem(renderMenu, MI_SavePreviewedFrames);
   renderMenu->addSeparator();
   addMenuItem(renderMenu, MI_OutputSettings);
@@ -1474,6 +1476,7 @@ QMenuBar *StackedMenuBar::createFullMenuBar() {
   QMenu *renderMenu = addMenu(tr("Render"), fullMenuBar);
   addMenuItem(renderMenu, MI_PreviewSettings);
   addMenuItem(renderMenu, MI_Preview);
+  addMenuItem(renderMenu, MI_LiveRender);
   // addMenuItem(renderMenu, MI_SavePreview);
   addMenuItem(renderMenu, MI_SavePreviewedFrames);
   renderMenu->addSeparator();

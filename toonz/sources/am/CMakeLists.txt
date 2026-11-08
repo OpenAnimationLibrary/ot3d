@@ -33,7 +33,7 @@ if(BUILD_AM_LEVEL_TESTS AND NOT AM_STANDALONE)
 endif()
 
 if(BUILD_AM_LEVEL_TESTS AND NOT AM_STANDALONE)
-    add_executable(amfx_test tests/amfx_test.cpp)
+    add_executable(amfx_test tests/amfx_test.cpp ../toonz/liverendercontroller.cpp)
     # The test compiles the FX implementations directly into its executable.
     target_compile_definitions(amfx_test PRIVATE TNZSTDFX_EXPORTS)
     target_link_libraries(amfx_test PRIVATE toonzlib toonzqt Qt5::Widgets)

@@ -2627,6 +2627,8 @@ void MainWindow::defineActions() {
                          "render");
   createMenuRenderAction(MI_FastRender, QT_TR_NOOP("&Fast Render to MP4"),
                          "Alt+R", "fast_render_mp4");
+  createMenuRenderAction(MI_LiveRender, QT_TR_NOOP("Live Render"), "",
+                         "preview");
   createMenuRenderAction(MI_Preview, QT_TR_NOOP("&Preview"), "Ctrl+R",
                          "preview");
   createMenuRenderAction(MI_SavePreviewedFrames,

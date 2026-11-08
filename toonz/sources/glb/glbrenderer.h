@@ -131,6 +131,17 @@ struct RenderTriangle {
 struct ColorPixel {
   float r = 0, g = 0, b = 0, alpha = 0;  // Premultiplied sRGB.
 };
+// Linear-light surface evaluation shared by the software and live GPU paths.
+// Environment reflections remain unevaluated so the GPU can sample per pixel.
+struct SurfaceSample {
+  EnvironmentColor local{}, diffuse{{1, 1, 1}};
+  EnvironmentDirection normal{{0, 0, 1}}, view{{0, 0, 1}};
+  double reflectivity = 0, blend = 0, distanceFalloff = 0, diffuseFalloff = 1;
+  float alpha = 1;
+};
+ColorPixel shadeSurfaceSample(const SurfaceSample &sample,
+                              const std::vector<EnvironmentLayer> &layers);
+
 struct RenderScene;
 struct RenderLayer {
   std::shared_ptr<const RenderScene> scene;
@@ -149,6 +160,11 @@ struct RenderScene {
   // Results are premultiplied sRGB. Transparent hits composite in linear light.
   std::function<ColorPixel(std::size_t, const std::array<double, 3> &)>
       sampleShader;
+  std::function<SurfaceSample(std::size_t, const std::array<double, 3> &)>
+      surfaceShader;
+  std::size_t surfaceCount = 0;
+  bool surfacePerspective  = false;
+  std::vector<EnvironmentLayer> environments;
   std::array<double, 4> bounds{};  // x0, y0, x1, y1 in the fixed image plane.
   std::vector<std::string> warnings;
   std::vector<std::string>
