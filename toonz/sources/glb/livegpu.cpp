@@ -259,9 +259,11 @@ public:
     f->glGenTextures(1, &id);
     if (transient) textures.push_back(id);
     f->glBindTexture(GL_TEXTURE_2D, id);
-    f->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    f->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    f->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    const GLint filtering = transient ? GL_NEAREST : GL_LINEAR;
+    f->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filtering);
+    f->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filtering);
+    f->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S,
+                       transient ? GL_CLAMP_TO_EDGE : GL_REPEAT);
     f->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     f->glTexImage2D(GL_TEXTURE_2D, 0, 0x8814, w, h, 0, GL_RGBA, GL_FLOAT,
                     pixels);  // RGBA32F retains environment HDR.

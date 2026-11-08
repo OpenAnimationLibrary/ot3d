@@ -130,6 +130,27 @@ int main(int argc, char **argv) {
       rejected = true;
     }
     check(rejected, "Excess reflection layers silently truncated");
+    {
+      using namespace otglb;
+      auto pixels = std::make_shared<std::vector<ColorPixel>>();
+      pixels->push_back({1, 0, 0, 1});
+      pixels->push_back({0, 1, 0, 1});
+      const auto plane = prepareImagePlane(2, 1, pixels, {});
+      auto live        = std::make_shared<LiveFrame>(prepareLiveFrame(plane));
+      target.bind();
+      f->glClearColor(0, 0, 0, 0);
+      f->glClear(GL_COLOR_BUFFER_BIT);
+      QMatrix4x4 planeMatrix;
+      planeMatrix.scale(1, 2);
+      check(gpu.draw(live, planeMatrix, 64, 64, error),
+            error.toUtf8().constData());
+      float left[4], right[4];
+      f->glReadPixels(0, 32, 1, 1, GL_RGBA, GL_FLOAT, left);
+      f->glReadPixels(63, 32, 1, 1, GL_RGBA, GL_FLOAT, right);
+      check(
+          left[0] > .99 && left[1] < .001 && right[0] < .001 && right[1] > .99,
+          "Live image-plane texture sampling/wrap differs from CPU");
+    }
     check(f->glGetError() == GL_NO_ERROR, "Live Render left an OpenGL error");
     if (argc > 1) {
       using namespace otglb;
