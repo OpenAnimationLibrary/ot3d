@@ -122,9 +122,20 @@ class State {
     void *pointer;
   } attrs[6];
   GLint textures[5];
+  bool hasSrgb   = false;
+  GLboolean srgb = GL_FALSE;
 
 public:
   explicit State(QOpenGLFunctions *functions) : f(functions) {
+    auto *context = QOpenGLContext::currentContext();
+    hasSrgb =
+        context->format().majorVersion() >= 3 ||
+        context->hasExtension(QByteArrayLiteral("GL_ARB_framebuffer_sRGB")) ||
+        context->hasExtension(QByteArrayLiteral("GL_EXT_framebuffer_sRGB"));
+    if (hasSrgb) {
+      srgb = f->glIsEnabled(0x8DB9);
+      f->glDisable(0x8DB9);
+    }
     f->glGetFloatv(GL_COLOR_CLEAR_VALUE, clearColor);
     f->glGetFloatv(GL_DEPTH_RANGE, depthRange);
     f->glGetFloatv(GL_DEPTH_CLEAR_VALUE, &clearDepth);
@@ -194,6 +205,7 @@ public:
     toggle(GL_BLEND, blend);
     toggle(GL_CULL_FACE, cull);
     toggle(GL_SCISSOR_TEST, scissor);
+    if (hasSrgb) toggle(0x8DB9, srgb);
     f->glClearColor(clearColor[0], clearColor[1], clearColor[2], clearColor[3]);
     f->glDepthRangef(depthRange[0], depthRange[1]);
     f->glClearDepthf(clearDepth);

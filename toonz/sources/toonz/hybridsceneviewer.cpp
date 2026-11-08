@@ -101,6 +101,8 @@ HybridSceneViewer::HybridSceneViewer(ImageUtils::FullScreenWidget *parent)
              const QString &error) {
         if (!m_liveRender) return;
         if (frame) {
+          for (const auto &warning : frame->warnings)
+            reportDiagnostic(QString::fromStdString(warning));
           m_liveFrame  = std::move(frame);
           m_liveFailed = false;
         }
@@ -133,14 +135,20 @@ HybridSceneViewer::HybridSceneViewer(ImageUtils::FullScreenWidget *parent)
           dirty);
   connect(app->getPaletteController()->getCurrentLevelPalette(),
           &TPaletteHandle::colorStyleChanged, this, dirty);
+  connect(app->getPaletteController()->getCurrentLevelPalette(),
+          &TPaletteHandle::paletteChanged, this, dirty);
 }
 void HybridSceneViewer::initializeGL() {
   SceneViewer::initializeGL();
-  connect(
+  disconnect(m_liveContextConnection);
+  m_liveContextConnection = connect(
       context(), &QOpenGLContext::aboutToBeDestroyed, this,
       [this] { releaseLiveGpu(); }, Qt::DirectConnection);
 }
-HybridSceneViewer::~HybridSceneViewer() { releaseLiveGpu(); }
+HybridSceneViewer::~HybridSceneViewer() {
+  disconnect(m_liveContextConnection);
+  releaseLiveGpu();
+}
 void HybridSceneViewer::releaseLiveGpu() {
   if (!context()) return;
   makeCurrent();

@@ -22,6 +22,7 @@ class HybridSceneViewer final : public SceneViewer {
   std::unique_ptr<otglb::LiveGpu> m_liveGpu;
   std::shared_ptr<const otglb::LiveFrame> m_liveFrame;
   QLabel *m_liveStatus;
+  QMetaObject::Connection m_liveContextConnection;
   void invalidateLive();
   bool drawLive();
   void releaseLiveGpu();

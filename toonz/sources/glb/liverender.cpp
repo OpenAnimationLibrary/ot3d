@@ -91,6 +91,7 @@ void append(LiveFrame &out, const RenderScene &scene,
       if (surface)
         s = scene.surfaceShader(i, bary);
       else {
+        s.diffuse = {{0, 0, 0}};
         ColorPixel c{t.color[0], t.color[1], t.color[2], 1};
         if (scene.sampleShader) c = scene.sampleShader(i, bary);
         s.alpha = c.alpha;
