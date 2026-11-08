@@ -169,6 +169,14 @@ void ParamsPage::setPageField(TIStream &is, const TFxP &fx, bool isVertical) {
           if (auto stringField = dynamic_cast<StringParamField *>(field))
             stringField->enableGlbFileControls();
         }
+        if (paramName == "STD_amMaterialFx.materialFile") {
+          if (auto stringField = dynamic_cast<StringParamField *>(field))
+            stringField->enableAMMaterialFileControls();
+        }
+        if (paramName == "STD_amMaterialFx.group") {
+          if (auto stringField = dynamic_cast<StringParamField *>(field))
+            stringField->enableAMMaterialGroupControls();
+        }
         if (paramName == "STD_openExrAovFx.exrFile") {
           if (auto stringField = dynamic_cast<StringParamField *>(field))
             stringField->enableExrFileControls();

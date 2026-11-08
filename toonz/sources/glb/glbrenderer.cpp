@@ -476,8 +476,22 @@ std::vector<ColorPixel> renderLayeredTile(const RenderScene &scene,
     return output;
   }
   std::vector<Sample> samples(count * 4);
+  struct Fragment {
+    std::size_t sample;
+    double depth;
+    ColorPixel color;
+  };
+  std::vector<Fragment> fragments;
+  const std::size_t baseMemory =
+      count *
+      (std::size_t(nesting + 2) * sizeof(ColorPixel) + 4 * sizeof(Sample));
+  // Account for vector growth as well as the already allocated tile buffers.
+  const std::size_t fragmentLimit =
+      (MemoryLimit - baseMemory) / (4 * sizeof(Fragment));
+  std::size_t triangleIndex = 0;
   const auto &m = tile.affine;
   for (const auto &triangle : scene.triangles) {
+    const auto shaderIndex = triangleIndex++;
     if (canceled && *canceled) return {};
     auto v = triangle.vertices;
     for (auto &p : v) {
@@ -511,7 +525,7 @@ std::vector<ColorPixel> renderLayeredTile(const RenderScene &scene,
             (triangle.edges[1] && std::abs(e1) <= 0.65 * lengths[1]) ||
             (triangle.edges[2] && std::abs(e2) <= 0.65 * lengths[2]);
         const double epsilon = 1e-10 * std::max(1.0, std::abs(depth));
-        if (depth > sample.depth + epsilon) {
+        if (scene.sampleShader || depth > sample.depth + epsilon) {
           ColorPixel color{triangle.color[0], triangle.color[1],
                            triangle.color[2], 1};
           if (triangle.textured) {
@@ -537,6 +551,31 @@ std::vector<ColorPixel> renderLayeredTile(const RenderScene &scene,
               }
             }
           }
+          if (scene.sampleShader) {
+            color = scene.sampleShader(shaderIndex, {{a, b, c}});
+            require(std::isfinite(color.alpha) && color.alpha >= 0 &&
+                        color.alpha <= 1 && std::isfinite(color.r) &&
+                        std::isfinite(color.g) && std::isfinite(color.b),
+                    "Invalid material sample.");
+            if (color.alpha == 1) {
+              // Opaque material hits only need the closest depth, exactly as
+              // ordinary opaque geometry. Avoid allocating transparency hits
+              // for every back face of a shiny closed model.
+              if (depth > sample.depth + epsilon)
+                sample = {depth, line ? color : ColorPixel{}};
+              else if (scene.wireframe && line &&
+                       std::abs(depth - sample.depth) <= epsilon)
+                sample.color = color;
+            } else if (line && color.alpha > 0 &&
+                       depth > sample.depth + epsilon) {
+              require(fragments.size() < fragmentLimit,
+                      "Material transparency exceeds the 256 MiB tile budget; "
+                      "reduce tile size.");
+              fragments.push_back(
+                  {(std::size_t(y) * tile.width + x) * 4 + s, depth, color});
+            }
+            continue;
+          }
           // Transparent texels do not occlude other geometry.
           if (color.alpha > 0) sample = {depth, line ? color : ColorPixel{}};
         } else if (scene.wireframe && line &&
@@ -545,6 +584,56 @@ std::vector<ColorPixel> renderLayeredTile(const RenderScene &scene,
                           triangle.color[2], 1};
         }
         }
+    }
+  }
+  if (scene.sampleShader) {
+    std::stable_sort(fragments.begin(), fragments.end(),
+                     [](const Fragment &a, const Fragment &b) {
+                       return a.sample < b.sample ||
+                              (a.sample == b.sample && a.depth > b.depth);
+                     });
+    std::size_t i = 0;
+    while (i < fragments.size()) {
+      if (canceled && *canceled) return {};
+      const auto sample = fragments[i].sample;
+      double previous   = std::numeric_limits<double>::infinity();
+      ColorPixel linear;
+      while (i < fragments.size() && fragments[i].sample == sample) {
+        const auto &f = fragments[i++];
+        // The nearest opaque surface blocks every transparent hit behind it,
+        // irrespective of the order triangles reached the rasterizer.
+        if (f.depth <=
+            samples[sample].depth + 1e-10 * std::max(1.0, std::abs(f.depth)))
+          continue;
+        // Shared tessellation edges and near-clipped diagonals must not apply
+        // the same surface opacity twice at coincident sample positions.
+        if (std::abs(f.depth - previous) <=
+            1e-10 * std::max(1.0, std::abs(f.depth)))
+          continue;
+        previous              = f.depth;
+        const float remaining = 1 - linear.alpha;
+        const auto &p         = f.color;
+        linear.r += srgbToLinear(p.r / p.alpha) * p.alpha * remaining;
+        linear.g += srgbToLinear(p.g / p.alpha) * p.alpha * remaining;
+        linear.b += srgbToLinear(p.b / p.alpha) * p.alpha * remaining;
+        linear.alpha += p.alpha * remaining;
+      }
+      const auto &opaque = samples[sample].color;
+      if (opaque.alpha > 0) {
+        const float remaining = 1 - linear.alpha;
+        linear.r +=
+            srgbToLinear(opaque.r / opaque.alpha) * opaque.alpha * remaining;
+        linear.g +=
+            srgbToLinear(opaque.g / opaque.alpha) * opaque.alpha * remaining;
+        linear.b +=
+            srgbToLinear(opaque.b / opaque.alpha) * opaque.alpha * remaining;
+        linear.alpha += opaque.alpha * remaining;
+      }
+      if (linear.alpha > 0)
+        samples[sample].color = {
+            linearToSrgb(linear.r / linear.alpha) * linear.alpha,
+            linearToSrgb(linear.g / linear.alpha) * linear.alpha,
+            linearToSrgb(linear.b / linear.alpha) * linear.alpha, linear.alpha};
     }
   }
   for (std::size_t i = 0; i < count; ++i)

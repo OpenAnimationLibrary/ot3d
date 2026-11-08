@@ -756,7 +756,8 @@ public:
   explicit ResetAMSurfaceColorsUndo(TXshAMLevel *model) : m_model(model) {
     auto *palette = model->getPalette();
     for (const auto &[id, source] : model->sourceStyleColors()) {
-      if (id >= palette->getStyleCount() || !palette->getStylePage(id))
+      if (id >= palette->getStyleCount() || !palette->getStylePage(id) ||
+          palette->getKeyframeCount(id) > 0)
         continue;
       auto *style = palette->getStyle(id);
       if (style->hasMainColor() && style->getMainColor() != source)

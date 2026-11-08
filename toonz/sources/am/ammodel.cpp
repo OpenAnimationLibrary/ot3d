@@ -111,7 +111,8 @@ void resolve(Model &m) {
 }
 }  // namespace
 
-Document parse(std::string source, const Limits &limits) {
+Document parseSource(std::string source, const std::string &root,
+                     const Limits &limits) {
   if (source.empty() || source.size() > limits.bytes)
     fail("file size exceeds limit or is empty");
   if (source.find('\0') != std::string::npos)
@@ -166,11 +167,16 @@ Document parse(std::string source, const Limits &limits) {
     }
     pos = end + 1;
   }
-  if (!stack.empty() || d.nodes.empty() || d.nodes[0].name != "MODELFILE")
-    fail("expected a complete MODELFILE document");
+  if (!stack.empty() || d.nodes.empty() || d.nodes[0].name != root)
+    fail("expected a complete " + root + " document");
   for (const auto &line : lines(d, d.nodes[0]))
     if (line.compare(0, 15, "ProductVersion=") == 0)
       d.version = line.substr(15);
+  return d;
+}
+
+Document parse(std::string source, const Limits &limits) {
+  Document d = parseSource(std::move(source), "MODELFILE", limits);
   if (d.version != "19.5")
     warn(d.warnings,
          "File version is not the 19.5 reference dialect; compatibility is "
@@ -305,6 +311,7 @@ Mesh previewMesh(const Document &d, std::size_t modelIndex,
   const auto ids = index(m);
   Mesh out;
   out.warnings = d.warnings;
+  out.patchGroups.resize(m.patches.size());
   warn(out.warnings,
        "Experimental A:M control-surface preview; Hash patch/bias evaluation "
        "fidelity is not validated.");
@@ -388,6 +395,11 @@ Mesh previewMesh(const Document &d, std::size_t modelIndex,
       warn(out.warnings,
            "Patch orientation/special flags are retained; preview uses "
            "recorded corner order.");
+    for (std::size_t g = 0; g < m.groups.size(); ++g)
+      if (std::all_of(heads.begin(), heads.end(), [&](std::size_t h) {
+            return memberships[g].count(h) != 0;
+          }))
+        out.patchGroups[p].push_back(m.groups[g].name);
     Color color{{0.65f, 0.65f, 0.65f}};
     int colorGroup = -1;
     for (std::size_t g = 0; g < m.groups.size(); ++g)
@@ -395,7 +407,7 @@ Mesh previewMesh(const Document &d, std::size_t modelIndex,
           std::all_of(heads.begin(), heads.end(), [&](std::size_t h) {
             return memberships[g].count(h) != 0;
           })) {
-        color = m.groups[g].color;
+        color      = m.groups[g].color;
         colorGroup = int(g);
       }
     const std::size_t count =
@@ -420,6 +432,17 @@ Mesh previewMesh(const Document &d, std::size_t modelIndex,
           mix(m.points[heads[3]].position, m.points[heads[2]].position, u), v);
       return sub(ruled, bilinear);
     };
+    const auto normal = [&](double u, double v) {
+      constexpr double h = 1e-5;
+      const auto du =
+          sub(sample(std::min(1.0, u + h), v), sample(std::max(0.0, u - h), v));
+      const auto dv =
+          sub(sample(u, std::min(1.0, v + h)), sample(u, std::max(0.0, v - h)));
+      Vec3 n{{du[1] * dv[2] - du[2] * dv[1], du[2] * dv[0] - du[0] * dv[2],
+              du[0] * dv[1] - du[1] * dv[0]}};
+      const double size = length(n);
+      return size > 1e-20 ? scale(n, 1.0 / size) : Vec3{};
+    };
     for (unsigned y = 0; y < subdivisions; ++y)
       for (unsigned x = 0; x < subdivisions; ++x) {
         const double u = double(x) / subdivisions, v = double(y) / subdivisions;
@@ -427,8 +450,12 @@ Mesh previewMesh(const Document &d, std::size_t modelIndex,
                      v1 = double(y + 1) / subdivisions;
         const Vec3 a = sample(u, v), b = sample(u1, v), c = sample(u1, v1),
                    e = sample(u, v1);
-        out.triangles.push_back({{{a, b, c}}, color, p, colorGroup});
-        out.triangles.push_back({{{a, c, e}}, color, p, colorGroup});
+        const auto na = normal(u, v), nb = normal(u1, v), nc = normal(u1, v1),
+                   ne = normal(u, v1);
+        out.triangles.push_back(
+            {{{a, b, c}}, color, p, colorGroup, {{na, nb, nc}}, true});
+        out.triangles.push_back(
+            {{{a, c, e}}, color, p, colorGroup, {{na, nc, ne}}, true});
       }
   }
   return out;
@@ -516,10 +543,31 @@ Vec3 transform(const Matrix &m, const Vec3 &p) {
   }
   return q;
 }
+static Vec3 transformNormal(const Matrix &inverseMatrix, const Vec3 &normal) {
+  Vec3 result{};
+  for (int i = 0; i < 3; ++i)
+    for (int j = 0; j < 3; ++j)
+      result[i] += inverseMatrix[4 * j + i] * normal[j];
+  return result;
+}
 Mesh transformed(const Mesh &mesh, const Matrix &m) {
   Mesh out = mesh;
-  for (auto &t : out.triangles)
+  bool normals      = std::any_of(mesh.triangles.begin(), mesh.triangles.end(),
+                                  [](const Triangle &t) { return t.hasNormals; });
+  auto normalMatrix = identity();
+  if (normals) {
+    try {
+      normalMatrix = inverse(m);
+    } catch (const std::runtime_error &) {
+      normals = false;
+    }
+  }
+  for (auto &t : out.triangles) {
     for (auto &p : t.vertices) p = transform(m, p);
+    t.hasNormals = t.hasNormals && normals;
+    if (t.hasNormals)
+      for (auto &n : t.normals) n = transformNormal(normalMatrix, n);
+  }
   return out;
 }
 Mesh projected(const Mesh &mesh, double cx, double cy, double cz, double focus,
@@ -530,15 +578,23 @@ Mesh projected(const Mesh &mesh, double cx, double cy, double cz, double focus,
     fail("invalid camera");
   Mesh out;
   out.warnings        = mesh.warnings;
+  out.patchGroups     = mesh.patchGroups;
+  out.amMaterials     = mesh.amMaterials;
   const double zLimit = focus + cz - nearPlane;
   for (const auto &t : mesh.triangles) {
-    std::vector<Vec3> polygon;
+    std::vector<Vec3> polygon, normals;
     for (int i = 0; i < 3; ++i) {
       const Vec3 a = t.vertices[i], b = t.vertices[(i + 1) % 3];
       const bool inA = a[2] <= zLimit, inB = b[2] <= zLimit;
-      if (inA) polygon.push_back(a);
-      if (inA != inB)
-        polygon.push_back(mix(a, b, (zLimit - a[2]) / (b[2] - a[2])));
+      if (inA) {
+        polygon.push_back(a);
+        normals.push_back(t.normals[i]);
+      }
+      if (inA != inB) {
+        const double w = (zLimit - a[2]) / (b[2] - a[2]);
+        polygon.push_back(mix(a, b, w));
+        normals.push_back(mix(t.normals[i], t.normals[(i + 1) % 3], w));
+      }
     }
     for (auto &p : polygon) {
       const double s = (focus + cz) / std::max(nearPlane, focus + cz - p[2]);
@@ -550,7 +606,9 @@ Mesh projected(const Mesh &mesh, double cx, double cy, double cz, double focus,
       out.triangles.push_back({{{polygon[0], polygon[i], polygon[i + 1]}},
                                t.color,
                                t.patch,
-                               t.colorGroup});
+                               t.colorGroup,
+                               {{normals[0], normals[i], normals[i + 1]}},
+                               t.hasNormals});
   }
   return out;
 }
@@ -559,9 +617,16 @@ Mesh projected(const Mesh &mesh, const Matrix &cameraToWorld,
   // Reuse the proven near-plane clipper with the optical origin moved to the
   // legacy focus coordinate; projection still happens only after view rotation.
   const auto view = multiply(translation(0, 0, focus), inverse(cameraToWorld));
-  return transformed(
-      projected(transformed(mesh, view), 0, 0, 0, focus, nearPlane),
-      imageToStage);
+  auto result = projected(transformed(mesh, view), 0, 0, 0, focus, nearPlane);
+  const auto worldNormalMatrix = inverse(cameraToWorld);
+  for (auto &t : result.triangles) {
+    for (auto &p : t.vertices) p = transform(imageToStage, p);
+    // Screen positions belong to the image plane; shading normals remain in
+    // world space, so changing the camera cannot rotate authored world lights.
+    if (t.hasNormals)
+      for (auto &n : t.normals) n = transformNormal(worldNormalMatrix, n);
+  }
+  return result;
 }
 std::vector<std::array<float, 4>> rasterize(const Mesh &mesh, int width,
                                             int height) {

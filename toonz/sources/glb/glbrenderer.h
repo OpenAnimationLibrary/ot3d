@@ -2,6 +2,7 @@
 
 #include "glbloader.h"
 #include <memory>
+#include <functional>
 #include <optional>
 
 namespace otglb {
@@ -120,8 +121,15 @@ struct RenderScene {
   // wrapper which would prevent downstream geometry transforms/lighting.
   std::array<float, 4> colorScale{{0, 0, 0, 1}};
   std::vector<RenderTriangle> triangles;
+  // Optional immutable material evaluator. Barycentrics are screen-space;
+  // the provider performs perspective-correct interpolation in its own space.
+  // Results are premultiplied sRGB. Transparent hits composite in linear light.
+  std::function<ColorPixel(std::size_t, const std::array<double, 3> &)>
+      sampleShader;
   std::array<double, 4> bounds{};  // x0, y0, x1, y1 in the fixed image plane.
   std::vector<std::string> warnings;
+  std::vector<std::string>
+      materialGroups;  // Native patch assignment discovery.
   bool wireframe = false;
   int textureWidth = 0, textureHeight = 0;
   std::shared_ptr<const std::vector<ColorPixel>> texture;

@@ -55,6 +55,7 @@ void TXshAMLevel::setPath(const TFilePath &path, bool keepCached) {
   m_document.reset();
   m_mesh.reset();
   m_renderMesh.reset();
+  m_renderPalette.reset();
   m_colorOverrides.clear();
   m_revision.clear();
   m_error.clear();
@@ -157,6 +158,7 @@ void TXshAMLevel::load() {
     m_document.reset();
     m_mesh.reset();
     m_renderMesh.reset();
+    m_renderPalette.reset();
     m_colorOverrides.clear();
     m_revision.clear();
     m_error = "A:M model " + path.getQString().toStdString() + ": " + e.what();
@@ -229,7 +231,8 @@ void TXshAMLevel::refreshPalette(const otam::Model &model,
       auto *style = m_palette->getStyle(id);
       if (!style->hasMainColor() || !m_palette->getStylePage(id))
         m_palette->setStyle(id, source);
-      else if (opaque(style->getMainColor()) == old->second.sourceColor &&
+      else if (m_palette->getKeyframeCount(id) == 0 &&
+               opaque(style->getMainColor()) == old->second.sourceColor &&
                source != old->second.sourceColor)
         style->setMainColor(source);
     } else {
@@ -261,11 +264,23 @@ void TXshAMLevel::refreshPalette(const otam::Model &model,
 
 bool TXshAMLevel::updatePaletteColorsLocked() {
   if (!m_mesh) return false;
+  const bool wasAnimated = bool(m_renderPalette);
+  if (m_palette->isAnimated()) {
+    m_renderPalette = m_palette->clone();
+    // The clone can start at the UI's current frame with an edited style.
+    // Reset its frame so the first render always evaluates the saved keys.
+    m_renderPalette->setFrame(-1);
+    return true;
+  }
+  m_renderPalette.reset();
+  return updateRenderMeshLocked(*m_palette) || wasAnimated;
+}
+
+bool TXshAMLevel::updateRenderMeshLocked(const TPalette &palette) const {
   std::map<int, TPixel32> overrides;
   auto resolve = [&](int id, const TPixel32 &source) {
-    if (id >= m_palette->getStyleCount() || !m_palette->getStylePage(id))
-      return;
-    const auto *style = m_palette->getStyle(id);
+    if (id >= palette.getStyleCount() || !palette.getStylePage(id)) return;
+    const auto *style = palette.getStyle(id);
     if (!style->hasMainColor()) return;
     const auto color = opaque(style->getMainColor());
     if (color != source) overrides.emplace(id, color);
@@ -299,8 +314,12 @@ bool TXshAMLevel::updatePaletteColors() {
   return updatePaletteColorsLocked();
 }
 
-std::shared_ptr<const otam::Mesh> TXshAMLevel::renderMesh() const {
+std::shared_ptr<const otam::Mesh> TXshAMLevel::renderMesh(int frame) const {
   std::lock_guard<std::mutex> lock(m_mutex);
+  if (m_renderPalette && m_renderPalette->getFrame() != frame) {
+    m_renderPalette->setFrame(frame);
+    updateRenderMeshLocked(*m_renderPalette);
+  }
   return m_renderMesh;
 }
 

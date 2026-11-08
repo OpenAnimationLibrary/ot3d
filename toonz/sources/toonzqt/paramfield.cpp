@@ -16,6 +16,7 @@
 #include "tnotanimatableparam.h"
 #include "tparamset.h"
 #include "tfxmaterial.h"
+#include "tfxammaterial.h"
 #include "tw/stringtable.h"
 
 #include <QString>
@@ -1646,6 +1647,95 @@ void StringParamField::enableGlbFileControls() {
   connect(clear, &QPushButton::clicked, this, [this]() {
     m_textFld->clear();
     onChange();
+  });
+}
+
+//-----------------------------------------------------------------------------
+
+void StringParamField::enableAMMaterialFileControls() {
+  if (!m_textFld || m_amMaterialFileControls) return;
+  m_amMaterialFileControls = true;
+  auto column              = new QVBoxLayout();
+  column->setContentsMargins(0, 0, 0, 0);
+  m_layout->removeWidget(m_textFld);
+  column->addWidget(m_textFld);
+  auto buttons = new QHBoxLayout();
+  auto browse  = new QPushButton(tr("Browse..."), this);
+  auto inspect = new QPushButton(tr("Inspect"), this);
+  auto clear   = new QPushButton(tr("Clear"), this);
+  buttons->addWidget(browse);
+  buttons->addWidget(inspect);
+  buttons->addWidget(clear);
+  column->addLayout(buttons);
+  m_layout->addLayout(column);
+  m_textFld->setToolTip(
+      tr("Select an Animation:Master material, or leave empty and enable "
+         "Override Specular to use the level palette."));
+  inspect->setToolTip(
+      tr("Inspect the evaluated surface settings and unsupported attributes at "
+         "this frame."));
+  clear->setToolTip(
+      tr("Clear the material reference without deleting the file."));
+  connect(browse, &QPushButton::clicked, this, [this]() {
+    const auto path = QFileDialog::getOpenFileName(
+        this, tr("Select A:M Material"), m_textFld->text(),
+        tr("Animation:Master materials (*.mat *.MAT)"));
+    if (path.isEmpty()) return;
+    m_textFld->setText(QFileInfo(path).absoluteFilePath());
+    onChange();
+  });
+  connect(inspect, &QPushButton::clicked, this, [this]() {
+    auto *source = dynamic_cast<TFxAMMaterialSource *>(m_actualFx.getPointer());
+    if (!source) return;
+    try {
+      DVGui::info(
+          QString::fromStdWString(source->getAMMaterialSummary(m_frame)));
+    } catch (const std::exception &error) {
+      DVGui::warning(tr("Cannot inspect A:M material: %1")
+                         .arg(QString::fromUtf8(error.what())));
+    }
+  });
+  connect(clear, &QPushButton::clicked, this, [this]() {
+    m_textFld->clear();
+    onChange();
+  });
+}
+
+void StringParamField::enableAMMaterialGroupControls() {
+  if (!m_textFld || m_amMaterialGroupControls) return;
+  m_amMaterialGroupControls = true;
+  auto choose               = new QPushButton(tr("Choose..."), this);
+  choose->setToolTip(
+      tr("Choose a group from the exposed model at the current frame."));
+  m_layout->addWidget(choose);
+  connect(choose, &QPushButton::clicked, this, [this]() {
+    auto *source = dynamic_cast<TFxAMMaterialSource *>(m_actualFx.getPointer());
+    if (!source) return;
+    try {
+      const auto groups = source->getAMMaterialGroups(m_frame);
+      QStringList labels;
+      labels << tr("Whole Model (no group)");
+      int current = 0;
+      for (const auto &group : groups) {
+        const auto name = QString::fromStdWString(group);
+        if (name == m_textFld->text()) current = labels.size();
+        labels << tr("Group: %1").arg(name);
+      }
+      bool accepted       = false;
+      const auto selected = QInputDialog::getItem(
+          this, tr("Choose A:M Group"), tr("Apply material to:"), labels,
+          current, false, &accepted);
+      if (!accepted) return;
+      const int index = labels.indexOf(selected);
+      if (index < 0) return;
+      m_textFld->setText(index == 0
+                             ? QString()
+                             : QString::fromStdWString(groups.at(index - 1)));
+      onChange();
+    } catch (const std::exception &error) {
+      DVGui::warning(tr("Cannot read A:M groups: %1")
+                         .arg(QString::fromUtf8(error.what())));
+    }
   });
 }
 

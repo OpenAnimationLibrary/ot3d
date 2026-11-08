@@ -35,11 +35,13 @@ class DVAPI TXshAMLevel final : public TXshLevel {
   TPaletteP m_palette;
   std::map<std::string, SurfaceStyle> m_groupStyles;
   std::vector<int> m_styleByGroup;
-  std::map<int, TPixel32> m_colorOverrides;
-  std::shared_ptr<const otam::Mesh> m_renderMesh;
+  TPaletteP m_renderPalette;
+  mutable std::map<int, TPixel32> m_colorOverrides;
+  mutable std::shared_ptr<const otam::Mesh> m_renderMesh;
 
   void refreshPalette(const otam::Model &model, const std::string &revision);
   bool updatePaletteColorsLocked();
+  bool updateRenderMeshLocked(const TPalette &palette) const;
 
 public:
   explicit TXshAMLevel(std::wstring name = L"");
@@ -57,7 +59,7 @@ public:
   void save() override {}
   std::shared_ptr<const otam::Document> document() const;
   std::shared_ptr<const otam::Mesh> mesh() const;
-  std::shared_ptr<const otam::Mesh> renderMesh() const;
+  std::shared_ptr<const otam::Mesh> renderMesh(int frame = 0) const;
   TPalette *getPalette() const { return m_palette.getPointer(); }
   // Called on the UI thread after palette edits. Renderers use the snapshot.
   bool updatePaletteColors();

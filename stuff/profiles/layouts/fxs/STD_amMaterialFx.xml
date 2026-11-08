@@ -1,0 +1,18 @@
+<fxlayout>
+  <page name="Material">
+    <label>"Experimental A:M surface preview. Connect a native A:M model, then a lighting node. Highlights use a preview shader; Hash render parity is not validated."</label>
+    <control>materialFile</control>
+    <control>group</control>
+    <control>diffuseSource</control>
+    <control>unsupportedAttributes</control>
+    <label>"Report Error identifies attributes the renderer cannot reproduce. Supported Attributes Preview omits those attributes. Procedural and plugin material trees are not yet supported."</label>
+  </page>
+  <page name="Specular">
+    <label>"Enable Override Specular to key highlight size, intensity and color in OT3D. With no material file, the surface uses the level palette. Zero size or intensity disables shine."</label>
+    <control>overrideSpecular</control>
+    <control>specularSize</control>
+    <control>specularIntensity</control>
+    <control>specularColor</control>
+    <label>"Shine follows each light and the camera. Ambient lighting adds no specular highlights. Scene reflections are deferred; file reflectivity settings are retained."</label>
+  </page>
+</fxlayout>
