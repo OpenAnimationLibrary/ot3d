@@ -173,6 +173,7 @@ set(SOURCES
     imagebasedlightingfx.cpp
     environmentreflectionfx.cpp
     environmentfx.h
+    pointlightfx.cpp
     threepointlightfx.cpp
     merge3dfx.cpp
     tilefx.cpp
@@ -356,6 +357,8 @@ option(BUILD_GLB_FX_TESTS "Build the 3D FX framework regression executables" OFF
 if(BUILD_GLB_FX_TESTS)
     add_executable(glbmodelfx_test tests/glbmodelfx_test.cpp)
     target_link_libraries(glbmodelfx_test otglb otam toonzlib toonzqt Qt5::Core Qt5::Gui Qt5::Widgets ${TNZLIBS} ${PTHREAD_LIBRARY})
+    add_executable(pointlightfx_test tests/pointlightfx_test.cpp)
+    target_link_libraries(pointlightfx_test otglb otam toonzlib Qt5::Core Qt5::Gui ${TNZLIBS} ${PTHREAD_LIBRARY})
     add_executable(threepointlightfx_test tests/threepointlightfx_test.cpp)
     target_link_libraries(threepointlightfx_test otglb otam toonzlib Qt5::Core Qt5::Gui ${TNZLIBS} ${PTHREAD_LIBRARY})
     add_executable(transform3dfx_test tests/transform3dfx_test.cpp)

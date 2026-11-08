@@ -138,10 +138,14 @@ jobs:
           cd toonz\build
           msbuild /p:Configuration=RelWithDebInfo /m /verbosity:minimal stdfx\glbmodelfx_test.vcxproj
           if %errorlevel% neq 0 exit /b %errorlevel%
+          msbuild /p:Configuration=RelWithDebInfo /m /verbosity:minimal stdfx\pointlightfx_test.vcxproj
+          if %errorlevel% neq 0 exit /b %errorlevel%
           msbuild /p:Configuration=RelWithDebInfo /m /verbosity:minimal stdfx\threepointlightfx_test.vcxproj
           if %errorlevel% neq 0 exit /b %errorlevel%
           set "PATH=%QT_PATH%\bin;%GITHUB_WORKSPACE%\thirdparty\glut\3.7.6\lib;%GITHUB_WORKSPACE%\thirdparty\glew\glew-1.9.0\bin\64bit;%GITHUB_WORKSPACE%\thirdparty\libmypaint\dist\64;C:\tools\opencv\build\x64\vc16\bin;%PATH%"
           RelWithDebInfo\glbmodelfx_test.exe
+          if %errorlevel% neq 0 exit /b %errorlevel%
+          RelWithDebInfo\pointlightfx_test.exe
           if %errorlevel% neq 0 exit /b %errorlevel%
           RelWithDebInfo\threepointlightfx_test.exe
           if %errorlevel% neq 0 exit /b %errorlevel%
