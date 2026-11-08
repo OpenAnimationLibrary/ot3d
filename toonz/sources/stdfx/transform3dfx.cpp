@@ -17,16 +17,17 @@ void copy3DTransformPixels(TRasterPT<PIXEL> raster,
                            int yOffset) {
   using Channel        = typename PIXEL::Channel;
   const double maximum = PIXEL::maxChannelValue;
-  const double round   = std::is_floating_point<Channel>::value ? 0.0 : 0.5;
   raster->lock();
   const int rows = int(pixels.size() / raster->getLx());
   for (int y = 0; y < rows; ++y) {
     auto *row = raster->pixels(y + yOffset);
     for (int x = 0; x < raster->getLx(); ++x) {
-      const auto &p = pixels[std::size_t(y) * raster->getLx() + x];
-      row[x]        = PIXEL(
-                 Channel(p.r * maximum + round), Channel(p.g * maximum + round),
-                 Channel(p.b * maximum + round), Channel(p.alpha * maximum + round));
+      const auto p = otglb::outputPixel(
+          pixels[std::size_t(y) * raster->getLx() + x], raster->isLinear());
+      row[x] = PIXEL(otglb::displayChannel<Channel>(p.r, maximum),
+                     otglb::displayChannel<Channel>(p.g, maximum),
+                     otglb::displayChannel<Channel>(p.b, maximum),
+                     otglb::displayChannel<Channel>(p.alpha, maximum));
     }
   }
   raster->unlock();
@@ -184,8 +185,8 @@ public:
                         std::ceil(megabytes)));
   }
 
-  bool toBeComputedInLinearColorSpace(bool, bool) const override {
-    return false;
+  bool toBeComputedInLinearColorSpace(bool, bool tileIsLinear) const override {
+    return tileIsLinear;
   }
 
   void doCompute(TTile &tile, double frame,

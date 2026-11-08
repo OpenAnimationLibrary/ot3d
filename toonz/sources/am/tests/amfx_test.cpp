@@ -1,5 +1,6 @@
 // Production FX and native-column regression, without an application or GL
 // context.
+#include "../../stdfx/environmentreflectionfx.cpp"
 #include "../../stdfx/ammaterialfx.cpp"
 #include "../../stdfx/transform3dfx.cpp"
 #include "../../stdfx/threepointlightfx.cpp"
@@ -31,6 +32,37 @@
 #include <QTemporaryDir>
 #include <QFile>
 #include <iostream>
+
+// An animated linear HDR panorama tests real upstream compute and render
+// caches.
+class EnvironmentTestImageFx final : public TStandardZeraryFx {
+  FX_PLUGIN_DECLARATION(EnvironmentTestImageFx)
+public:
+  static int computes;
+  EnvironmentTestImageFx() { enableComputeInFloat(true); }
+  bool doGetBBox(double, TRectD &bbox, const TRenderSettings &) override {
+    bbox = TRectD(-4, -2, 4, 2);
+    return true;
+  }
+  bool canHandle(const TRenderSettings &, double) override { return true; }
+  bool toBeComputedInLinearColorSpace(bool, bool) const override {
+    return true;
+  }
+  std::string getAlias(double frame,
+                       const TRenderSettings &info) const override {
+    return "environment-test-image[" + std::to_string(frame) + info.toString() +
+           "]";
+  }
+  void doCompute(TTile &tile, double frame, const TRenderSettings &) override {
+    ++computes;
+    TRasterFP raster = tile.getRaster();
+    if (!raster || !raster->isLinear())
+      throw std::runtime_error("environment input lost linear float pixels");
+    raster->fill(frame < .5 ? TPixelF(4, 0, 0, 1) : TPixelF(0, 2, 0, 1));
+  }
+};
+int EnvironmentTestImageFx::computes = 0;
+FX_PLUGIN_IDENTIFIER(EnvironmentTestImageFx, "environmentTestImageFx")
 
 namespace {
 void require(bool condition, const char *message) {
@@ -77,6 +109,187 @@ TRaster32P render(ToonzScene &scene, const TRenderSettings &settings) {
   renderer.uninstall();
   return raster;
 }
+std::shared_ptr<const otglb::RenderScene> evaluateEnvironment(
+    T3DRenderSource &fx, double frame, const TRenderSettings &settings) {
+  TRenderer renderer(1);
+  renderer.enablePrecomputing(false);
+  const auto id = TRenderer::buildRenderId();
+  renderer.install(id);
+  renderer.declareRenderStart(id);
+  renderer.declareFrameStart(frame);
+  std::shared_ptr<const otglb::RenderScene> result;
+  try {
+    result = fx.get3DRenderScene(frame, nullptr, nullptr, nullptr, &settings);
+  } catch (...) {
+    renderer.declareFrameEnd(frame);
+    renderer.declareRenderEnd(id);
+    renderer.uninstall();
+    throw;
+  }
+  renderer.declareFrameEnd(frame);
+  renderer.declareRenderEnd(id);
+  renderer.uninstall();
+  return result;
+}
+TRasterFP evaluateEnvironmentFloat(TRasterFx &fx, double frame) {
+  TRenderSettings settings;
+  settings.m_bpp              = 128;
+  settings.m_linearColorSpace = true;
+  settings.m_colorSpaceGamma = 1.8;  // Deliberately differs from sRGB transfer.
+  TRasterFP raster(32, 32);
+  raster->setLinear(true);
+  TTile tile(raster, TPointD(-16, -16));
+  TRenderer renderer(1);
+  renderer.enablePrecomputing(false);
+  const auto id = TRenderer::buildRenderId();
+  renderer.install(id);
+  renderer.declareRenderStart(id);
+  renderer.declareFrameStart(frame);
+  try {
+    fx.compute(tile, frame, settings);
+  } catch (...) {
+    renderer.declareFrameEnd(frame);
+    renderer.declareRenderEnd(id);
+    renderer.uninstall();
+    throw;
+  }
+  renderer.declareFrameEnd(frame);
+  renderer.declareRenderEnd(id);
+  renderer.uninstall();
+  return raster;
+}
+void testEnvironmentRenderTree(ToonzScene &sourceScene, TFx &fx,
+                               const TRenderSettings &settings) {
+  // Generators are exposed through zerary columns in real scenes. A bare
+  // zero-port FX has no column placement and is skipped by FxBuilder.
+  ToonzScene scene;
+  auto *sheet = scene.getXsheet();
+  require(sheet->setCell(0, 0, sourceScene.getXsheet()->getCell(0, 0)),
+          "environment tree model exposure");
+  TFxP image                      = new EnvironmentTestImageFx;
+  TXshZeraryFxColumnP imageColumn = new TXshZeraryFxColumn(2);
+  imageColumn->getZeraryColumnFx()->setZeraryFx(image.getPointer());
+  sheet->insertColumn(1, imageColumn.getPointer());
+  TFxP root = fx.clone(false);
+  root->getInputPort(0)->setFx(sheet->getColumn(0)->getFx());
+  root->getInputPort(1)->setFx(imageColumn->getZeraryColumnFx());
+  sheet->getFxDag()->getInternalFxs()->addFx(root.getPointer());
+  const auto tree = buildSceneFx(&scene, 0, sheet, root, BSFX_NO_TR);
+  auto *typed     = dynamic_cast<T3DRenderSource *>(tree.getPointer());
+  require(typed, "environment tree lost typed geometry");
+  const auto result = evaluateEnvironment(*typed, 0, settings);
+  require(result && result->sampleShader,
+          "environment lost during production render-tree expansion");
+}
+
+void testEnvironment(ToonzScene &scene, TFx *column, TRasterFx *snapshot,
+                     const QString &path) {
+  TFxP imageOwner = new EnvironmentTestImageFx;
+  TFxP owner      = new EnvironmentReflectionFx;
+  auto &fx        = *static_cast<EnvironmentReflectionFx *>(owner.getPointer());
+  fx.getInputPort(0)->setFx(column);
+  fx.getInputPort(1)->setFx(imageOwner.getPointer());
+  TRenderSettings settings;
+  TRectD bounds;
+  const int before = EnvironmentTestImageFx::computes;
+  require(fx.doGetBBox(0, bounds, settings) && !bounds.isEmpty(),
+          "environment bounds");
+  require(EnvironmentTestImageFx::computes == before,
+          "bounds evaluated environment pixels");
+  otglb::RenderTile tile;
+  tile.width = tile.height = 32;
+  tile.x = tile.y     = -16;
+  const auto redScene = evaluateEnvironment(fx, 0, settings);
+  const auto p        = otglb::renderTile(*redScene, tile)[16 * 32 + 16];
+  require(p.r > 1 && p.g < .001 && p.alpha == 1,
+          "native reflection or HDR missing");
+  const auto linearOutput = evaluateEnvironmentFloat(fx, 0);
+  require(
+      std::abs(linearOutput->pixels(16)[16].r - otglb::srgbToLinear(p.r)) <
+          .001,
+      "reflection float output reinterpreted the sRGB transfer as power gamma");
+  require(EnvironmentTestImageFx::computes > before,
+          "environment input was not evaluated");
+  // Clones, scene ports and typed geometry must survive the real render graph.
+  TFxP cloned = fx.clone(false);
+  require(cloned && !cloned->getInputPort(1)->getFx(),
+          "shallow clone contract");
+  cloned->getInputPort(0)->setFx(column);
+  cloned->getInputPort(1)->setFx(imageOwner.getPointer());
+  require(cloned && cloned->getInputPort(1)->getFx() &&
+              cloned->getAlias(0, settings) == fx.getAlias(0, settings),
+          "environment clone");
+  {
+    TOStream out{TFilePath(path)};
+    out << owner.getPointer();
+  }
+  TPersist *persist = nullptr;
+  {
+    TIStream in{TFilePath(path)};
+    in >> persist;
+  }
+  TFxP restored = dynamic_cast<TFx *>(persist);
+  require(restored && restored->getInputPortCount() == 2 &&
+              restored->getInputPort("Source")->getFx() &&
+              restored->getInputPort("Environment")->getFx(),
+          "environment port persistence");
+  testEnvironmentRenderTree(scene, fx, settings);
+  // Imported reflectivity and additive/blended mode are evaluated per surface.
+  const auto materialPath = path + ".mat";
+  {
+    QFile file(materialPath);
+    require(file.open(QIODevice::WriteOnly), "reflection material fixture");
+    file.write(
+        "<MATERIALFILE><MATERIALS><MATERIAL><ATTRIBUTE>\nReflectivity="
+        "100\nReflectiveBlend=100\n</ATTRIBUTE></MATERIAL></MATERIALS></"
+        "MATERIALFILE>");
+  }
+  TFxP materialOwner = new AMMaterialFx;
+  auto &material     = *static_cast<AMMaterialFx *>(materialOwner.getPointer());
+  dynamic_cast<TStringParam *>(material.getParams()->getParam("materialFile"))
+      ->setValue(materialPath.toStdWString());
+  material.getInputPort(0)->setFx(column);
+  fx.getInputPort(0)->setFx(&material);
+  auto *mode =
+      dynamic_cast<TIntEnumParam *>(fx.getParams()->getParam("materialMode"));
+  mode->setValue(1);
+  const auto authored      = evaluateEnvironment(fx, 0, settings);
+  const auto authoredPixel = otglb::renderTile(*authored, tile)[16 * 32 + 16];
+  require(std::abs(otglb::srgbToLinear(authoredPixel.r) - 4) < .001 &&
+              authoredPixel.g < .001,
+          "A:M authored reflection settings ignored");
+  mode->setValue(0);
+  fx.getInputPort(0)->setFx(column);
+  // Downstream light/transform nodes must not discard or independently resample
+  // it.
+  TFxP lightOwner = new ThreePointLightFx;
+  auto &light     = *static_cast<ThreePointLightFx *>(lightOwner.getPointer());
+  light.getInputPort(0)->setFx(&fx);
+  set(light, "masterIntensity", 0);
+  const auto lit = evaluateEnvironment(light, 0, settings);
+  const auto q   = otglb::renderTile(*lit, tile)[16 * 32 + 16];
+  require(q.r > 1 && q.g < .001, "light master scaled away the environment");
+  // Also preserve the environment when it is downstream of an explicit rig.
+  light.getInputPort(0)->setFx(column);
+  fx.getInputPort(0)->setFx(&light);
+  const auto opposite = evaluateEnvironment(fx, 0, settings);
+  require(otglb::renderTile(*opposite, tile)[16 * 32 + 16].r > 1,
+          "upstream light dropped environment");
+  fx.getInputPort(0)->setFx(column);
+  fx.getInputPort(0)->setFx(snapshot);
+  const auto green = evaluateEnvironment(fx, 1, settings);
+  require(green && !green->empty(), "animated environment snapshot empty");
+  const auto g = otglb::renderTile(*green, tile)[16 * 32 + 16];
+  require(g.g > .9 && g.r < p.r, "animated environment cache stale");
+  fx.getInputPort(0)->setFx(column);
+  set(fx, "reflectivity", 0);
+  const auto unchanged = evaluateEnvironment(fx, 0, settings);
+  require(otglb::renderTile(*unchanged, tile)[16 * 32 + 16].r <= 1,
+          "zero reflectivity changed base shading");
+  int canceled = 1;
+  require(!fx.get3DRenderScene(0, &canceled), "environment cancellation");
+}
+
 void testMaterials(ToonzScene &scene, TXshLevel *level, TFx *column,
                    const QString &path) {
   TFxP owner     = new AMMaterialFx;
@@ -446,6 +659,9 @@ int main(int argc, char **argv) {
             "expose model");
     auto *column = xsheet->getColumn(0)->getFx();
     require(isAMModelColumn(column), "native column classification");
+    TRasterFxP environmentSnapshot = makeAMLevelRenderFx(xsheet, 0, 0);
+    testEnvironment(scene, column, environmentSnapshot.getPointer(),
+                    temp.filePath("environment.xml"));
     testMaterials(scene, level, column, temp.filePath("surface.mat"));
     testShine(scene, temp.filePath("shine.mat"));
     const auto original = level->getAMLevel()->mesh();

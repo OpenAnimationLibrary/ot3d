@@ -1,6 +1,9 @@
 #pragma once
 
 #include "glbloader.h"
+#include "environment.h"
+#include <algorithm>
+#include <type_traits>
 #include <memory>
 #include <functional>
 #include <optional>
@@ -44,10 +47,14 @@ struct LightingRig {
   double ambient = 0.0;
   double master = 1.0;
   std::vector<DiffuseLight> lights;
+  std::vector<EnvironmentLayer> environments;
+  // Environment reflections alone preserve the source's default lighting.
+  bool preserveDefaultLighting = false;
 
   bool operator==(const LightingRig &other) const {
     return ambient == other.ambient && master == other.master &&
-           lights == other.lights;
+           lights == other.lights && environments == other.environments &&
+           preserveDefaultLighting == other.preserveDefaultLighting;
   }
 };
 
@@ -121,6 +128,8 @@ struct RenderScene {
   // wrapper which would prevent downstream geometry transforms/lighting.
   std::array<float, 4> colorScale{{0, 0, 0, 1}};
   std::vector<RenderTriangle> triangles;
+  // Environment radiance is integrated/composited in linear light.
+  bool linearSampling = false;
   // Optional immutable material evaluator. Barycentrics are screen-space;
   // the provider performs perspective-correct interpolation in its own space.
   // Results are premultiplied sRGB. Transparent hits composite in linear light.
@@ -168,8 +177,33 @@ RenderScene prepareImagePlane(
 RenderScene projectImagePlane(int width, int height,
                               const std::vector<ModelTransform> &transforms);
 
+// Extended transfer retains HDR for floating output; integer outputs clamp
+// here.
+float linearToSrgbExtended(float value);
+template <class Channel>
+Channel displayChannel(float value, double maximum) {
+  if constexpr (std::is_floating_point<Channel>::value)
+    return Channel(std::max(0.0f, value));
+  else
+    return Channel(std::clamp(value, 0.0f, 1.0f) * maximum + .5);
+}
 float linearToSrgb(float value);
 float srgbToLinear(float value);
+inline ColorPixel linearPixel(const ColorPixel &p) {
+  if (!(p.alpha > 0)) return {};
+  return {srgbToLinear(p.r / p.alpha) * p.alpha,
+          srgbToLinear(p.g / p.alpha) * p.alpha,
+          srgbToLinear(p.b / p.alpha) * p.alpha, p.alpha};
+}
+inline ColorPixel displayPixel(const ColorPixel &p) {
+  if (!(p.alpha > 0)) return {};
+  return {linearToSrgbExtended(p.r / p.alpha) * p.alpha,
+          linearToSrgbExtended(p.g / p.alpha) * p.alpha,
+          linearToSrgbExtended(p.b / p.alpha) * p.alpha, p.alpha};
+}
+inline ColorPixel outputPixel(const ColorPixel &p, bool linear) {
+  return linear ? linearPixel(p) : p;
+}
 std::array<float, 3> materialColor(const Asset &asset, std::size_t index);
 
 }  // namespace otglb

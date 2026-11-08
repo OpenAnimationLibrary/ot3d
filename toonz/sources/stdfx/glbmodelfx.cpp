@@ -29,15 +29,17 @@ void copyGlbPixels(TRasterPT<PIXEL> raster,
                    const std::vector<otglb::ColorPixel> &pixels, int yOffset) {
   using Channel = typename PIXEL::Channel;
   const double maximum = PIXEL::maxChannelValue;
-  const double round = std::is_floating_point<Channel>::value ? 0.0 : 0.5;
   raster->lock();
   const int rows = int(pixels.size() / raster->getLx());
   for (int y = 0; y < rows; ++y) {
     auto *row = raster->pixels(y + yOffset);
     for (int x = 0; x < raster->getLx(); ++x) {
-      const auto &p = pixels[std::size_t(y) * raster->getLx() + x];
-      row[x] = PIXEL(Channel(p.r * maximum + round), Channel(p.g * maximum + round),
-                     Channel(p.b * maximum + round), Channel(p.alpha * maximum + round));
+      const auto p = otglb::outputPixel(
+          pixels[std::size_t(y) * raster->getLx() + x], raster->isLinear());
+      row[x] = PIXEL(otglb::displayChannel<Channel>(p.r, maximum),
+                     otglb::displayChannel<Channel>(p.g, maximum),
+                     otglb::displayChannel<Channel>(p.b, maximum),
+                     otglb::displayChannel<Channel>(p.alpha, maximum));
     }
   }
   raster->unlock();
@@ -231,7 +233,11 @@ class GlbModelFx final : public TStandardZeraryFx,
     } else if (lighting) {
       settings.useLightingRig = true;
       settings.lighting = *lighting;
-      settings.headlight = false;
+      if (!lighting->preserveDefaultLighting ||
+          (renderSettings && renderSettings->m_disableDefaultLighting))
+        settings.headlight = false;
+      if (renderSettings && renderSettings->m_disableDefaultLighting)
+        settings.lighting.preserveDefaultLighting = false;
     } else if (renderSettings && renderSettings->m_disableDefaultLighting) {
       settings.useLightingRig = true;
       settings.lighting       = {};
@@ -436,7 +442,9 @@ public:
     return int(std::min(double(std::numeric_limits<int>::max()), std::ceil(megabytes)));
   }
 
-  bool toBeComputedInLinearColorSpace(bool, bool) const override { return false; }
+  bool toBeComputedInLinearColorSpace(bool, bool tileIsLinear) const override {
+    return tileIsLinear;
+  }
 
   void doCompute(TTile &tile, double frame, const TRenderSettings &info) override {
     tile.getRaster()->clear();

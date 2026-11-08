@@ -69,6 +69,12 @@ struct Instance {
       if (!additional.camera) p = transform(p, additional);
     return p;
   }
+  Vec worldSpace(Vec p) const {
+    for (auto i = o.transforms.rbegin(); i != o.transforms.rend(); ++i)
+      if (i->camera) p = transform(p, *i);
+    p.z += o.cameraDistance;
+    return p;
+  }
   Vec cameraSpace(Vec p) const {
     p.z -= o.cameraDistance;
     for (const auto &additional : o.transforms)
@@ -136,6 +142,11 @@ bool RenderOptions::operator==(const RenderOptions &b) const {
          sourceSeconds == b.sourceSeconds;
 }
 
+float linearToSrgbExtended(float v) {
+  v = std::max(v, 0.0f);
+  return v <= 0.0031308f ? 12.92f * v
+                         : 1.055f * std::pow(v, 1.0f / 2.4f) - 0.055f;
+}
 float linearToSrgb(float v) {
   v = std::clamp(v, 0.0f, 1.0f);
   return v <= 0.0031308f ? 12.92f * v : 1.055f * std::pow(v, 1.0f / 2.4f) - 0.055f;
@@ -220,6 +231,14 @@ RenderScene prepareRender(const Asset &asset, const RenderOptions &o,
   for (const auto &color : o.colors)
     for (float v : color) require(std::isfinite(v) && v >= 0 && v <= 1,
                                  "Invalid GLB material color.");
+  const bool hasEnvironment =
+      o.useLightingRig && !o.lighting.environments.empty();
+  out.linearSampling = hasEnvironment;
+  struct EnvironmentSample {
+    std::array<EnvironmentDirection, 3> positions;
+    EnvironmentDirection normal;
+  };
+  std::vector<EnvironmentSample> environmentSamples;
   bool hasPointLights = false;
   if (o.useLightingRig) {
     require(std::isfinite(o.lighting.ambient) && o.lighting.ambient >= 0.0 &&
@@ -356,7 +375,7 @@ RenderScene prepareRender(const Asset &asset, const RenderOptions &o,
             for (auto &v : color) v = linearToSrgb(srgbToLinear(v) * gray);
         }
 
-        if (o.useLightingRig) {
+        if (o.useLightingRig && !o.lighting.preserveDefaultLighting) {
           // The renderer is intentionally two-sided. Orient the face normal
           // toward the camera before evaluating camera-relative diffuse lights.
           const double facing = dot(normal, view) < 0.0 ? -1.0 : 1.0;
@@ -410,9 +429,63 @@ RenderScene prepareRender(const Asset &asset, const RenderOptions &o,
             out.bounds[2] = std::max(out.bounds[2], v.x); out.bounds[3] = std::max(out.bounds[3], v.y);
           }
           out.triangles.push_back(triangle);
+          if (hasEnvironment) {
+            EnvironmentSample sample;
+            const Vec corners[] = {polygon[0], polygon[j], polygon[j + 1]};
+            for (int k = 0; k < 3; ++k) {
+              const auto w        = instance.worldSpace(corners[k]);
+              sample.positions[k] = {{w.x, w.y, w.z}};
+            }
+            const auto n  = cross(sub(worldB, worldA), sub(worldC, worldA));
+            const auto l  = std::hypot(n.x, n.y, n.z);
+            sample.normal = {{n.x / l, n.y / l, n.z / l}};
+            environmentSamples.push_back(sample);
+          }
         }
       }
     }
+  }
+  if (hasEnvironment) {
+    const auto eye   = instance.worldSpace({0, 0, 0});
+    const auto ortho = instance.worldSpace({0, 0, 1});
+    out.sampleShader =
+        [samples = std::move(environmentSamples), triangles = out.triangles,
+         layers = o.lighting.environments, perspective = o.perspective, eye,
+         ortho](std::size_t index, const std::array<double, 3> &bary) {
+          const auto &s = samples.at(index);
+          auto weights  = bary;
+          if (perspective) {
+            double sum = 0;
+            for (int i = 0; i < 3; ++i) {
+              weights[i] *= triangles[index].vertices[i].depth;
+              sum += weights[i];
+            }
+            for (auto &w : weights) w /= sum;
+          }
+          EnvironmentDirection p{}, v{}, n = s.normal;
+          for (int k = 0; k < 3; ++k) {
+            for (int i = 0; i < 3; ++i) p[k] += weights[i] * s.positions[i][k];
+            const double e[] = {eye.x, eye.y, eye.z};
+            const double o[] = {ortho.x, ortho.y, ortho.z};
+            v[k]             = perspective ? e[k] - p[k] : o[k] - e[k];
+          }
+          const double l = std::hypot(v[0], v[1], v[2]);
+          if (!(l > 0)) return ColorPixel{};
+          double facing = 0;
+          for (int k = 0; k < 3; ++k) {
+            v[k] /= l;
+            facing += v[k] * n[k];
+          }
+          if (facing < 0)
+            for (auto &c : n) c = -c;
+          EnvironmentColor color;
+          for (int k = 0; k < 3; ++k)
+            color[k] = srgbToLinear(triangles[index].color[k]);
+          color = shadeEnvironment(color, n, v, layers);
+          return ColorPixel{linearToSrgbExtended(color[0]),
+                            linearToSrgbExtended(color[1]),
+                            linearToSrgbExtended(color[2]), 1};
+        };
   }
   if (skipped) out.warnings.push_back("Point/line primitives are not rendered; triangle surfaces only.");
   return out;
@@ -448,6 +521,9 @@ std::vector<ColorPixel> renderLayeredTile(const RenderScene &scene,
   std::vector<ColorPixel> output(count);
   if (!count || scene.empty()) return output;
   require(nesting < 64, "3D Merge nesting exceeds the render limit.");
+  bool linearSampling = scene.linearSampling;
+  for (const auto &layer : scene.layers)
+    linearSampling |= layer.scene && layer.scene->linearSampling;
   if (!scene.layers.empty()) {
     require(scene.triangles.empty(),
             "3D groups cannot also contain triangles.");
@@ -465,13 +541,15 @@ std::vector<ColorPixel> renderLayeredTile(const RenderScene &scene,
           renderLayeredTile(*layer.scene, request, canceled, nesting + 1);
       if (pixels.empty()) return {};
       for (std::size_t i = 0; i < count; ++i) {
-        const auto &p         = pixels[i];
+        const auto p          = outputPixel(pixels[i], linearSampling);
         auto &out             = output[i];
         const float remaining = 1 - p.alpha;
         out = {p.r + out.r * remaining, p.g + out.g * remaining,
                p.b + out.b * remaining, p.alpha + out.alpha * remaining};
       }
     }
+    if (linearSampling)
+      for (auto &p : output) p = displayPixel(p);
     applyColorScale(scene, output);
     return output;
   }
@@ -631,19 +709,22 @@ std::vector<ColorPixel> renderLayeredTile(const RenderScene &scene,
       }
       if (linear.alpha > 0)
         samples[sample].color = {
-            linearToSrgb(linear.r / linear.alpha) * linear.alpha,
-            linearToSrgb(linear.g / linear.alpha) * linear.alpha,
-            linearToSrgb(linear.b / linear.alpha) * linear.alpha, linear.alpha};
+            linearToSrgbExtended(linear.r / linear.alpha) * linear.alpha,
+            linearToSrgbExtended(linear.g / linear.alpha) * linear.alpha,
+            linearToSrgbExtended(linear.b / linear.alpha) * linear.alpha,
+            linear.alpha};
     }
   }
   for (std::size_t i = 0; i < count; ++i)
     for (int s = 0; s < 4; ++s) {
-      const auto &c = samples[i * 4 + s].color;
+      const auto c = outputPixel(samples[i * 4 + s].color, linearSampling);
       output[i].r += c.r * 0.25f;
       output[i].g += c.g * 0.25f;
       output[i].b += c.b * 0.25f;
       output[i].alpha += c.alpha * 0.25f;
     }
+  if (linearSampling)
+    for (auto &p : output) p = displayPixel(p);
   applyColorScale(scene, output);
   return output;
 }
