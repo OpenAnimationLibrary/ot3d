@@ -1,6 +1,7 @@
 // Production FX and native-column regression, without an application or GL
 // context.
 #include "../../stdfx/environmentreflectionfx.cpp"
+#include "../../stdfx/imagebasedlightingfx.cpp"
 #include "../../stdfx/ammaterialfx.cpp"
 #include "../../stdfx/transform3dfx.cpp"
 #include "../../stdfx/threepointlightfx.cpp"
@@ -288,6 +289,89 @@ void testEnvironment(ToonzScene &scene, TFx *column, TRasterFx *snapshot,
           "zero reflectivity changed base shading");
   int canceled = 1;
   require(!fx.get3DRenderScene(0, &canceled), "environment cancellation");
+}
+
+void testImageBasedLighting(ToonzScene &scene, TFx *column, TRasterFx *snapshot,
+                            const QString &path) {
+  TFxP owner = new ImageBasedLightingFx;
+  auto &fx   = *static_cast<ImageBasedLightingFx *>(owner.getPointer());
+  TFxP image = new EnvironmentTestImageFx;
+  fx.getInputPort(0)->setFx(column);
+  fx.getInputPort(1)->setFx(image.getPointer());
+  TRenderSettings settings;
+  TRectD bounds;
+  const int before = EnvironmentTestImageFx::computes;
+  require(fx.doGetBBox(0, bounds, settings) && !bounds.isEmpty() &&
+              EnvironmentTestImageFx::computes == before,
+          "IBL bounds evaluated pixels");
+  otglb::RenderTile tile;
+  tile.width = tile.height = 32;
+  tile.x = tile.y     = -16;
+  const auto prepared = evaluateEnvironment(fx, 0, settings);
+  const auto p        = otglb::renderTile(*prepared, tile)[16 * 32 + 16];
+  require(std::abs(otglb::srgbToLinear(p.r) - 4) < .001 && p.g < .001 &&
+              p.alpha == 1,
+          "IBL default light leaked or albedo/HDR lost");
+  const auto linearOutput = evaluateEnvironmentFloat(fx, 0);
+  require(std::abs(linearOutput->pixels(16)[16].r - 4) < .001 &&
+              linearOutput->isLinear(),
+          "IBL float output lost calibrated linear radiance");
+  set(fx, "intensity", 0);
+  const auto black = evaluateEnvironment(fx, 0, settings);
+  require(otglb::renderTile(*black, tile)[16 * 32 + 16].r == 0,
+          "zero IBL fell back to a headlight");
+  set(fx, "intensity", 100);
+  set(fx, "exposure", -1);
+  const auto exposed = evaluateEnvironment(fx, 0, settings);
+  require(std::abs(otglb::srgbToLinear(
+                       otglb::renderTile(*exposed, tile)[16 * 32 + 16].r) -
+                   2) < .001,
+          "IBL exposure is not linear stops");
+  set(fx, "exposure", 0);
+  TFxP lightOwner = new ThreePointLightFx;
+  auto &light     = *static_cast<ThreePointLightFx *>(lightOwner.getPointer());
+  light.getInputPort(0)->setFx(&fx);
+  set(light, "masterIntensity", 0);
+  auto combined = evaluateEnvironment(light, 0, settings);
+  require(
+      std::abs(otglb::renderTile(*combined, tile)[16 * 32 + 16].r - p.r) < .001,
+      "downstream light master changed IBL");
+  light.getInputPort(0)->setFx(column);
+  fx.getInputPort(0)->setFx(&light);
+  combined = evaluateEnvironment(fx, 0, settings);
+  require(
+      std::abs(otglb::renderTile(*combined, tile)[16 * 32 + 16].r - p.r) < .001,
+      "upstream light master changed IBL");
+  fx.getInputPort(0)->setFx(column);
+  auto cloned = TFxP(fx.clone(false));
+  require(cloned && !cloned->getInputPort(1)->getFx(),
+          "IBL shallow clone contract");
+  cloned->getInputPort(0)->setFx(column);
+  cloned->getInputPort(1)->setFx(image.getPointer());
+  require(cloned->getAlias(0, settings) == fx.getAlias(0, settings),
+          "IBL clone alias");
+  {
+    TOStream out{TFilePath(path)};
+    out << owner.getPointer();
+  }
+  TPersist *persist = nullptr;
+  {
+    TIStream in{TFilePath(path)};
+    in >> persist;
+  }
+  TFxP restored = dynamic_cast<TFx *>(persist);
+  require(restored && restored->getInputPort("Source")->getFx() &&
+              restored->getInputPort("Environment")->getFx(),
+          "IBL persistence");
+  testEnvironmentRenderTree(scene, fx, settings);
+  fx.getInputPort(0)->setFx(snapshot);
+  require(fx.getAlias(0, settings) != fx.getAlias(1, settings),
+          "animated IBL alias");
+  const auto green = evaluateEnvironment(fx, 1, settings);
+  const auto g     = otglb::renderTile(*green, tile)[16 * 32 + 16];
+  require(g.r < .001 && g.g < .001,
+          "IBL ignored red palette albedo or retained old image");
+  fx.getInputPort(0)->setFx(column);
 }
 
 void testMaterials(ToonzScene &scene, TXshLevel *level, TFx *column,
@@ -662,6 +746,8 @@ int main(int argc, char **argv) {
     TRasterFxP environmentSnapshot = makeAMLevelRenderFx(xsheet, 0, 0);
     testEnvironment(scene, column, environmentSnapshot.getPointer(),
                     temp.filePath("environment.xml"));
+    testImageBasedLighting(scene, column, environmentSnapshot.getPointer(),
+                           temp.filePath("ibl.xml"));
     testMaterials(scene, level, column, temp.filePath("surface.mat"));
     testShine(scene, temp.filePath("shine.mat"));
     const auto original = level->getAMLevel()->mesh();

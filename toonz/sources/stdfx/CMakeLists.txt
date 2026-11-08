@@ -170,6 +170,7 @@ set(SOURCES
     targetspotfx.cpp
     texturefx.cpp
     ammaterialfx.cpp
+    imagebasedlightingfx.cpp
     environmentreflectionfx.cpp
     environmentfx.h
     threepointlightfx.cpp
