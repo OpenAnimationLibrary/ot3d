@@ -49,6 +49,64 @@ int main() {
     near(mesh.triangles[0].color[1], 0);
     for (const auto &t : mesh.triangles)
       for (const auto &v : t.vertices) near(v[2], 0);
+    check(mesh.triangles[0].hasNormals, "preview patch lacks smooth normals");
+    for (const auto &t : mesh.triangles)
+      for (const auto &n : t.normals) {
+        near(n[0], 0);
+        near(n[1], 0);
+        near(n[2], 1);
+      }
+    auto curved                            = d;
+    curved.models[0].points[3].position[2] = 1;
+    const auto coarse                      = otam::previewMesh(curved, 0, 2),
+               fine                        = otam::previewMesh(curved, 0, 4);
+    bool varying                           = false;
+    for (const auto &t : coarse.triangles)
+      for (int i = 0; i < 3; ++i) {
+        if (std::abs(t.normals[i][0]) > .1 || std::abs(t.normals[i][1]) > .1)
+          varying = true;
+        bool matched = false;
+        for (const auto &f : fine.triangles)
+          for (int j = 0; j < 3; ++j)
+            if (t.vertices[i] == f.vertices[j]) {
+              for (int k = 0; k < 3; ++k)
+                near(t.normals[i][k], f.normals[j][k]);
+              matched = true;
+            }
+        check(matched, "shared tessellation sample missing");
+      }
+    check(varying, "curved patch normals stayed flat");
+    otam::Mesh normalMesh;
+    otam::Triangle nt;
+    nt.vertices   = {{{{-1, -1, 0}}, {{1, -1, 0}}, {{0, 1, 0}}}};
+    nt.hasNormals = true;
+    for (auto &n : nt.normals) n = {{1, 0, 1}};
+    normalMesh.triangles.push_back(nt);
+    auto scaled = otam::transformed(normalMesh, otam::scaling(2, 1, 1));
+    near(scaled.triangles[0].normals[0][0], .5);
+    near(scaled.triangles[0].normals[0][2], 1);
+    check(!otam::transformed(normalMesh, otam::scaling(0, 0, 0))
+               .triangles[0]
+               .hasNormals,
+          "singular model transform kept invalid shading normals");
+    const auto optical = otam::projected(
+        normalMesh,
+        otam::multiply(otam::translation(0, 0, 1000), otam::rotation(0, 20, 0)),
+        otam::identity());
+    check(!optical.triangles.empty(),
+          "normal projection clipped visible triangle");
+    for (const auto &t : optical.triangles)
+      for (const auto &n : t.normals)
+        for (int k = 0; k < 3; ++k) near(n[k], nt.normals[0][k]);
+    normalMesh.triangles[0].vertices = {
+        {{{-1, -1, 998}}, {{1, -1, 1002}}, {{0, 1, 998}}}};
+    normalMesh.triangles[0].normals = {{{{1, 0, 1}}, {{0, 1, 1}}, {{0, 0, 1}}}};
+    const auto normalClipped        = otam::projected(normalMesh, 0, 0, 0);
+    check(normalClipped.triangles.size() == 2 &&
+              normalClipped.triangles[0].hasNormals,
+          "normal clipping");
+    near(normalClipped.triangles[0].normals[1][0], .75);
+    near(normalClipped.triangles[0].normals[1][1], .25);
     auto overlap  = d;
     auto topGroup = overlap.models[0].groups.front();
     topGroup.name = "Cover";

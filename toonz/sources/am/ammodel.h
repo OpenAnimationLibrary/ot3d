@@ -70,12 +70,22 @@ struct Triangle {
   Color color;
   std::size_t patch = 0;
   int colorGroup    = -1;  // -1 is the default surface.
+  // Smooth derivatives of the preview patch, independent of tessellation.
+  // Empty/false retains flat shading for triangles and manually built meshes.
+  std::array<Vec3, 3> normals{};
+  bool hasNormals = false;
 };
 struct Mesh {
+  // All containing groups, independent of the palette color winner.
+  std::vector<std::vector<std::string>> patchGroups;
+  bool amMaterials = true;
   std::vector<Triangle> triangles;
   std::vector<std::string> warnings;
 };
 
+// Bounded native tagged-source reader shared by model and material documents.
+Document parseSource(std::string source, const std::string &root,
+                     const Limits &limits = Limits());
 Document parse(std::string source, const Limits &limits = Limits());
 Mesh previewMesh(const Document &document, std::size_t model = 0,
                  unsigned subdivisions = 6, const Limits &limits = Limits());
@@ -95,7 +105,8 @@ Mesh projected(const Mesh &mesh, double cameraX, double cameraY, double cameraZ,
                double focus = 1000.0, double nearPlane = 1.0);
 // Optical camera pose, looking along local -Z. imageToStage embeds the
 // legacy output-plane affine so the downstream OT camera affine is applied
-// exactly once. It must preserve depth (the Z coordinate).
+// exactly once. It must preserve depth (the Z coordinate). Smooth shading
+// normals remain in world space after projection.
 Mesh projected(const Mesh &mesh, const Matrix &cameraToWorld,
                const Matrix &imageToStage, double focus = 1000.0,
                double nearPlane = 1.0);

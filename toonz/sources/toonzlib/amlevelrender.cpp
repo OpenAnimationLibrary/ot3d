@@ -18,6 +18,8 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <map>
+#include <set>
 #include <stdexcept>
 
 namespace {
@@ -90,8 +92,9 @@ static std::shared_ptr<const otam::Mesh> prepareModelGeometryImpl(
                                    : glb->error());
     // Adapt only the draw triangles. The GLB asset remains a separate
     // resource and never becomes an A:M document or spline/patch level.
-    auto triangles      = std::make_shared<otam::Mesh>();
-    triangles->warnings = geometry->warnings;
+    auto triangles         = std::make_shared<otam::Mesh>();
+    triangles->warnings    = geometry->warnings;
+    triangles->amMaterials = false;
     triangles->triangles.reserve(geometry->triangles.size());
     for (const auto &triangle : geometry->triangles)
       triangles->triangles.push_back({triangle.vertices, triangle.color});
@@ -154,7 +157,25 @@ public:
                        int(3 * sizeof(double)));
         hash.addData(reinterpret_cast<const char *>(triangle.color.data()),
                      int(3 * sizeof(float)));
+        hash.addData(triangle.hasNormals ? "smooth" : "flat");
+        if (triangle.hasNormals)
+          for (const auto &n : triangle.normals)
+            hash.addData(reinterpret_cast<const char *>(n.data()),
+                         int(3 * sizeof(double)));
       }
+    if (m_geometry) {
+      for (const auto &groups : m_geometry->patchGroups) {
+        hash.addData("patch:");
+        for (const auto &name : groups) {
+          hash.addData(QByteArray::number(qulonglong(name.size())));
+          hash.addData(":");
+          hash.addData(name.data(), int(name.size()));
+        }
+      }
+      hash.addData(m_geometry->amMaterials ? "AM" : "GLB");
+      for (const auto &t : m_geometry->triangles)
+        hash.addData(QByteArray::number(qulonglong(t.patch)) + ":");
+    }
     hash.addData(reinterpret_cast<const char *>(m_camera.pose.data()),
                  int(16 * sizeof(double)));
     hash.addData(reinterpret_cast<const char *>(m_camera.imageToStage.data()),
@@ -164,10 +185,10 @@ public:
   }
   void setColorFilter(const TPixel32 &color) { m_colorFilter = color; }
   TFx *clone(bool recursive = true) const override {
-    auto *fx = static_cast<NativeModelRenderFx *>(TFx::clone(recursive));
-    fx->m_geometry    = m_geometry;
-    fx->m_camera      = m_camera;
-    fx->m_project     = m_project;
+    auto *fx       = static_cast<NativeModelRenderFx *>(TFx::clone(recursive));
+    fx->m_geometry = m_geometry;
+    fx->m_camera   = m_camera;
+    fx->m_project  = m_project;
     fx->m_colorFilter = m_colorFilter;
     fx->m_key         = m_key;
     return fx;
@@ -182,13 +203,74 @@ public:
   std::shared_ptr<const otglb::RenderScene> get3DRenderScene(
       double, const int *canceled, const otglb::LightingRig *lighting = nullptr,
       const std::vector<otglb::ModelTransform> *transforms = nullptr,
-      const TRenderSettings *settings = nullptr) const override {
+      const TRenderSettings *settings                      = nullptr,
+      const otam::MaterialBindings *materials = nullptr) const override {
     if (!m_geometry || (canceled && *canceled)) return {};
     const otglb::LightingRig dark;
     if (settings && settings->m_flatRender)
       lighting = nullptr;
     else if (settings && settings->m_disableDefaultLighting && !lighting)
       lighting = &dark;
+    if (materials && !materials->empty() && !m_geometry->amMaterials)
+      throw std::runtime_error(
+          "A:M Material requires a native A:M model source");
+    // Resolve assignments against all patch memberships, including groups with
+    // no diffuse color. Downstream assignments win over upstream assignments.
+    struct ResolvedSurface {
+      otam::Surface surface;
+      bool paletteColor;
+    };
+    std::vector<ResolvedSurface> surfaces;
+    std::map<std::pair<std::size_t, std::size_t>, std::size_t> combinations;
+    std::map<std::size_t, std::size_t> assigned;
+    if (materials)
+      for (std::size_t i = 0; i < materials->size(); ++i) {
+        const auto &binding = (*materials)[i];
+        if (!binding.previewUnsupported &&
+            !binding.material.unsupported.empty())
+          throw std::runtime_error("A:M Material cannot render " +
+                                   binding.material.unsupported.front() +
+                                   "; use Supported Attributes Preview to "
+                                   "inspect the supported subset");
+        const std::size_t base = surfaces.size();
+        surfaces.push_back({binding.material.surface, binding.paletteColor});
+        bool matched = false;
+        std::set<std::size_t> visited;
+        for (const auto &triangle : m_geometry->triangles) {
+          const auto p = triangle.patch;
+          if (!visited.insert(p).second) continue;
+          const auto &groups = m_geometry->patchGroups;
+          if (binding.group.empty() ||
+              (p < groups.size() &&
+               std::find(groups[p].begin(), groups[p].end(), binding.group) !=
+                   groups[p].end())) {
+            auto previous        = assigned.find(p);
+            std::size_t selected = base;
+            if (binding.specularOnly && previous != assigned.end()) {
+              const auto key = std::make_pair(i, previous->second);
+              auto merged    = combinations.find(key);
+              if (merged == combinations.end()) {
+                auto combined = surfaces[previous->second];
+                combined.surface.specularSize =
+                    binding.material.surface.specularSize;
+                combined.surface.specularIntensity =
+                    binding.material.surface.specularIntensity;
+                combined.surface.specularColor =
+                    binding.material.surface.specularColor;
+                const auto index = surfaces.size();
+                surfaces.push_back(combined);
+                merged = combinations.emplace(key, index).first;
+              }
+              selected = merged->second;
+            }
+            assigned[p] = selected;
+            matched     = true;
+          }
+        }
+        if (!matched && !m_geometry->triangles.empty())
+          throw std::runtime_error(
+              "A:M Material group has no renderable patches: " + binding.group);
+      }
     otam::Mesh mesh = *m_geometry;
     auto cameraPose = m_camera.pose;
     if (transforms)
@@ -212,6 +294,7 @@ public:
         throw std::runtime_error("Invalid A:M preview lighting");
       for (const auto &light : lighting->lights) light.validate();
       for (auto &triangle : mesh.triangles) {
+        if (assigned.count(triangle.patch)) continue;
         if (canceled && *canceled) return {};
         // Preserve the native preview's world-space light directions. Camera
         // motion changes the eye/facing, not the authored lighting rig.
@@ -250,6 +333,11 @@ public:
       mesh = otam::projected(mesh, cameraPose, m_camera.imageToStage);
     auto scene        = std::make_shared<otglb::RenderScene>();
     scene->warnings   = mesh.warnings;
+    std::set<std::string> groups;
+    for (const auto &patch : mesh.patchGroups)
+      groups.insert(patch.begin(), patch.end());
+    groups.erase("");
+    scene->materialGroups.assign(groups.begin(), groups.end());
     scene->colorScale = {{m_colorFilter.r / 255.f, m_colorFilter.g / 255.f,
                           m_colorFilter.b / 255.f, m_colorFilter.m / 255.f}};
     scene->triangles.reserve(mesh.triangles.size());
@@ -269,6 +357,125 @@ public:
         scene->bounds[3] = std::max(scene->bounds[3], v[1]);
       }
       scene->triangles.push_back(triangle);
+    }
+    if (!assigned.empty()) {
+      struct MaterialSample {
+        std::array<otam::Vec3, 3> positions, normals;
+        bool hasNormals = false;
+        otam::Color color;
+        int binding = -1;
+      };
+      std::vector<MaterialSample> samples;
+      samples.reserve(mesh.triangles.size());
+      const auto imageInverse = otam::inverse(m_camera.imageToStage);
+      for (const auto &triangle : mesh.triangles) {
+        MaterialSample sample;
+        sample.positions  = triangle.vertices;
+        sample.normals    = triangle.normals;
+        sample.hasNormals = triangle.hasNormals;
+        sample.color      = triangle.color;
+        auto found        = assigned.find(triangle.patch);
+        if (found != assigned.end()) sample.binding = int(found->second);
+        if (m_project)
+          for (auto &p : sample.positions) {
+            p                     = otam::transform(imageInverse, p);
+            const double distance = 1000.0 / p[2];
+            p                     = otam::transform(cameraPose,
+                                                    {{p[0] * distance / 1000.0,
+                                                      p[1] * distance / 1000.0, -distance}});
+          }
+        samples.push_back(sample);
+      }
+      const auto bindings    = *materials;
+      const bool perspective = m_project;
+      const bool useRig      = lighting != nullptr;
+      const auto rig         = lighting ? *lighting : otglb::LightingRig();
+      const otam::Vec3 eye{{cameraPose[3], cameraPose[7], cameraPose[11]}};
+      const auto triangles = scene->triangles;
+      scene->sampleShader  = [samples = std::move(samples), surfaces,
+                             perspective, useRig, rig, eye,
+                             triangles](std::size_t index,
+                                        const std::array<double, 3> &bary) {
+        const auto &sample = samples.at(index);
+        if (sample.binding < 0)
+          return otglb::ColorPixel{sample.color[0], sample.color[1],
+                                   sample.color[2], 1};
+        const auto &binding = surfaces.at(sample.binding);
+        const auto &surface = binding.surface;
+        auto weights        = bary;
+        if (perspective) {
+          double sum = 0;
+          for (int j = 0; j < 3; ++j) {
+            weights[j] *= triangles[index].vertices[j].depth;
+            sum += weights[j];
+          }
+          for (double &w : weights) w /= sum;
+        }
+        otam::Vec3 position{}, a{}, b{}, view{}, normal{};
+        for (int k = 0; k < 3; ++k) {
+          for (int j = 0; j < 3; ++j)
+            position[k] += weights[j] * sample.positions[j][k];
+          a[k]    = sample.positions[1][k] - sample.positions[0][k];
+          b[k]    = sample.positions[2][k] - sample.positions[0][k];
+          view[k] = eye[k] - position[k];
+        }
+        const auto dot = [](const otam::Vec3 &a, const otam::Vec3 &b) {
+          return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+        };
+        normal = {{a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2],
+                   a[0] * b[1] - a[1] * b[0]}};
+        if (sample.hasNormals) {
+          otam::Vec3 smooth{};
+          for (int k = 0; k < 3; ++k)
+            for (int j = 0; j < 3; ++j)
+              smooth[k] += weights[j] * sample.normals[j][k];
+          if (dot(smooth, smooth) > 1e-20) normal = smooth;
+        }
+        const double nl = std::sqrt(dot(normal, normal));
+        const double vl = std::sqrt(dot(view, view));
+        if (nl < 1e-15 || vl < 1e-15) return otglb::ColorPixel{};
+        const double facing = dot(normal, view) < 0 ? -1 : 1;
+        for (int k = 0; k < 3; ++k) {
+          normal[k] *= facing / nl;
+          view[k] /= vl;
+        }
+        std::vector<otam::SurfaceLight> lights;
+        if (!useRig) lights.push_back({view, {{1, 1, 1}}, 1});
+        for (const auto &light : rig.lights) {
+          otam::SurfaceLight l;
+          l.direction = light.direction;
+          if (light.point)
+            for (int k = 0; k < 3; ++k)
+              l.direction[k] = light.point->position[k] - position[k];
+          const double length = std::sqrt(dot(l.direction, l.direction));
+          if (length < 1e-15) continue;
+          for (int k = 0; k < 3; ++k) {
+            l.direction[k] /= length;
+            l.color[k] = otglb::srgbToLinear(light.color[k]);
+          }
+          l.intensity = light.diffuse(l.direction, position);
+          lights.push_back(l);
+        }
+        const auto diffuse = !binding.paletteColor && surface.diffuse
+                                  ? *surface.diffuse
+                                  : sample.color;
+        const auto color   = otam::shadeSurface(surface, diffuse, normal, view,
+                                                 lights, rig.ambient, rig.master);
+        const float alpha  = float(1 - surface.transparency);
+        return otglb::ColorPixel{otglb::linearToSrgb(color[0]) * alpha,
+                                 otglb::linearToSrgb(color[1]) * alpha,
+                                 otglb::linearToSrgb(color[2]) * alpha, alpha};
+      };
+      for (const auto &binding : bindings)
+        for (const auto &attribute : binding.material.deferred)
+          scene->warnings.push_back("Deferred A:M " + attribute);
+      for (const auto &binding : bindings)
+        for (const auto &attribute : binding.material.unsupported)
+          scene->warnings.push_back("Supported Attributes Preview omits " +
+                                    attribute);
+      scene->warnings.push_back(
+          "A:M specular highlights use a Blinn preview; Hash renderer parity "
+          "is unvalidated.");
     }
     return scene;
   }
@@ -382,14 +589,14 @@ std::shared_ptr<const otglb::RenderScene> prepareNativeModelColumnRenderScene(
     TLevelColumnFx *column, double frame, const int *canceled,
     const otglb::LightingRig *lighting,
     const std::vector<otglb::ModelTransform> *transforms,
-    const TRenderSettings *settings) {
+    const TRenderSettings *settings, const otam::MaterialBindings *materials) {
   if (!column || !column->getColumn() || (canceled && *canceled)) return {};
-  auto *source = column->getColumn();
+  auto *source        = column->getColumn();
   TRasterFxP snapshot = makeNativeModelRenderFx(
       source->getXsheet(), source->getIndex(), frame, false);
   const auto *model =
       dynamic_cast<const T3DRenderSource *>(snapshot.getPointer());
   return model ? model->get3DRenderScene(frame, canceled, lighting, transforms,
-                                         settings)
+                                         settings, materials)
                : nullptr;
 }

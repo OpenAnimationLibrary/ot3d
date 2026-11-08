@@ -89,7 +89,11 @@ public:
   std::shared_ptr<const otglb::RenderScene> get3DRenderScene(
       double frame, const int *canceled, const otglb::LightingRig * = nullptr,
       const std::vector<otglb::ModelTransform> *transforms = nullptr,
-      const TRenderSettings *settings = nullptr) const override {
+      const TRenderSettings *settings                      = nullptr,
+      const otam::MaterialBindings *materials = nullptr) const override {
+    if (materials && !materials->empty())
+      throw std::runtime_error(
+          "A:M Material requires a native A:M model source");
     return scene(frame, canceled, transforms, settings);
   }
 

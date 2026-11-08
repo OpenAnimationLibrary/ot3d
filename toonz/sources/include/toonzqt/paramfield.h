@@ -637,6 +637,7 @@ class DVAPI StringParamField final : public ParamField {
   DVGui::LineEdit *m_textFld            = nullptr;
   component::MyTextEdit *m_multiTextFld = nullptr;
   bool m_glbFileControls                = false;
+  bool m_amMaterialFileControls = false, m_amMaterialGroupControls = false;
   bool m_exrFileControls                = false;
   bool m_exrChoiceControls              = false;
   TFxAovChoiceKind m_exrChoiceKind      = TFxAovChoiceKind::Channel;
@@ -648,6 +649,8 @@ public:
 
   // Select or clear a GLB reference without opening or validating its data.
   void enableGlbFileControls();
+  void enableAMMaterialFileControls();
+  void enableAMMaterialGroupControls();
 
   // Select/inspect an EXR, or choose a stable part/layer/channel value
   // discovered from the current EXR AOV source.
@@ -661,7 +664,8 @@ public:
   void update(int frame) override;
 
   QSize getPreferredSize() override {
-    if (m_glbFileControls || m_exrFileControls || m_exrChoiceControls)
+    if (m_glbFileControls || m_amMaterialFileControls ||
+        m_amMaterialGroupControls || m_exrFileControls || m_exrChoiceControls)
       return sizeHint().expandedTo(QSize(260, 54));
     if (m_textFld)
       return QSize(100, 20);

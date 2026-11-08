@@ -64,7 +64,8 @@ class Transform3DFx final : public TStandardRasterFx, public T3DRenderSource {
       double frame, const int *canceled,
       const otglb::LightingRig *lighting                   = nullptr,
       const std::vector<otglb::ModelTransform> *downstream = nullptr,
-      const TRenderSettings *renderSettings                = nullptr) const {
+      const TRenderSettings *renderSettings                = nullptr,
+      const otam::MaterialBindings *materials              = nullptr) const {
     if (!m_source.isConnected()) return {};
     auto *source = m_source.source();
     if (!source)
@@ -78,7 +79,7 @@ class Transform3DFx final : public TStandardRasterFx, public T3DRenderSource {
       transforms.insert(transforms.end(), downstream->begin(),
                         downstream->end());
     return source->get3DRenderScene(frame, canceled, lighting, &transforms,
-                                    renderSettings);
+                                    renderSettings, materials);
   }
 
 public:
@@ -123,8 +124,10 @@ public:
       double frame, const int *canceled,
       const otglb::LightingRig *lighting                   = nullptr,
       const std::vector<otglb::ModelTransform> *transforms = nullptr,
-      const TRenderSettings *renderSettings = nullptr) const override {
-    return scene(frame, canceled, lighting, transforms, renderSettings);
+      const TRenderSettings *renderSettings                = nullptr,
+      const otam::MaterialBindings *materials = nullptr) const override {
+    return scene(frame, canceled, lighting, transforms, renderSettings,
+                 materials);
   }
 
   std::shared_ptr<const otglb::RenderScene> get3DRenderGeometry(
