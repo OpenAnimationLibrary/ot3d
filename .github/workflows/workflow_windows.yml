@@ -73,15 +73,23 @@ jobs:
           choco install boost-msvc-${{ env.BOOST_TOOLSET }} --version=${{ env.BOOST_VERSION }} -y
         shell: cmd
 
-      # Install custom Qt 5.15.2 with WinTab support
       - name: Install custom Qt 5.15.2 with WinTab support
+        shell: pwsh
         run: |
-          @echo on
-          mkdir thirdparty\qt
-          curl -fsSL -o Qt5.15.2_wintab.zip https://github.com/shun-iwasawa/qt5/releases/download/v5.15.2_wintab/Qt5.15.2_wintab.zip
-          7z x Qt5.15.2_wintab.zip
-          move Qt5.15.2_wintab\5.15.2_wintab thirdparty\qt
-        shell: cmd
+          $archive = 'Qt5.15.2_wintab.zip'
+          # Use the upstream release asset ID to avoid failures on the browser download URL.
+          curl.exe --fail --silent --show-error --location --retry 3 --retry-max-time 90 --connect-timeout 15 --max-time 180 `
+            --header 'Accept: application/octet-stream' --output $archive `
+            'https://api.github.com/repos/shun-iwasawa/qt5/releases/assets/34012654'
+          if ($LASTEXITCODE -ne 0) { throw 'Could not download the WinTab Qt archive.' }
+          $expectedHash = 'eba1a5da9cb631ccd11991e38e0aab6cd7ecb506436389b397abb6ccf591111a'
+          if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne $expectedHash) {
+            throw 'The WinTab Qt archive failed SHA-256 verification.'
+          }
+          7z x -y $archive
+          if ($LASTEXITCODE -ne 0) { throw 'Could not extract the WinTab Qt archive.' }
+          New-Item -ItemType Directory -Path 'thirdparty\qt' -Force | Out-Null
+          Move-Item -LiteralPath 'Qt5.15.2_wintab\5.15.2_wintab' -Destination 'thirdparty\qt'
 
       - name: Install third-party prebuilt libs (LFS workaround)
         run: |
