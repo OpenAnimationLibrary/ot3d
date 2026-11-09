@@ -7,6 +7,7 @@
 #include <iterator>
 #include <limits>
 #include <locale>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string_view>
@@ -370,29 +371,62 @@ void applyAction(const Action &action, Model &model, double seconds) {
     model.points[i].position = position;
 }
 
-void setPositionKey(Action &action, const Model &model, Id id, double seconds,
-                    const Vec3 &offset) {
+void setPositionKeys(Action &action, const Model &model,
+                     const std::map<Id, Vec3> &offsets, double seconds) {
+  if (offsets.empty()) return;
   const auto time = canonicalActionTime(seconds);
-  if (!validOffset(offset)) fail("invalid position offset");
-  const auto point =
-      std::find_if(model.points.begin(), model.points.end(),
-                   [id](const auto &candidate) { return candidate.id == id; });
-  if (point == model.points.end())
+
+  struct Target {
+    Vec3 offset;
+    std::optional<Id> reference;
+  };
+  std::map<std::size_t, Target> targets;
+  std::size_t matched = 0;
+  for (const auto &point : model.points) {
+    const auto offset = offsets.find(point.id);
+    if (offset == offsets.end()) continue;
+    if (!validOffset(offset->second)) fail("invalid position offset");
+    const auto [target, inserted] =
+        targets.emplace(point.head, Target{offset->second, std::nullopt});
+    if (!inserted && target->second.offset != offset->second)
+      fail("conflicting offsets for a welded point");
+    ++matched;
+  }
+  if (matched != offsets.size())
     fail("control point is missing from the model");
 
-  const auto head   = point->head;
-  const auto headId = model.points.at(head).id;
-  const auto spline = std::find_if(
-      model.splines.begin(), model.splines.end(), [head](const auto &spline) {
-        return std::find(spline.points.begin(), spline.points.end(), head) !=
-               spline.points.end();
-      });
-  if (spline == model.splines.end()) fail("control point is outside a spline");
-  const auto reference  = model.points.at(spline->points.front()).id;
-  const auto existing   = action.channels.find(headId);
-  const bool newChannel = existing == action.channels.end();
-  const std::size_t added =
-      newChannel ? (time > 0 ? 2 : 1) : !existing->second.keys.count(time);
+  for (const auto &spline : model.splines) {
+    for (const auto i : spline.points) {
+      const auto target = targets.find(i);
+      if (target == targets.end()) continue;
+      if (target->second.reference)
+        fail("control point belongs to more than one spline");
+      target->second.reference = model.points.at(spline.points.front()).id;
+    }
+  }
+
+  // Allocate and validate every change before touching the existing tracks.
+  std::map<Id, MuscleChannel> updates;
+  std::size_t added = 0;
+  for (const auto &[i, target] : targets) {
+    if (!target.reference) fail("control point is outside a spline");
+    const auto &head = model.points.at(i);
+    if (head.head != i) fail("control point does not own a position");
+    MuscleChannel channel;
+    channel.reference   = *target.reference;
+    const auto existing = action.channels.find(head.id);
+    if (existing == action.channels.end()) {
+      if (time > 0) channel.keys.emplace(0, Vec3{});
+      added += channel.keys.size() + 1;
+    } else {
+      if (existing->second.reference != channel.reference)
+        fail("control point does not belong to the expected spline");
+      added += !existing->second.keys.count(time);
+    }
+    if (added > MaxPositionKeys) fail("position key limit exceeded");
+    channel.keys.emplace(time, target.offset);
+    updates.emplace(head.id, std::move(channel));
+  }
   if (added) {
     std::size_t count = added;
     for (const auto &entry : action.channels) {
@@ -401,18 +435,24 @@ void setPositionKey(Action &action, const Model &model, Id id, double seconds,
       count += entry.second.keys.size();
     }
   }
-  if (newChannel) {
-    MuscleChannel channel;
-    channel.reference = reference;
-    if (time > 0) channel.keys.emplace(0, Vec3{});
-    channel.keys.emplace(time, offset);
-    action.channels.emplace(headId, std::move(channel));
-  } else {
-    if (existing->second.reference != reference)
-      fail("control point does not belong to the expected spline");
-    existing->second.keys[time] = offset;
+
+  for (auto &[id, update] : updates) {
+    const auto existing = action.channels.find(id);
+    if (existing == action.channels.end()) continue;
+    auto &keys     = existing->second.keys;
+    const auto key = keys.find(time);
+    if (key == keys.end())
+      keys.merge(update.keys);
+    else
+      key->second = update.keys.begin()->second;
   }
+  action.channels.merge(updates);
   action.duration = std::max(action.duration, time);
+}
+
+void setPositionKey(Action &action, const Model &model, Id id, double seconds,
+                    const Vec3 &offset) {
+  setPositionKeys(action, model, {{id, offset}}, seconds);
 }
 
 }  // namespace otam

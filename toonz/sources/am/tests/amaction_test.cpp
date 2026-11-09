@@ -87,6 +87,48 @@ int main() {
     expect(otam::canonicalActionTime(1.0 / 59) == 2288.0 / 135000,
            "scene frame quantizes to the nearest A:M tick");
 
+    auto batch = action;
+    otam::setPositionKeys(
+        batch, base, {{2, {{2, 3, 4}}}, {3, {{2, 3, 4}}}, {6, {{-1, 0, 2}}}},
+        2);
+    expect(batch.duration == 2 && batch.channels.size() == 3 &&
+               batch.channels.at(4).keys == action.channels.at(4).keys &&
+               batch.channels.at(6).keys.at(0) == otam::Vec3{},
+           "batch preserves unselected tracks and coalesces welded points");
+    auto batchPose = base;
+    otam::applyAction(batch, batchPose, 2);
+    expect(batchPose.points[1].position == otam::Vec3{{3, 2, 4}} &&
+               batchPose.points[5].position == otam::Vec3{{-2, 1, 2}},
+           "batch applies offsets to both heads at the same time");
+    otam::setPositionKeys(batch, base, {{2, {{1, 2, 3}}}, {6, {{4, 5, 6}}}}, 2);
+    expect(batch.channels.at(2).keys.size() ==
+                   action.channels.at(2).keys.size() + 1 &&
+               batch.channels.at(2).keys.at(2) == otam::Vec3{{1, 2, 3}} &&
+               batch.channels.at(6).keys.size() == 2 &&
+               batch.channels.at(6).keys.at(2) == otam::Vec3{{4, 5, 6}},
+           "batch replaces existing keys at the same time");
+
+    const auto beforeConflict = otam::writeAction(batch);
+    rejects(
+        [&] {
+          otam::setPositionKeys(batch, base,
+                                {{2, {{1, 2, 3}}}, {3, {{4, 5, 6}}}}, 3);
+        },
+        "conflicting offsets for a welded point accepted");
+    expect(otam::writeAction(batch) == beforeConflict,
+           "conflicting offsets partially changed the action");
+
+    batch.channels.at(4).reference = 1;
+    const auto beforeIncompatible  = otam::writeAction(batch);
+    rejects(
+        [&] {
+          otam::setPositionKeys(batch, base,
+                                {{2, {{1, 2, 3}}}, {4, {{4, 5, 6}}}}, 3);
+        },
+        "batch accepted an incompatible track");
+    expect(otam::writeAction(batch) == beforeIncompatible,
+           "incompatible track partially changed the action");
+
     rejects([] { otam::parseAction(source("2 1 0.4500 0 0 0")); },
             "out-of-range subframe accepted");
     rejects([] { otam::parseAction(source("2 1 0 0 0 0 0 1 1 1")); },

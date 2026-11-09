@@ -35,11 +35,16 @@ The existing planar handles continue to edit XY/Z and Rz. Do not interpret their
 
 Select an exposed A:M cell in the top Xsheet, turn off Preview and choose
 **Control Point Editor**. The Viewer shows the model's splines and control points.
-Drag a point to move its attachment stack in the current view plane. Orbit the
-Camera 3D view to edit along a different plane. Drag the amber incoming or
-purple outgoing handle to change that spline occurrence's bias. Hold **Shift**
-while dragging a handle to change its length along its current direction.
-The same Shift gesture works on vector strokes and motion paths.
+Drag a point to move its attachment stack in the current view plane. **Shift-click**
+toggles a point in the selection. Drag from empty space to box-select points, or
+hold **Shift** to add the box to the selection. Drag any selected point to move the
+whole selection by the same model-space offset. Orbit the Camera 3D view to edit
+along a different plane.
+
+With one point selected, drag the amber incoming or purple outgoing handle to
+change that spline occurrence's bias. Hold **Shift** while dragging a handle to
+change its length along its current direction. The same Shift gesture works on
+vector strokes and motion paths.
 
 At a junction, **Alt-click** the selected point or choose **Next Attached A:M
 Spline** from the Viewer context menu to show the next occurrence's handles.
@@ -67,10 +72,11 @@ failure with stale geometry. Keep original sources and work on scene copies.
    scene frame is time zero for the action. The same menu is available in the
    Viewer for the selected model.
 2. Select **Control Point Editor** with Preview off. Move to a frame at or
-   after the action's start and drag a control point. The drag adds or updates
-   that point's position key at the current frame. The editor highlights
-   keyed points in pink. Right-click in the Viewer after selecting a point to
-   set a key at its current position or remove its key on that frame.
+   after the action's start and drag a selected control point. The drag adds
+   or updates a position key for every selected point at the current frame.
+   One undo reverses the whole drag. The editor highlights keyed points in
+   pink. Right-click in the Viewer to set or remove position keys for the
+   selected points on that frame.
 3. Scrub or play the scene. Motion is linear between keys and holds at the
    end. The model retains its base pose before the action starts. The action
    follows scene time, so extend the model's exposure over the frames you
