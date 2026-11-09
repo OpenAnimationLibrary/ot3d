@@ -3,6 +3,7 @@
 #include <QtGlobal>
 
 #include "sceneviewercontextmenu.h"
+#include "primitivelibrary.h"
 
 // Tnz6 includes
 #include "sceneviewer.h"
@@ -1832,6 +1833,18 @@ void SceneViewer::dragEnterEvent(QDragEnterEvent *event) {
 
   const QMimeData *mimeData = event->mimeData();
 
+  if (PrimitiveLibrary::isDrag(mimeData)) {
+    if (!isPreviewEnabled() && !is3DView() &&
+        !TApp::instance()->getCurrentFrame()->isEditingLevel() &&
+        PrimitiveLibrary::canDrop(mimeData)) {
+      event->setDropAction(Qt::CopyAction);
+      event->accept();
+    } else {
+      event->ignore();
+    }
+    return;
+  }
+
   if (acceptResourceOrFolderDrop(mimeData->urls())) {
     // Force CopyAction
     event->setDropAction(Qt::CopyAction);
@@ -1847,6 +1860,21 @@ void SceneViewer::dropEvent(QDropEvent *e) {
   if (m_freezedStatus != NO_FREEZED) return;
 
   const QMimeData *mimeData = e->mimeData();
+  if (PrimitiveLibrary::isDrag(mimeData)) {
+    if (!isPreviewEnabled() && !is3DView() &&
+        !TApp::instance()->getCurrentFrame()->isEditingLevel() &&
+        PrimitiveLibrary::drop(mimeData,
+                               winToWorld(e->posF() * getDevPixRatio()),
+                               e->keyboardModifiers() & Qt::ShiftModifier)) {
+      TApp::instance()->setActiveViewer(this);
+      setFocus(Qt::MouseFocusReason);
+      e->setDropAction(Qt::CopyAction);
+      e->accept();
+    } else {
+      e->ignore();
+    }
+    return;
+  }
   if (mimeData->hasUrls()) {
     IoCmd::LoadResourceArguments args;
 

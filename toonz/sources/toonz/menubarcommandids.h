@@ -507,6 +507,7 @@
 #define MI_ZoomInAndFitPanel "MI_ZoomInAndFitPanel"
 #define MI_ZoomOutAndFitPanel "MI_ZoomOutAndFitPanel"
 
+#define MI_OpenPrimitiveLibrary "MI_OpenPrimitiveLibrary"
 #define MI_OpenCustomPanels "MI_OpenCustomPanels"
 #define MI_CustomPanelEditor "MI_CustomPanelEditor"
 

@@ -51,6 +51,9 @@ SceneViewerContextMenu::SceneViewerContextMenu(SceneViewer *parent)
     addSeparator();
   }
 
+  addAction(commandManager->getAction(MI_OpenPrimitiveLibrary));
+  addSeparator();
+
   // tool
   TTool *tool = app->getCurrentTool()->getTool();
   if (tool && tool->isEnabled()) tool->addContextMenuItems(this);

@@ -140,6 +140,25 @@ int main(int argc, char **argv) {
       set(camera, c, 1);
     const auto baseline = prepareAMLevelGeometry(sheet, 0, 0, true);
 
+    // A model drop keeps the cursor position on empty stage space. Snapping
+    // uses the closest visible surface and leaves room for the new model.
+    constexpr double halfExtent = 50;
+    auto stageDrop =
+        nativeModelDropPosition(sheet, 0, {24, -36}, false, halfExtent);
+    nearlyEqual(stageDrop[0], 24);
+    nearlyEqual(stageDrop[1], -36);
+    nearlyEqual(stageDrop[2], 0);
+    check(sheet->setCell(0, 1, TXshCell(level, TFrameId(1))),
+          "expose foreground snap target");
+    auto *foreground = sheet->getStageObject(TStageObjectId::ColumnId(1));
+    set(foreground, TStageObject::T_Z, 100);
+    auto snapped = nativeModelDropPosition(sheet, 0, {2, -3}, true, halfExtent);
+    check(std::abs(snapped[2] - 150) < 1e-3, "closest model snap");
+    sheet->getColumn(1)->setCamstandVisible(false);
+    snapped = nativeModelDropPosition(sheet, 0, {2, -3}, true, halfExtent);
+    check(std::abs(snapped[2] - 50) < 1e-3, "hidden model snap exclusion");
+    sheet->removeColumn(1);
+
     // Legacy camera roll/zoom must not silently change existing native shading.
     auto *modelObject = sheet->getStageObject(TStageObjectId::ColumnId(0));
     set(modelObject, TStageObject::T_RotationX, 25);
