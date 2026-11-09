@@ -347,6 +347,12 @@ QMenuBar *StackedMenuBar::loadMenuBar(const TFilePath &fp) {
             // Older Windows profiles keep private menu XML files. Add the new
             // built-in command without replacing the user's customized menu.
             if (title == QStringLiteral("Help")) ensureHelpActions(menu);
+            if (title == QStringLiteral("Windows")) {
+              auto *library = CommandManager::instance()->getAction(
+                  MI_OpenPrimitiveLibrary);
+              if (library && !menu->actions().contains(library))
+                menu->addAction(library);
+            }
             menuBar->addMenu(menu);
           } else {
             reader.raiseError(tr("Failed to load menu %1").arg(title));
@@ -534,6 +540,7 @@ QMenuBar *StackedMenuBar::createCleanupMenuBar() {
     addMenuItem(otherWindowsMenu, MI_OpenToolbar);
     addMenuItem(otherWindowsMenu, MI_OpenToolOptionBar);
     addMenuItem(otherWindowsMenu, MI_OpenHistoryPanel);
+    addMenuItem(otherWindowsMenu, MI_OpenPrimitiveLibrary);
     addMenuItem(otherWindowsMenu, MI_OpenBrushPresetPanel);
     addMenuItem(otherWindowsMenu, MI_OpenToolPropertiesPanel);
     addMenuItem(otherWindowsMenu, MI_OpenTMessage);
@@ -706,6 +713,7 @@ QMenuBar *StackedMenuBar::createPltEditMenuBar() {
     addMenuItem(otherWindowsMenu, MI_OpenToolbar);
     addMenuItem(otherWindowsMenu, MI_OpenToolOptionBar);
     addMenuItem(otherWindowsMenu, MI_OpenHistoryPanel);
+    addMenuItem(otherWindowsMenu, MI_OpenPrimitiveLibrary);
     addMenuItem(otherWindowsMenu, MI_OpenBrushPresetPanel);
     addMenuItem(otherWindowsMenu, MI_OpenToolPropertiesPanel);
     addMenuItem(otherWindowsMenu, MI_OpenTMessage);
@@ -887,6 +895,7 @@ QMenuBar *StackedMenuBar::createInknPaintMenuBar() {
     addMenuItem(otherWindowsMenu, MI_OpenSchematic);
     addMenuItem(otherWindowsMenu, MI_OpenTasks);
     addMenuItem(otherWindowsMenu, MI_OpenHistoryPanel);
+    addMenuItem(otherWindowsMenu, MI_OpenPrimitiveLibrary);
     addMenuItem(otherWindowsMenu, MI_OpenBrushPresetPanel);
     addMenuItem(otherWindowsMenu, MI_OpenToolPropertiesPanel);
     addMenuItem(otherWindowsMenu, MI_OpenTMessage);
@@ -1074,6 +1083,7 @@ QMenuBar *StackedMenuBar::createXsheetMenuBar() {
     addMenuItem(otherWindowsMenu, MI_OpenToolbar);
     addMenuItem(otherWindowsMenu, MI_OpenToolOptionBar);
     addMenuItem(otherWindowsMenu, MI_OpenHistoryPanel);
+    addMenuItem(otherWindowsMenu, MI_OpenPrimitiveLibrary);
     addMenuItem(otherWindowsMenu, MI_OpenBrushPresetPanel);
     addMenuItem(otherWindowsMenu, MI_OpenToolPropertiesPanel);
     addMenuItem(otherWindowsMenu, MI_OpenTMessage);
@@ -1553,6 +1563,7 @@ QMenuBar *StackedMenuBar::createFullMenuBar() {
   addMenuItem(windowsMenu, MI_OpenBatchServers);
   addMenuItem(windowsMenu, MI_OpenTMessage);
   addMenuItem(windowsMenu, MI_OpenHistoryPanel);
+  addMenuItem(windowsMenu, MI_OpenPrimitiveLibrary);
   addMenuItem(windowsMenu, MI_AudioRecording);
 #if defined(x64)
   addMenuItem(windowsMenu, MI_OpenStopMotionPanel);

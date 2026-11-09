@@ -28,6 +28,10 @@ DVAPI bool isAMModelColumn(TFx *fx);
 DVAPI bool isNativeModelColumn(TFx *fx);
 DVAPI std::shared_ptr<const otam::Mesh> prepareNativeModelGeometry(
     TXsheet *xsheet, int column, double frame, bool projectToCamera);
+// Convert a camera-image point to a new model's position in table space.
+DVAPI otam::Vec3 nativeModelDropPosition(TXsheet *xsheet, int frame,
+                                         const TPointD &imagePoint, bool snap,
+                                         double halfExtent);
 DVAPI TRasterFx *makeNativeModelRenderFx(TXsheet *xsheet, int column,
                                          double frame, bool previewCamera);
 DVAPI TRasterFx *makeAMLevelRenderFx(TXsheet *xsheet, int column, double frame,

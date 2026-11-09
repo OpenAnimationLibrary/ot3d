@@ -236,6 +236,7 @@ set(SOURCES
     moviegenerator.cpp
     pane.cpp
     previewer.cpp
+    primitivelibrary.cpp
     previewfxmanager.cpp
     ruler.cpp
     scanlist.cpp

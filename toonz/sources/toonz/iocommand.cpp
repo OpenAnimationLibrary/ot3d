@@ -86,6 +86,7 @@
 #include "tvectorrenderdata.h"
 #include "tropcm.h"
 #include "tfiletype.h"
+#include "tdoubleparam.h"
 #include "tunit.h"
 #include "tproperty.h"
 #include "tlevel.h"
@@ -473,7 +474,16 @@ void removeSameNamedUnusedLevel(ToonzScene *scene, const TFilePath actualPath,
 // class LoadLevelUndo
 //---------------------------------------------------------------------------
 
+void placeModel(TXsheet *xsheet, int column,
+                const std::array<double, 3> &position) {
+  auto *object = xsheet->getStageObject(TStageObjectId::ColumnId(column));
+  object->getParam(TStageObject::T_X)->setDefaultValue(position[0]);
+  object->getParam(TStageObject::T_Y)->setDefaultValue(position[1]);
+  object->getParam(TStageObject::T_Z)->setDefaultValue(position[2]);
+}
+
 class LoadLevelUndo final : public TUndo {
+  std::optional<std::array<double, 3>> m_modelPosition;
   TXshLevelP m_level;
   TFilePath m_levelSetFolder;
   int m_row, m_col, m_rowCount;
@@ -495,6 +505,9 @@ public:
     m_levelSetFolder = levelSetFolder;
   }
   void setIsFirstTime(bool flag) { m_isFirstTime = flag; }
+  void setModelPosition(const std::array<double, 3> &position) {
+    m_modelPosition = position;
+  }
   void setCells(TXsheet *xsh, int row, int col, int rowCount) {
     m_row      = row;
     m_col      = col;
@@ -555,6 +568,7 @@ public:
       xsh->insertCells(m_row, m_col, m_rowCount);
       xsh->setCells(m_row, m_col, m_rowCount, &m_cells[0]);
     }
+    if (m_modelPosition) placeModel(xsh, m_col, *m_modelPosition);
     app->getCurrentXsheet()->notifyXsheetChanged();
     if (app->getCurrentFrame()->isEditingLevel() &&
         app->getCurrentLevel()->getLevel() == 0)
@@ -566,7 +580,8 @@ public:
            sizeof(TXshLevel);
   }
   QString getHistoryString() override {
-    return QObject::tr("Load Level  %1")
+    return (m_modelPosition ? QObject::tr("Place Model %1")
+                            : QObject::tr("Load Level  %1"))
         .arg(QString::fromStdWString(m_level->getName()));
   }
 };
@@ -1008,13 +1023,13 @@ TXshLevel *loadChildLevel(ToonzScene *parentScene, TFilePath actualPath,
 // for loading the all types of level other than scene/palette/sound
 //---------------------------------------------------------------------------
 
-TXshLevel *loadLevel(ToonzScene *scene,
-                     const IoCmd::LoadResourceArguments::ResourceData &rd,
-                     const TFilePath &castFolder, int row0, int &col0, int row1,
-                     int &col1, bool expose, std::vector<TFrameId> &fIds,
-                     TFrameId xFrom = TFrameId(), TFrameId xTo = TFrameId(),
-                     std::wstring levelName = L"", int step = -1, int inc = -1,
-                     int frameCount = -1, bool doesFileActuallyExist = true) {
+TXshLevel *loadLevel(
+    ToonzScene *scene, const IoCmd::LoadResourceArguments::ResourceData &rd,
+    const TFilePath &castFolder, int row0, int &col0, int row1, int &col1,
+    bool expose, std::vector<TFrameId> &fIds, TFrameId xFrom = TFrameId(),
+    TFrameId xTo = TFrameId(), std::wstring levelName = L"", int step = -1,
+    int inc = -1, int frameCount = -1, bool doesFileActuallyExist = true,
+    const std::optional<std::array<double, 3>> &modelPosition = std::nullopt) {
   TFilePath actualPath = scene->decodeFilePath(rd.m_path);
 
   LoadLevelUndo *undo                  = 0;
@@ -1029,7 +1044,7 @@ TXshLevel *loadLevel(ToonzScene *scene,
   bool isFirstTime  = !xl;
   std::wstring name = actualPath.getWideName();
 
-  if (isFirstTime && expose &&
+  if (isFirstTime && expose && !modelPosition &&
       Preferences::instance()->isAutoRemoveUnusedLevelsEnabled()) {
     removeSameNamedUnusedLevel(scene, actualPath, levelName);
   }
@@ -1117,7 +1132,10 @@ TXshLevel *loadLevel(ToonzScene *scene,
           TXshColumn::toColumnType(levelType);
       bool columnInserted = false;
       auto *target        = scene->getXsheet()->getColumn(col0);
-      if (target && target->getCellColumn() && !target->isEmpty()) {
+      if (modelPosition) {
+        xsh->insertColumn(col0);
+        columnInserted = true;
+      } else if (target && target->getCellColumn() && !target->isEmpty()) {
         int first, last;
         target->getCellColumn()->getRange(first, last);
         const auto &old = target->getCellColumn()->getCell(first);
@@ -1140,6 +1158,10 @@ TXshLevel *loadLevel(ToonzScene *scene,
       else
         undo->setCells(scene->getXsheet(), row0, col0, xl->getFrameCount());
       undo->setColumnInserted(columnInserted);
+      if (modelPosition) {
+        placeModel(xsh, col0, *modelPosition);
+        undo->setModelPosition(*modelPosition);
+      }
     }
     if ((row1 != -1 || col1 != -1) && xl->getSimpleLevel())
       replaceUndo = new LoadAndReplaceLevelUndo(xl->getSimpleLevel(), row0,
@@ -1252,15 +1274,14 @@ TXshLevel *loadExrBinding(
 // loadResource(scene, path, castFolder, row, col, expose)
 //---------------------------------------------------------------------------
 
-TXshLevel *loadResource(ToonzScene *scene,
-                        const IoCmd::LoadResourceArguments::ResourceData &rd,
-                        const TFilePath &castFolder, int row0, int &col0,
-                        int row1, int &col1, bool expose,
-                        std::vector<TFrameId> fIds = std::vector<TFrameId>(),
-                        TFrameId xFrom = TFrameId(), TFrameId xTo = TFrameId(),
-                        std::wstring levelName = L"", int step = -1,
-                        int inc = -1, int frameCount = -1,
-                        bool doesFileActuallyExist = true) {
+TXshLevel *loadResource(
+    ToonzScene *scene, const IoCmd::LoadResourceArguments::ResourceData &rd,
+    const TFilePath &castFolder, int row0, int &col0, int row1, int &col1,
+    bool expose, std::vector<TFrameId> fIds = std::vector<TFrameId>(),
+    TFrameId xFrom = TFrameId(), TFrameId xTo = TFrameId(),
+    std::wstring levelName = L"", int step = -1, int inc = -1,
+    int frameCount = -1, bool doesFileActuallyExist = true,
+    const std::optional<std::array<double, 3>> &modelPosition = std::nullopt) {
   IoCmd::LoadResourceArguments::ResourceData actualRd(rd);
   actualRd.m_path = scene->decodeFilePath(rd.m_path);
 
@@ -1272,7 +1293,7 @@ TXshLevel *loadResource(ToonzScene *scene,
     // native model. All entry points expose its single identifier unchanged.
     return loadLevel(scene, actualRd, castFolder, row0, col0, row1, col1,
                      expose, fIds, TFrameId(1), TFrameId(1), levelName, 1, 1, 1,
-                     true);
+                     true, modelPosition);
   }
   return (type == TFileType::PALETTE_LEVEL)
              ? loadPalette(scene, actualRd.m_path, castFolder, row0, col0)
@@ -2986,10 +3007,11 @@ int IoCmd::loadResources(LoadResourceArguments &args, bool updateRecentFile,
     // LOAD OTHER FILE
     try {
       // reuse TFrameIds retrieved by FileBrowser, m_frameIdSet
-      xl = ::loadResource(scene, rds[i], args.castFolder, row0, col0, row1,
-                          col1, args.expose, rds[i].m_frameIdSet, args.xFrom,
-                          args.xTo, args.levelName, args.step, args.inc,
-                          args.frameCount, args.doesFileActuallyExist);
+      xl =
+          ::loadResource(scene, rds[i], args.castFolder, row0, col0, row1, col1,
+                         args.expose, rds[i].m_frameIdSet, args.xFrom, args.xTo,
+                         args.levelName, args.step, args.inc, args.frameCount,
+                         args.doesFileActuallyExist, args.modelPosition);
       if (updateRecentFile) {
         RecentFiles::instance()->addFilePath(
             toQString(scene->decodeFilePath(path)), RecentFiles::Level);

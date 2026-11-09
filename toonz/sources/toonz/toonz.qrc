@@ -1,5 +1,9 @@
 <RCC>
 	<qresource prefix="/">
+		<file>primitives/Cube.glb</file>
+		<file>primitives/Sphere.glb</file>
+		<file>primitives/Cylinder.glb</file>
+		<file>primitives/Cone.glb</file>
 		<!-- Note: paths with /colored/ bypass iconEngine's recolor/opacity handling, use for full-color icons -->
 
 		<!-- Tools -->

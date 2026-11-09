@@ -3,6 +3,7 @@
 #include "toonz/txshcell.h"
 #include "toonz/tcolumnfx.h"
 #include "toonz/txshlevelcolumn.h"
+#include "toonz/txshcolumn.h"
 #include "toonz/txshamlevel.h"
 #include "toonz/txshglblevel.h"
 #include "toonz/txshleveltypes.h"
@@ -15,6 +16,7 @@
 #include "traster.h"
 #include "tpixel.h"
 #include <QCryptographicHash>
+#include <QVector3D>
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -129,6 +131,93 @@ std::shared_ptr<const otam::Mesh> prepareNativeModelGeometry(
     TXsheet *xsheet, int column, double frame, bool projectToCamera) {
   return prepareModelGeometryImpl(xsheet, column, frame, projectToCamera, false,
                                   true);
+}
+
+namespace {
+QVector3D toVector(const otam::Vec3 &point) {
+  return {float(point[0]), float(point[1]), float(point[2])};
+}
+
+void updateClosestModelHit(const QVector3D &origin, const QVector3D &ray,
+                           const otam::Triangle &triangle, double &distance,
+                           QVector3D &normal) {
+  const QVector3D a        = toVector(triangle.vertices[0]);
+  const QVector3D u        = toVector(triangle.vertices[1]) - a;
+  const QVector3D v        = toVector(triangle.vertices[2]) - a;
+  const QVector3D cross    = QVector3D::crossProduct(ray, v);
+  const double determinant = QVector3D::dotProduct(u, cross);
+  if (std::abs(determinant) < 1e-8) return;
+  const QVector3D offset = origin - a;
+  const double s         = QVector3D::dotProduct(offset, cross) / determinant;
+  if (s < 0 || s > 1) return;
+  const QVector3D q = QVector3D::crossProduct(offset, u);
+  const double t    = QVector3D::dotProduct(ray, q) / determinant;
+  if (t < 0 || s + t > 1) return;
+  const double hit = QVector3D::dotProduct(v, q) / determinant;
+  // The ray spans 1000 optical units. Match the renderer's near plane.
+  if (!std::isfinite(hit) || hit <= 0.001 || hit >= distance) return;
+  distance = hit;
+  normal   = QVector3D::crossProduct(u, v).normalized();
+  if (QVector3D::dotProduct(normal, ray) > 0) normal = -normal;
+}
+}  // namespace
+
+otam::Vec3 nativeModelDropPosition(TXsheet *xsheet, int frame,
+                                   const TPointD &imagePoint, bool snap,
+                                   double halfExtent) {
+  const auto camera = modelCamera(xsheet, frame, false);
+  const auto film   = otam::transform(otam::inverse(camera.imageToStage),
+                                      {imagePoint.x, imagePoint.y, 0});
+  const auto eye    = otam::transform(camera.pose, {0, 0, 0});
+  const auto focus  = otam::transform(camera.pose, {film[0], film[1], -1000});
+  const QVector3D origin = toVector(eye);
+  const QVector3D ray    = toVector(focus) - origin;
+  const auto table =
+      xsheet->getStageObject(TStageObjectId::TableId)->getAMPlacement(frame);
+  const auto worldToTable = otam::inverse(table);
+
+  if (snap) {
+    double distance = std::numeric_limits<double>::infinity();
+    QVector3D normal;
+    for (int col = 0; col < xsheet->getColumnCount(); ++col) {
+      auto *column = xsheet->getColumn(col);
+      if (!column || !column->isCamstandVisible() || column->getOpacity() == 0)
+        continue;
+      const auto cell = xsheet->getCell(frame, col);
+      if (cell.isEmpty() || !isNativeModelLevel(cell.m_level->getType()))
+        continue;
+      try {
+        const auto mesh = prepareNativeModelGeometry(xsheet, col, frame, false);
+        if (!mesh) continue;
+        for (const auto &triangle : mesh->triangles)
+          updateClosestModelHit(origin, ray, triangle, distance, normal);
+      } catch (const std::runtime_error &) {
+        // Broken or missing models cannot supply a snap surface.
+      }
+    }
+    if (std::isfinite(distance)) {
+      const auto base  = toVector(otam::transform(table, {0, 0, 0}));
+      double clearance = 0;
+      for (int axis = 0; axis < 3; ++axis) {
+        otam::Vec3 edge{};
+        edge[axis]           = halfExtent;
+        const auto direction = toVector(otam::transform(table, edge)) - base;
+        clearance += std::abs(QVector3D::dotProduct(normal, direction));
+      }
+      const QVector3D center =
+          origin + float(distance) * ray + float(clearance) * normal;
+      return otam::transform(worldToTable,
+                             {center.x(), center.y(), center.z()});
+    }
+  }
+
+  const auto localEye   = otam::transform(worldToTable, eye);
+  const auto localFocus = otam::transform(worldToTable, focus);
+  const double dz       = localFocus[2] - localEye[2];
+  const double t        = std::abs(dz) > 1e-8 ? -localEye[2] / dz : 0;
+  if (t <= 0.001) return localFocus;
+  return {localEye[0] + t * (localFocus[0] - localEye[0]),
+          localEye[1] + t * (localFocus[1] - localEye[1]), 0};
 }
 
 // Render-tree snapshots own world-space preview geometry and the camera state.

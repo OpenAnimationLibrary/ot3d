@@ -3,7 +3,9 @@
 #ifndef IOCOMMAND_H
 #define IOCOMMAND_H
 
+#include <array>
 #include <memory>
+#include <optional>
 
 // TnzLib includes
 #include "toonz/preferences.h"
@@ -138,6 +140,10 @@ public:
                               //! external to current scene.
   RenamePolicy renamePolicy;
   ConvertPolicy convertPolicy;  // Convert Raster to TLV
+
+  // Native model drops create a fresh column and place it in local X/Y inches
+  // and stage Z units.
+  std::optional<std::array<double, 3>> modelPosition;
 
   bool expose;  //!< [\p In]      Whether resources must be exposed in the
                 //! xsheet.
