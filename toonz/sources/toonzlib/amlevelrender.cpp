@@ -1,4 +1,6 @@
 #include "toonz/amlevelrender.h"
+#include "toonz/sceneproperties.h"
+#include "toonz/toonzscene.h"
 #include "toonz/t3drendersource.h"
 #include "toonz/txshcell.h"
 #include "toonz/tcolumnfx.h"
@@ -11,6 +13,7 @@
 #include "toonz/tstageobjecttree.h"
 #include "toonz/stage.h"
 #include "tfxattributes.h"
+#include "toutputproperties.h"
 #include "ttile.h"
 #include "traster.h"
 #include "tpixel.h"
@@ -61,7 +64,29 @@ otam::Matrix amModelPlacement(TXsheet *xsheet, int column, double frame) {
   return modelPlacement(xsheet, column, frame, Stage::inch / 2.54);
 }
 
+double amActionTime(TXsheet *xsheet, int startRow, double frame) {
+  const auto *scene = xsheet ? xsheet->getScene() : nullptr;
+  const double fps =
+      scene ? scene->getProperties()->getOutputProperties()->getFrameRate()
+            : 24.0;
+  return (frame - startRow) / (std::isfinite(fps) && fps > 0 ? fps : 24.0);
+}
+
 namespace {
+bool validModelFrame(double frame) {
+  return frame >= 0 && frame < double(std::numeric_limits<int>::max()) + 1;
+}
+
+AMActionBinding matchingAction(TXsheet *xsheet, int column,
+                               const TXshLevelP &level) {
+  auto *xcolumn     = xsheet->getColumn(column);
+  auto *levelColumn = xcolumn ? xcolumn->getLevelColumn() : nullptr;
+  if (!levelColumn) return {};
+  auto binding = levelColumn->getAMAction();
+  if (binding.level != level) return {};
+  return binding;
+}
+
 otam::Matrix modelTransform(const otglb::ModelTransform &t) {
   for (double v : t.position)
     if (!std::isfinite(v)) throw std::runtime_error("Invalid 3D position");
@@ -78,17 +103,33 @@ otam::Matrix modelTransform(const otglb::ModelTransform &t) {
 }
 }  // namespace
 
+std::shared_ptr<const otam::Model> amModelAt(TXsheet *xsheet, int column,
+                                             double frame) {
+  if (!xsheet || column < 0 || !validModelFrame(frame)) return {};
+  const auto cell = xsheet->getCell(int(std::floor(frame)), column);
+  auto *level     = cell.isEmpty() ? nullptr : cell.m_level->getAMLevel();
+  if (!level) return {};
+  const auto binding = matchingAction(xsheet, column, cell.m_level);
+  if (!binding.action) return level->editableModel();
+  return level->actionModel(binding.action,
+                            amActionTime(xsheet, binding.startRow, frame));
+}
+
 static std::shared_ptr<const otam::Mesh> prepareModelGeometryImpl(
     TXsheet *xsheet, int column, double frame, bool projectToCamera,
     bool previewCamera, bool allowGlb) {
-  if (!xsheet || column < 0 || !std::isfinite(frame)) return {};
+  if (!xsheet || column < 0 || !validModelFrame(frame)) return {};
   const int row   = int(std::floor(frame));
   const auto cell = xsheet->getCell(row, column);
   if (cell.isEmpty()) return {};
   std::shared_ptr<const otam::Mesh> mesh;
   double units = Stage::inch / 2.54;
   if (auto *am = cell.m_level->getAMLevel()) {
-    mesh = am->renderMesh(row);
+    const auto binding = matchingAction(xsheet, column, cell.m_level);
+    mesh               = binding.action
+                             ? am->renderMesh(row, binding.action,
+                                              amActionTime(xsheet, binding.startRow, frame))
+                             : am->renderMesh(row);
     if (!mesh)
       throw std::runtime_error(
           am->error().empty() ? "A:M model source is not loaded" : am->error());

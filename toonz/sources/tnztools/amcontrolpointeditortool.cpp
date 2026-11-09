@@ -1,3 +1,4 @@
+#include "amaction.h"
 #include "tools/tool.h"
 #include "tools/toolcommandids.h"
 #include "toonz/amlevelrender.h"
@@ -7,13 +8,14 @@
 #include "toonz/toonzscene.h"
 #include "toonz/tscenehandle.h"
 #include "toonz/txshamlevel.h"
-#include "toonz/txshcolumn.h"
+#include "toonz/txshlevelcolumn.h"
 #include "toonz/txsheethandle.h"
 #include "toonzqt/selection.h"
 #include "historytypes.h"
 #include "tgl.h"
 #include "tundo.h"
 
+#include <QDebug>
 #include <QElapsedTimer>
 #include <QKeyEvent>
 #include <QMenu>
@@ -67,6 +69,108 @@ public:
   }
   int getHistoryType() override { return HistoryType::ControlPointEditorTool; }
 };
+
+bool sameBinding(const AMActionBinding &a, const AMActionBinding &b) {
+  return a.level == b.level && a.path == b.path && a.startRow == b.startRow &&
+         a.action == b.action;
+}
+
+class UndoAMPositionKey final : public TUndo {
+  TXshLevelColumnP m_column;
+  AMActionBinding m_before, m_after;
+  bool m_removed;
+
+  void apply(const AMActionBinding &expected,
+             const AMActionBinding &replacement) const {
+    auto *level = replacement.level->getAMLevel();
+    auto *scene = TTool::getApplication()->getCurrentScene()->getScene();
+    if (!level || level->getScene() != scene ||
+        !sameBinding(m_column->getAMAction(), expected))
+      return;
+    m_column->setAMAction(replacement);
+    notifyModelChanged(*level);
+  }
+
+public:
+  UndoAMPositionKey(TXshLevelColumnP column, AMActionBinding before,
+                    AMActionBinding after, bool removed)
+      : m_column(std::move(column))
+      , m_before(std::move(before))
+      , m_after(std::move(after))
+      , m_removed(removed) {}
+
+  int getSize() const override {
+    std::size_t bytes = sizeof(*this) + m_after.action->defaultModel.size();
+    for (const auto &[id, channel] : m_after.action->channels)
+      bytes += sizeof(id) + sizeof(channel) +
+               channel.keys.size() * (sizeof(double) + sizeof(Vec3));
+    return int(bytes);
+  }
+
+  void undo() const override { apply(m_after, m_before); }
+  void redo() const override { apply(m_before, m_after); }
+  QString getHistoryString() override {
+    return m_removed ? QObject::tr("Remove A:M Position Key")
+                     : QObject::tr("Set A:M Position Key");
+  }
+  int getHistoryType() override { return HistoryType::ControlPointEditorTool; }
+};
+
+struct ActionEdit {
+  TXshLevelColumnP column;
+  AMActionBinding before, after;
+  std::shared_ptr<const otam::Model> rest;
+  double time;
+
+  bool replace(const AMActionBinding &replacement) {
+    if (!sameBinding(column->getAMAction(), after)) return false;
+    column->setAMAction(replacement);
+    after = replacement;
+    return true;
+  }
+
+  bool setPosition(otam::Id id, const Vec3 &base, const Vec3 &position) {
+    const Vec3 offset{
+        {position[0] - base[0], position[1] - base[1], position[2] - base[2]}};
+    try {
+      auto action = std::make_shared<otam::Action>(*before.action);
+      otam::setPositionKey(*action, *rest, id, time, offset);
+      auto updated   = before;
+      updated.action = std::move(action);
+      return replace(updated);
+    } catch (const std::exception &error) {
+      qWarning() << "A:M position key:" << error.what();
+      return false;
+    }
+  }
+
+  bool removeKey(otam::Id id) {
+    auto action = std::make_shared<otam::Action>(*before.action);
+    auto track  = action->channels.find(id);
+    if (track == action->channels.end() || !track->second.keys.erase(time))
+      return false;
+    if (track->second.keys.empty()) action->channels.erase(track);
+    auto updated   = before;
+    updated.action = std::move(action);
+    return replace(updated);
+  }
+
+  void finish(bool removed = false) const {
+    if (before.action == after.action ||
+        !sameBinding(column->getAMAction(), after))
+      return;
+    TUndoManager::manager()->add(
+        new UndoAMPositionKey(column, before, after, removed));
+    notifyModelChanged(*after.level->getAMLevel());
+  }
+};
+
+bool hasPositionKey(const AMActionBinding &binding, otam::Id id, double time) {
+  if (!binding.action || time < 0) return false;
+  const auto track = binding.action->channels.find(id);
+  return track != binding.action->channels.end() &&
+         track->second.keys.count(time);
+}
 
 // The Viewer uses an orthographic GL viewport, even when the model itself is
 // projected through the scene camera. Keep eye Z to drag at the picked depth.
@@ -155,6 +259,8 @@ class AMControlPointEditor final : public TTool {
     TPointD mouseStart;
     Vec3 screenStart;
     std::optional<Handle> handle;
+    std::optional<ActionEdit> action;
+    Vec3 restPosition{};
   };
 
   Target m_drawTarget;
@@ -190,6 +296,66 @@ class AMControlPointEditor final : public TTool {
                   app->getCurrentColumn()->getColumnIndex());
   }
 
+  static TXshLevelColumn *levelColumn(const Target &target) {
+    auto *column =
+        target.xsheet ? target.xsheet->getColumn(target.column) : nullptr;
+    return column ? column->getLevelColumn() : nullptr;
+  }
+
+  static AMActionBinding actionBinding(const Target &target) {
+    auto *column = levelColumn(target);
+    if (!column) return {};
+    const auto binding = column->getAMAction();
+    return binding.level.getPointer() == target.level.getPointer()
+               ? binding
+               : AMActionBinding{};
+  }
+
+  static double keyTime(const Target &target, const AMActionBinding &binding) {
+    if (!binding.action || target.row < binding.startRow) return -1;
+    try {
+      return otam::canonicalActionTime(
+          amActionTime(target.xsheet, binding.startRow, target.row));
+    } catch (const std::exception &) {
+      return -1;
+    }
+  }
+
+  static std::optional<ActionEdit> beginActionEdit(const Target &target) {
+    const auto binding = actionBinding(target);
+    const double time  = keyTime(target, binding);
+    if (time < 0) return {};
+    auto rest = target.level->editableModel();
+    if (!rest) return {};
+    try {
+      otam::validateAction(*binding.action, *rest);
+      return ActionEdit{TXshLevelColumnP(levelColumn(target)), binding, binding,
+                        std::move(rest), time};
+    } catch (const std::exception &) {
+      return {};
+    }
+  }
+
+  void editSelectedKey(bool remove) {
+    const auto active = currentTarget();
+    if (!m_selectedHead || !active.level || !(m_drawTarget == active) ||
+        m_revision != active.level->revision())
+      return;
+    auto edit = beginActionEdit(active);
+    if (!edit) return;
+    const auto model = amModelAt(active.xsheet, active.column, active.row);
+    if (!model || *m_selectedHead >= model->points.size()) return;
+    const auto &point = model->points[*m_selectedHead];
+    const auto &rest  = edit->rest->points[*m_selectedHead];
+    const bool changed =
+        remove ? edit->removeKey(point.id)
+               : edit->setPosition(point.id, rest.position, point.position);
+    if (changed) {
+      edit->finish(remove);
+      invalidate();
+    }
+  }
+
   void clearSelection() {
     m_selectedHead.reset();
     m_occurrence.reset();
@@ -205,6 +371,10 @@ class AMControlPointEditor final : public TTool {
             getApplication()->getCurrentScene()->getScene() ||
         drag.revision != drag.target.level->revision())
       return;
+    if (drag.action) {
+      drag.action->finish();
+      return;
+    }
     TUndoManager::manager()->add(new UndoAMPoint(
         drag.target.level, drag.id, drag.before, drag.after, drag.revision));
     notifyModelChanged(*drag.target.level);
@@ -282,7 +452,14 @@ class AMControlPointEditor final : public TTool {
       }
     }
     if (value == drag.after) return;
-    if (drag.target.level->setControlPoint(drag.id, value, drag.revision)) {
+    const bool changed =
+        drag.action
+            ? (value == drag.before
+                   ? drag.action->replace(drag.action->before)
+                   : drag.action->setPosition(drag.id, drag.restPosition,
+                                              value.position))
+            : drag.target.level->setControlPoint(drag.id, value, drag.revision);
+    if (changed) {
       drag.after = value;
       m_updateTimer.restart();
       invalidate();
@@ -328,9 +505,12 @@ public:
     if (viewer->isPreviewEnabled()) return;
     auto active = currentTarget();
     if (!active.level) return;
-    const auto model = active.level->editableModel();
+    const auto model = amModelAt(active.xsheet, active.column, active.row);
     if (!model) return;
 
+    const auto binding    = actionBinding(active);
+    const bool actionMode = bool(binding.action);
+    const double time     = keyTime(active, binding);
     const auto revision = active.level->revision();
     if (active.level.getPointer() != m_drawTarget.level.getPointer() ||
         revision != m_revision)
@@ -377,9 +557,10 @@ public:
           previous = p;
         }
         glEnd();
-        if (m_occurrence == segment.from)
+        if (!actionMode && m_occurrence == segment.from)
           addHandle(segment.outgoing, false, dpi);
-        if (m_occurrence == segment.to) addHandle(segment.incoming, true, dpi);
+        if (!actionMode && m_occurrence == segment.to)
+          addHandle(segment.incoming, true, dpi);
       }
     }
 
@@ -390,7 +571,9 @@ public:
       if (point.head != i) continue;
       const auto p = m_projection->project(point.position);
       if (!p) continue;
-      if (m_selectedHead == i)
+      if (hasPositionKey(binding, point.id, time))
+        glColor3ub(255, m_selectedHead == i ? 119 : 163, 208);
+      else if (m_selectedHead == i)
         glColor3ub(255, 208, 90);
       else
         glColor3ub(221, 248, 248);
@@ -408,14 +591,16 @@ public:
     if (!m_projection || !active.level || !(m_drawTarget == active) ||
         m_drawViewer != getViewer() || getViewer()->isPreviewEnabled())
       return;
-    const auto model = active.level->editableModel();
+    const auto model = amModelAt(active.xsheet, active.column, active.row);
     if (!model || m_revision != active.level->revision()) return;
+    const bool actionMode = bool(actionBinding(active).action);
     const double radius = 7 * getViewer()->getDevPixRatio();
     double nearest      = radius * radius;
     std::optional<Handle> handle;
     std::optional<std::size_t> hit;
     Vec3 screen{};
     for (const auto &candidate : m_handles) {
+      if (actionMode) break;
       const double distance = norm2(candidate.marker - event.m_pos);
       if (distance >= nearest) continue;
       nearest = distance;
@@ -444,13 +629,20 @@ public:
     }
     if (hit) TSelection::setCurrent(nullptr);
     if (hit && !handle && event.isAltPressed()) {
-      if (const auto next = nextOccurrence(*model)) selectOccurrence(*next);
+      if (!actionMode)
+        if (const auto next = nextOccurrence(*model)) selectOccurrence(*next);
     } else if (hit) {
       const auto &point = model->points[*hit];
       const TXshAMLevel::PointValue value{point.position, point.bias};
-      m_drag = Drag{active, *m_projection, m_revision, point.id, value,
-                    value,  event.m_pos,   screen,     handle};
-      m_updateTimer.invalidate();
+      auto action = actionMode ? beginActionEdit(active) : std::nullopt;
+      if (!actionMode || action) {
+        const auto rest = action ? action->rest->points[*hit].position : Vec3{};
+        m_drag =
+            Drag{active, *m_projection, m_revision, point.id, value,
+                 value,  event.m_pos,   screen,     handle,   std::move(action),
+                 rest};
+        m_updateTimer.invalidate();
+      }
     }
     invalidate();
   }
@@ -467,16 +659,31 @@ public:
   void addContextMenuItems(QMenu *menu) override {
     const auto active = currentTarget();
     if (m_drag || !active.level || !(m_drawTarget == active)) return;
-    const auto model = active.level->editableModel();
-    if (!model || m_revision != active.level->revision() ||
-        !nextOccurrence(*model))
+    const auto model = amModelAt(active.xsheet, active.column, active.row);
+    if (!model || m_revision != active.level->revision()) return;
+    const auto binding = actionBinding(active);
+    if (binding.action) {
+      const auto time = keyTime(active, binding);
+      if (!m_selectedHead || *m_selectedHead >= model->points.size() ||
+          time < 0)
+        return;
+      const auto id = model->points[*m_selectedHead].id;
+      if (hasPositionKey(binding, id, time)) {
+        menu->addAction(QObject::tr("Remove A:M Position Key"), menu,
+                        [this] { editSelectedKey(true); });
+      } else {
+        menu->addAction(QObject::tr("Set A:M Position Key"), menu,
+                        [this] { editSelectedKey(false); });
+      }
       return;
+    }
+    if (!nextOccurrence(*model)) return;
     menu->addAction(QObject::tr("Next Attached A:M Spline"), menu, [this] {
       const auto active = currentTarget();
       if (!active.level || !(m_drawTarget == active) ||
           m_revision != active.level->revision())
         return;
-      const auto model = active.level->editableModel();
+      const auto model = amModelAt(active.xsheet, active.column, active.row);
       if (model)
         if (const auto next = nextOccurrence(*model)) selectOccurrence(*next);
     });
@@ -486,7 +693,9 @@ public:
     if (event->key() != Qt::Key_Escape || !m_drag) return false;
     auto drag = std::move(*m_drag);
     m_drag.reset();
-    if (!(drag.before == drag.after))
+    if (drag.action)
+      drag.action->replace(drag.action->before);
+    else if (!(drag.before == drag.after))
       drag.target.level->setControlPoint(drag.id, drag.before, drag.revision);
     invalidate();
     return true;

@@ -24,6 +24,12 @@ DVAPI AMModelCamera amModelCamera(TXsheet *xsheet, double frame,
                                   bool preview = false);
 DVAPI otam::Matrix amModelPlacement(TXsheet *xsheet, int column, double frame);
 
+// Convert a zero-based scene frame to signed seconds relative to the action's
+// start. A negative sample uses the unanimated model.
+DVAPI double amActionTime(TXsheet *xsheet, int startRow, double frame);
+DVAPI std::shared_ptr<const otam::Model> amModelAt(TXsheet *xsheet, int column,
+                                                   double frame);
+
 // Shared by the interactive Viewer and the final-render tree. A snapshot owns
 // all geometry and can safely outlive a source reload or scene changes.
 DVAPI std::shared_ptr<const otam::Mesh> prepareAMLevelGeometry(
