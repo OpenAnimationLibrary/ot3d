@@ -2,6 +2,7 @@
 
 // Tnz6 includes
 #include "xsheetviewer.h"
+#include "amactionmenu.h"
 #include "tapp.h"
 #include "menubarcommandids.h"
 #include "cellselection.h"
@@ -3861,6 +3862,7 @@ void CellArea::createCellMenu(QMenu &menu, bool isCellSelected, TXshCell cell,
   }
 
   if (isCellSelected) {
+    addAMActionMenu(menu, m_viewer->getXsheet(), row, col);
     bool addSeparator = false;
     // open fx settings instead of level settings when clicked on zerary fx
     // level
