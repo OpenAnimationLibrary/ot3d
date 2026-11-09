@@ -23,6 +23,10 @@ std::string writeAction(const Action &action);
 double canonicalActionTime(double seconds);
 void validateAction(const Action &action, const Model &model);
 void applyAction(const Action &action, Model &model, double seconds);
+// Offsets for attached occurrences are resolved to their shared position owner.
+// Conflicting offsets for the same owner reject the entire edit.
+void setPositionKeys(Action &action, const Model &model,
+                     const std::map<Id, Vec3> &offsets, double seconds);
 void setPositionKey(Action &action, const Model &model, Id point,
                     double seconds, const Vec3 &offset);
 

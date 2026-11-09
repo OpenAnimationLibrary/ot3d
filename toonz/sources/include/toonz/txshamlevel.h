@@ -5,6 +5,8 @@
 #include "tpalette.h"
 #include <map>
 #include <mutex>
+#include <utility>
+#include <vector>
 
 #undef DVAPI
 #undef DVVAR
@@ -41,6 +43,7 @@ public:
       return position == other.position && bias == other.bias;
     }
   };
+  using PointValues = std::vector<std::pair<otam::Id, PointValue>>;
 
 private:
   std::map<otam::Id, PointValue> m_pointEdits;
@@ -69,9 +72,12 @@ private:
 
   void refreshPalette(const otam::Model &model, const std::string &revision);
   bool updatePaletteColorsLocked();
+  std::map<int, TPixel32> paletteColorOverridesLocked(
+      const TPalette &palette) const;
   bool updateRenderMeshLocked(const TPalette &palette) const;
-  void applyColorsLocked(otam::Mesh &mesh,
-                         const std::map<int, TPixel32> &overrides) const;
+  std::shared_ptr<const otam::Mesh> meshWithColorsLocked(
+      const std::shared_ptr<const otam::Mesh> &mesh,
+      const std::map<int, TPixel32> &overrides) const;
   void sampleActionLocked(const std::shared_ptr<const otam::Action> &action,
                           double seconds) const;
 
@@ -95,6 +101,8 @@ public:
       const std::shared_ptr<const otam::Action> &action, double seconds) const;
   bool setControlPoint(otam::Id id, const PointValue &value,
                        const std::string &sourceRevision);
+  bool setControlPoints(const PointValues &values,
+                        const std::string &sourceRevision);
   std::shared_ptr<const otam::Mesh> mesh() const;
   std::shared_ptr<const otam::Mesh> renderMesh(int frame = 0) const;
   std::shared_ptr<const otam::Mesh> renderMesh(

@@ -23,11 +23,21 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
 #include <optional>
+#include <set>
 #include <utility>
 
 namespace {
 using otam::Vec3;
+using PointValues     = TXshAMLevel::PointValues;
+using HeadSelection   = std::set<std::size_t>;
+using PositionOffsets = std::map<otam::Id, Vec3>;
+
+Vec3 offsetFrom(const Vec3 &position, const Vec3 &base) {
+  return {
+      {position[0] - base[0], position[1] - base[1], position[2] - base[2]}};
+}
 
 void notifyModelChanged(const TXshAMLevel &level) {
   auto *app = TTool::getApplication();
@@ -36,36 +46,37 @@ void notifyModelChanged(const TXshAMLevel &level) {
   app->getCurrentXsheet()->notifyXsheetChanged();
 }
 
-class UndoAMPoint final : public TUndo {
+class UndoAMPoints final : public TUndo {
   TXshAMLevelP m_level;
-  otam::Id m_id;
-  TXshAMLevel::PointValue m_before, m_after;
+  PointValues m_before, m_after;
   std::string m_revision;
+  bool m_bias;
 
-  void apply(const TXshAMLevel::PointValue &value) const {
-    if (m_level->setControlPoint(m_id, value, m_revision))
+  void apply(const PointValues &values) const {
+    if (m_level->setControlPoints(values, m_revision))
       notifyModelChanged(*m_level);
   }
 
 public:
-  UndoAMPoint(TXshAMLevelP level, otam::Id id,
-              const TXshAMLevel::PointValue &before,
-              const TXshAMLevel::PointValue &after, std::string revision)
+  UndoAMPoints(TXshAMLevelP level, PointValues before, PointValues after,
+               std::string revision, bool bias)
       : m_level(level)
-      , m_id(id)
-      , m_before(before)
-      , m_after(after)
-      , m_revision(std::move(revision)) {}
+      , m_before(std::move(before))
+      , m_after(std::move(after))
+      , m_revision(std::move(revision))
+      , m_bias(bias) {}
 
   int getSize() const override {
-    return int(sizeof(*this) + m_revision.size());
+    return int(sizeof(*this) + m_revision.size() +
+               (m_before.size() + m_after.size()) *
+                   sizeof(PointValues::value_type));
   }
   void undo() const override { apply(m_before); }
   void redo() const override { apply(m_after); }
   QString getHistoryString() override {
-    return m_before.position == m_after.position
-               ? QObject::tr("Adjust A:M Spline Bias")
-               : QObject::tr("Move A:M Control Point");
+    if (m_bias) return QObject::tr("Adjust A:M Spline Bias");
+    return m_before.size() > 1 ? QObject::tr("Move A:M Control Points")
+                               : QObject::tr("Move A:M Control Point");
   }
   int getHistoryType() override { return HistoryType::ControlPointEditorTool; }
 };
@@ -78,7 +89,7 @@ bool sameBinding(const AMActionBinding &a, const AMActionBinding &b) {
 class UndoAMPositionKey final : public TUndo {
   TXshLevelColumnP m_column;
   AMActionBinding m_before, m_after;
-  bool m_removed;
+  bool m_removed, m_multiple;
 
   void apply(const AMActionBinding &expected,
              const AMActionBinding &replacement) const {
@@ -93,11 +104,12 @@ class UndoAMPositionKey final : public TUndo {
 
 public:
   UndoAMPositionKey(TXshLevelColumnP column, AMActionBinding before,
-                    AMActionBinding after, bool removed)
+                    AMActionBinding after, bool removed, bool multiple)
       : m_column(std::move(column))
       , m_before(std::move(before))
       , m_after(std::move(after))
-      , m_removed(removed) {}
+      , m_removed(removed)
+      , m_multiple(multiple) {}
 
   int getSize() const override {
     std::size_t bytes = sizeof(*this) + m_after.action->defaultModel.size();
@@ -110,8 +122,11 @@ public:
   void undo() const override { apply(m_after, m_before); }
   void redo() const override { apply(m_before, m_after); }
   QString getHistoryString() override {
-    return m_removed ? QObject::tr("Remove A:M Position Key")
-                     : QObject::tr("Set A:M Position Key");
+    if (m_removed)
+      return m_multiple ? QObject::tr("Remove A:M Position Keys")
+                        : QObject::tr("Remove A:M Position Key");
+    return m_multiple ? QObject::tr("Set A:M Position Keys")
+                      : QObject::tr("Set A:M Position Key");
   }
   int getHistoryType() override { return HistoryType::ControlPointEditorTool; }
 };
@@ -129,38 +144,41 @@ struct ActionEdit {
     return true;
   }
 
-  bool setPosition(otam::Id id, const Vec3 &base, const Vec3 &position) {
-    const Vec3 offset{
-        {position[0] - base[0], position[1] - base[1], position[2] - base[2]}};
+  bool setPositions(const PositionOffsets &offsets) {
     try {
       auto action = std::make_shared<otam::Action>(*before.action);
-      otam::setPositionKey(*action, *rest, id, time, offset);
+      otam::setPositionKeys(*action, *rest, offsets, time);
       auto updated   = before;
       updated.action = std::move(action);
       return replace(updated);
     } catch (const std::exception &error) {
-      qWarning() << "A:M position key:" << error.what();
+      qWarning() << "A:M position keys:" << error.what();
       return false;
     }
   }
 
-  bool removeKey(otam::Id id) {
+  bool removeKeys(const std::vector<otam::Id> &ids) {
     auto action = std::make_shared<otam::Action>(*before.action);
-    auto track  = action->channels.find(id);
-    if (track == action->channels.end() || !track->second.keys.erase(time))
-      return false;
-    if (track->second.keys.empty()) action->channels.erase(track);
+    bool changed = false;
+    for (const auto id : ids) {
+      auto track = action->channels.find(id);
+      if (track == action->channels.end() || !track->second.keys.erase(time))
+        continue;
+      changed = true;
+      if (track->second.keys.empty()) action->channels.erase(track);
+    }
+    if (!changed) return false;
     auto updated   = before;
     updated.action = std::move(action);
     return replace(updated);
   }
 
-  void finish(bool removed = false) const {
+  void finish(bool multiple, bool removed = false) const {
     if (before.action == after.action ||
         !sameBinding(column->getAMAction(), after))
       return;
     TUndoManager::manager()->add(
-        new UndoAMPositionKey(column, before, after, removed));
+        new UndoAMPositionKey(column, before, after, removed, multiple));
     notifyModelChanged(*after.level->getAMLevel());
   }
 };
@@ -254,20 +272,32 @@ class AMControlPointEditor final : public TTool {
     Target target;
     Projection projection;
     std::string revision;
-    otam::Id id;
-    TXshAMLevel::PointValue before, after;
+    PointValues before, after;
     TPointD mouseStart;
-    Vec3 screenStart;
+    Vec3 screenStart, anchor;
     std::optional<Handle> handle;
     std::optional<ActionEdit> action;
-    Vec3 restPosition{};
+    std::vector<Vec3> restPositions;
+  };
+
+  struct SelectionBox {
+    Target target;
+    TPointD start, end;
+    bool add;
+
+    TRectD rect() const {
+      return TRectD(std::min(start.x, end.x), std::min(start.y, end.y),
+                    std::max(start.x, end.x), std::max(start.y, end.y));
+    }
   };
 
   Target m_drawTarget;
   const TToolViewer *m_drawViewer = nullptr;
   std::string m_revision;
   std::optional<Projection> m_projection;
-  std::optional<std::size_t> m_selectedHead, m_occurrence;
+  HeadSelection m_selectedHeads;
+  std::optional<std::size_t> m_occurrence;
+  std::optional<SelectionBox> m_selectionBox;
   std::vector<Handle> m_handles;
   std::optional<Drag> m_drag;
   QElapsedTimer m_updateTimer;
@@ -336,30 +366,68 @@ class AMControlPointEditor final : public TTool {
     }
   }
 
-  void editSelectedKey(bool remove) {
+  void editSelectedKeys(bool remove) {
     const auto active = currentTarget();
-    if (!m_selectedHead || !active.level || !(m_drawTarget == active) ||
+    if (m_selectedHeads.empty() || !active.level || !(m_drawTarget == active) ||
         m_revision != active.level->revision())
       return;
     auto edit = beginActionEdit(active);
     if (!edit) return;
     const auto model = amModelAt(active.xsheet, active.column, active.row);
-    if (!model || *m_selectedHead >= model->points.size()) return;
-    const auto &point = model->points[*m_selectedHead];
-    const auto &rest  = edit->rest->points[*m_selectedHead];
-    const bool changed =
-        remove ? edit->removeKey(point.id)
-               : edit->setPosition(point.id, rest.position, point.position);
+    if (!model || *m_selectedHeads.rbegin() >= model->points.size()) return;
+
+    bool changed;
+    if (remove) {
+      std::vector<otam::Id> ids;
+      for (auto head : m_selectedHeads) ids.push_back(model->points[head].id);
+      changed = edit->removeKeys(ids);
+    } else {
+      PositionOffsets offsets;
+      for (auto head : m_selectedHeads) {
+        const auto &point = model->points[head];
+        if (hasPositionKey(edit->before, point.id, edit->time)) continue;
+        offsets.emplace(
+            point.id,
+            offsetFrom(point.position, edit->rest->points[head].position));
+      }
+      changed = !offsets.empty() && edit->setPositions(offsets);
+    }
     if (changed) {
-      edit->finish(remove);
+      edit->finish(m_selectedHeads.size() > 1, remove);
       invalidate();
     }
   }
 
-  void clearSelection() {
-    m_selectedHead.reset();
+  void setSelection(HeadSelection heads) {
+    if (m_selectedHeads == heads) return;
+    m_selectedHeads = std::move(heads);
     m_occurrence.reset();
+    if (m_selectedHeads.size() == 1) m_occurrence = *m_selectedHeads.begin();
     m_handles.clear();
+  }
+
+  void finishBox(const TPointD &pos) {
+    auto box = std::move(*m_selectionBox);
+    m_selectionBox.reset();
+    const auto active = currentTarget();
+    if (m_projection && box.target == active && m_drawTarget == active &&
+        m_drawViewer == getViewer() && !getViewer()->isPreviewEnabled() &&
+        active.level->revision() == m_revision) {
+      const auto model = amModelAt(active.xsheet, active.column, active.row);
+      if (model) {
+        box.end         = pos;
+        const auto rect = box.rect();
+        auto selected   = box.add ? m_selectedHeads : HeadSelection{};
+        for (std::size_t i = 0; i < model->points.size(); ++i) {
+          const auto &point = model->points[i];
+          if (point.head != i) continue;
+          const auto screen = m_projection->project(point.position);
+          if (screen && rect.contains(xy(*screen))) selected.insert(i);
+        }
+        setSelection(std::move(selected));
+      }
+    }
+    invalidate();
   }
 
   void finishDrag() {
@@ -372,20 +440,22 @@ class AMControlPointEditor final : public TTool {
         drag.revision != drag.target.level->revision())
       return;
     if (drag.action) {
-      drag.action->finish();
+      drag.action->finish(drag.before.size() > 1);
       return;
     }
-    TUndoManager::manager()->add(new UndoAMPoint(
-        drag.target.level, drag.id, drag.before, drag.after, drag.revision));
+    TUndoManager::manager()->add(new UndoAMPoints(
+        drag.target.level, std::move(drag.before), std::move(drag.after),
+        std::move(drag.revision), drag.handle.has_value()));
     notifyModelChanged(*drag.target.level);
   }
 
   std::optional<std::size_t> nextOccurrence(const otam::Model &model) const {
-    if (!m_occurrence || !m_selectedHead) return {};
+    if (!m_occurrence || m_selectedHeads.size() != 1) return {};
+    const auto head = *m_selectedHeads.begin();
     const auto size = model.points.size();
     for (std::size_t offset = 1; offset < size; ++offset) {
       const auto i = (*m_occurrence + offset) % size;
-      if (model.points[i].head == *m_selectedHead) return i;
+      if (model.points[i].head == head) return i;
     }
     return {};
   }
@@ -430,14 +500,15 @@ class AMControlPointEditor final : public TTool {
 
   void updateDrag(const TMouseEvent &event, bool final) {
     if (!m_drag || !(m_drag->target == currentTarget()) ||
-        getViewer()->isPreviewEnabled())
+        m_drawViewer != getViewer() || getViewer()->isPreviewEnabled() ||
+        m_drag->revision != m_drag->target.level->revision())
       return;
     if (!final && (event.isHighFrequent() ||
                    (m_updateTimer.isValid() && m_updateTimer.elapsed() < 25)))
       return;
 
     auto &drag       = *m_drag;
-    auto value       = drag.before;
+    auto values      = drag.before;
     const auto delta = event.m_pos - drag.mouseStart;
     if (norm2(delta) > 0) {
       const auto point = drag.projection.unproject(xy(drag.screenStart) + delta,
@@ -446,24 +517,62 @@ class AMControlPointEditor final : public TTool {
         const auto bias =
             drag.handle->geometry.biasAt(point, event.isShiftPressed());
         std::copy(bias.begin(), bias.end(),
-                  value.bias.begin() + (drag.handle->incoming ? 0 : 3));
+                  values.front().second.bias.begin() +
+                      (drag.handle->incoming ? 0 : 3));
       } else {
-        value.position = point;
+        // Use the grabbed point's depth for a single model-space translation.
+        // Applying a screen-space delta to each depth would deform the
+        // selection.
+        const auto movement = offsetFrom(point, drag.anchor);
+        for (auto &[id, value] : values)
+          for (int axis = 0; axis < 3; ++axis)
+            value.position[axis] += movement[axis];
       }
     }
-    if (value == drag.after) return;
-    const bool changed =
-        drag.action
-            ? (value == drag.before
-                   ? drag.action->replace(drag.action->before)
-                   : drag.action->setPosition(drag.id, drag.restPosition,
-                                              value.position))
-            : drag.target.level->setControlPoint(drag.id, value, drag.revision);
+    if (values == drag.after) return;
+    bool changed;
+    if (!drag.action) {
+      changed = drag.target.level->setControlPoints(values, drag.revision);
+    } else if (values == drag.before) {
+      changed = drag.action->replace(drag.action->before);
+    } else {
+      PositionOffsets offsets;
+      for (std::size_t i = 0; i < values.size(); ++i)
+        offsets.emplace(values[i].first, offsetFrom(values[i].second.position,
+                                                    drag.restPositions[i]));
+      changed = drag.action->setPositions(offsets);
+    }
     if (changed) {
-      drag.after = value;
+      drag.after = std::move(values);
       m_updateTimer.restart();
       invalidate();
     }
+  }
+
+  void beginDrag(const Target &active, const otam::Model &model,
+                 std::size_t hit, const Vec3 &screen, const TMouseEvent &event,
+                 std::optional<Handle> handle, bool actionMode) {
+    auto action = actionMode ? beginActionEdit(active) : std::nullopt;
+    if (actionMode && !action) return;
+
+    PointValues values;
+    std::vector<Vec3> rest;
+    const auto addPoint = [&](std::size_t index) {
+      const auto &point = model.points[index];
+      values.emplace_back(point.id,
+                          TXshAMLevel::PointValue{point.position, point.bias});
+      if (action) rest.push_back(action->rest->points[index].position);
+    };
+    if (handle)
+      addPoint(hit);
+    else
+      for (auto head : m_selectedHeads) addPoint(head);
+
+    m_drag = Drag{
+        active, *m_projection,     m_revision,     values,
+        values, event.m_pos,       screen,         model.points[hit].position,
+        handle, std::move(action), std::move(rest)};
+    m_updateTimer.invalidate();
   }
 
 public:
@@ -471,7 +580,7 @@ public:
 
   ToolType getToolType() const override { return ColumnTool; }
   unsigned int getToolHints() const override { return HintNone; }
-  bool isDragging() const override { return m_drag.has_value(); }
+  bool isDragging() const override { return m_drag || m_selectionBox; }
   int getCursorId() const override { return ToolCursor::SplineEditorCursor; }
   void updateMatrix() override { setMatrix(TAffine()); }
 
@@ -487,13 +596,17 @@ public:
 
   void onDeactivate() override {
     finishDrag();
-    clearSelection();
+    setSelection({});
+    m_selectionBox.reset();
     m_drawTarget = {};
     m_projection.reset();
   }
 
   void onImageChanged() override {
-    if (!(m_drawTarget == currentTarget())) finishDrag();
+    if (!(m_drawTarget == currentTarget())) {
+      finishDrag();
+      m_selectionBox.reset();
+    }
   }
 
   void draw() override {
@@ -513,8 +626,9 @@ public:
     const double time     = keyTime(active, binding);
     const auto revision = active.level->revision();
     if (active.level.getPointer() != m_drawTarget.level.getPointer() ||
-        revision != m_revision)
-      clearSelection();
+        active.xsheet != m_drawTarget.xsheet ||
+        active.column != m_drawTarget.column || revision != m_revision)
+      setSelection({});
     m_drawTarget = active;
     m_drawViewer = viewer;
     m_revision   = revision;
@@ -539,7 +653,10 @@ public:
            ++i) {
         const auto segment = otam::splineSegment(*model, spline, i);
         const bool selected =
-            m_occurrence == segment.from || m_occurrence == segment.to;
+            m_occurrence
+                ? m_occurrence == segment.from || m_occurrence == segment.to
+                : m_selectedHeads.count(model->points[segment.from].head) ||
+                      m_selectedHeads.count(model->points[segment.to].head);
         if (selected)
           glColor3ub(123, 232, 229);
         else
@@ -571,9 +688,10 @@ public:
       if (point.head != i) continue;
       const auto p = m_projection->project(point.position);
       if (!p) continue;
+      const bool selected = m_selectedHeads.count(i);
       if (hasPositionKey(binding, point.id, time))
-        glColor3ub(255, m_selectedHead == i ? 119 : 163, 208);
-      else if (m_selectedHead == i)
+        glColor3ub(255, selected ? 119 : 163, 208);
+      else if (selected)
         glColor3ub(255, 208, 90);
       else
         glColor3ub(221, 248, 248);
@@ -581,12 +699,23 @@ public:
     }
     glEnd();
 
+    if (m_selectionBox && m_selectionBox->target == active) {
+      const auto rect = m_selectionBox->rect();
+      glColor3ub(123, 232, 229);
+      glBegin(GL_LINE_LOOP);
+      glVertex2d(rect.x0, rect.y0);
+      glVertex2d(rect.x1, rect.y0);
+      glVertex2d(rect.x1, rect.y1);
+      glVertex2d(rect.x0, rect.y1);
+      glEnd();
+    }
     glPopMatrix();
     glPopAttrib();
   }
 
   void leftButtonDown(const TPointD &, const TMouseEvent &event) override {
     finishDrag();
+    m_selectionBox.reset();
     const auto active = currentTarget();
     if (!m_projection || !active.level || !(m_drawTarget == active) ||
         m_drawViewer != getViewer() || getViewer()->isPreviewEnabled())
@@ -608,7 +737,7 @@ public:
       hit     = m_occurrence;
       screen  = candidate.screen;
     }
-    if (!hit) {
+    if (!hit || event.isShiftPressed()) {
       for (std::size_t i = 0; i < model->points.size(); ++i) {
         const auto &point = model->points[i];
         if (point.head != i) continue;
@@ -619,62 +748,81 @@ public:
             (hit && distance == nearest && (*p)[2] <= screen[2]))
           continue;
         nearest = distance;
-        hit     = i;
-        screen  = *p;
-      }
-      if (hit != m_selectedHead) {
-        m_selectedHead = hit;
-        m_occurrence   = hit;
+        handle.reset();
+        hit    = i;
+        screen = *p;
       }
     }
-    if (hit) TSelection::setCurrent(nullptr);
-    if (hit && !handle && event.isAltPressed()) {
-      if (!actionMode)
+
+    TSelection::setCurrent(nullptr);
+    if (!hit) {
+      m_selectionBox = SelectionBox{active, event.m_pos, event.m_pos,
+                                    event.isShiftPressed()};
+    } else if (handle) {
+      beginDrag(active, *model, *hit, screen, event, handle, actionMode);
+    } else if (event.isShiftPressed()) {
+      auto selected = m_selectedHeads;
+      if (!selected.erase(*hit)) selected.insert(*hit);
+      setSelection(std::move(selected));
+    } else if (event.isAltPressed()) {
+      setSelection({*hit});
+      if (!actionMode) {
         if (const auto next = nextOccurrence(*model)) selectOccurrence(*next);
-    } else if (hit) {
-      const auto &point = model->points[*hit];
-      const TXshAMLevel::PointValue value{point.position, point.bias};
-      auto action = actionMode ? beginActionEdit(active) : std::nullopt;
-      if (!actionMode || action) {
-        const auto rest = action ? action->rest->points[*hit].position : Vec3{};
-        m_drag =
-            Drag{active, *m_projection, m_revision, point.id, value,
-                 value,  event.m_pos,   screen,     handle,   std::move(action),
-                 rest};
-        m_updateTimer.invalidate();
       }
+    } else {
+      if (!m_selectedHeads.count(*hit)) setSelection({*hit});
+      beginDrag(active, *model, *hit, screen, event, {}, actionMode);
     }
     invalidate();
   }
 
   void leftButtonDrag(const TPointD &, const TMouseEvent &event) override {
-    updateDrag(event, false);
+    if (m_selectionBox) {
+      m_selectionBox->end = event.m_pos;
+      invalidate();
+    } else {
+      updateDrag(event, false);
+    }
   }
 
   void leftButtonUp(const TPointD &, const TMouseEvent &event) override {
-    updateDrag(event, true);
-    finishDrag();
+    if (m_selectionBox) {
+      finishBox(event.m_pos);
+    } else {
+      updateDrag(event, true);
+      finishDrag();
+    }
   }
 
   void addContextMenuItems(QMenu *menu) override {
     const auto active = currentTarget();
-    if (m_drag || !active.level || !(m_drawTarget == active)) return;
+    const auto *viewer =
+        dynamic_cast<const TToolViewer *>(menu->parentWidget());
+    if (isDragging() || !active.level || !(m_drawTarget == active) || !viewer ||
+        viewer->isPreviewEnabled())
+      return;
     const auto model = amModelAt(active.xsheet, active.column, active.row);
     if (!model || m_revision != active.level->revision()) return;
     const auto binding = actionBinding(active);
     if (binding.action) {
       const auto time = keyTime(active, binding);
-      if (!m_selectedHead || *m_selectedHead >= model->points.size() ||
-          time < 0)
+      if (m_selectedHeads.empty() ||
+          *m_selectedHeads.rbegin() >= model->points.size() || time < 0)
         return;
-      const auto id = model->points[*m_selectedHead].id;
-      if (hasPositionKey(binding, id, time)) {
-        menu->addAction(QObject::tr("Remove A:M Position Key"), menu,
-                        [this] { editSelectedKey(true); });
-      } else {
-        menu->addAction(QObject::tr("Set A:M Position Key"), menu,
-                        [this] { editSelectedKey(false); });
-      }
+      const auto keyed = std::count_if(
+          m_selectedHeads.begin(), m_selectedHeads.end(),
+          [&](std::size_t head) {
+            return hasPositionKey(binding, model->points[head].id, time);
+          });
+      const bool multiple = m_selectedHeads.size() > 1;
+      if (std::size_t(keyed) < m_selectedHeads.size())
+        menu->addAction(multiple ? QObject::tr("Set A:M Position Keys")
+                                 : QObject::tr("Set A:M Position Key"),
+                        menu, [this] { editSelectedKeys(false); });
+      if (keyed)
+        menu->addAction(multiple ? QObject::tr("Remove A:M Position Keys")
+                                 : QObject::tr("Remove A:M Position Key"),
+                        menu, [this] { editSelectedKeys(true); });
       return;
     }
     if (!nextOccurrence(*model)) return;
@@ -690,13 +838,18 @@ public:
   }
 
   bool keyDown(QKeyEvent *event) override {
-    if (event->key() != Qt::Key_Escape || !m_drag) return false;
+    if (event->key() != Qt::Key_Escape || !isDragging()) return false;
+    if (m_selectionBox) {
+      m_selectionBox.reset();
+      invalidate();
+      return true;
+    }
     auto drag = std::move(*m_drag);
     m_drag.reset();
     if (drag.action)
       drag.action->replace(drag.action->before);
     else if (!(drag.before == drag.after))
-      drag.target.level->setControlPoint(drag.id, drag.before, drag.revision);
+      drag.target.level->setControlPoints(drag.before, drag.revision);
     invalidate();
     return true;
   }

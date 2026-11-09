@@ -11,6 +11,7 @@
 #include <cmath>
 #include <charconv>
 #include <set>
+#include <unordered_map>
 
 DEFINE_CLASS_CODE(TXshAMLevel, 55)
 PERSIST_IDENTIFIER(TXshAMLevel, "amModelLevel")
@@ -268,43 +269,70 @@ std::shared_ptr<const otam::Model> TXshAMLevel::editableModel() const {
 
 bool TXshAMLevel::setControlPoint(otam::Id id, const PointValue &value,
                                   const std::string &sourceRevision) {
+  return setControlPoints({{id, value}}, sourceRevision);
+}
+
+bool TXshAMLevel::setControlPoints(const PointValues &values,
+                                   const std::string &sourceRevision) {
   std::lock_guard<std::mutex> lock(m_mutex);
-  if (!m_editableModel || sourceRevision != m_revision ||
-      !validPointValue(value))
+  if (!m_editableModel || sourceRevision != m_revision || values.empty())
     return false;
 
   const auto &source = m_document->models.front();
-  const auto point   = std::find_if(source.points.begin(), source.points.end(),
-                                    [id](const auto &cp) { return cp.id == id; });
-  if (point == source.points.end()) return false;
-  const auto i = std::size_t(point - source.points.begin());
-  if ((point->head != i && point->position != value.position) ||
-      pointValue(m_editableModel->points[i]) == value)
-    return false;
+  if (values.size() > source.points.size()) return false;
+  std::unordered_map<otam::Id, const PointValue *> requested;
+  requested.reserve(values.size());
+  for (const auto &[id, value] : values)
+    if (!validPointValue(value) || !requested.emplace(id, &value).second)
+      return false;
 
-  auto model                = std::make_shared<otam::Model>(*m_editableModel);
-  model->points[i].position = value.position;
-  model->points[i].bias     = value.bias;
-  std::shared_ptr<const otam::Mesh> mesh;
+  std::vector<std::pair<std::size_t, const PointValue *>> changed;
+  changed.reserve(values.size());
+  for (std::size_t i = 0; i < source.points.size() && !requested.empty(); ++i) {
+    const auto &point = source.points[i];
+    const auto it     = requested.find(point.id);
+    if (it == requested.end()) continue;
+    const auto &value = *it->second;
+    if (point.head != i && point.position != value.position) return false;
+    if (!(pointValue(m_editableModel->points[i]) == value))
+      changed.emplace_back(i, &value);
+    requested.erase(it);
+  }
+  if (!requested.empty() || changed.empty()) return false;
+
+  auto model = std::make_shared<otam::Model>(*m_editableModel);
+  std::map<otam::Id, PointValue> replacements;
+  for (const auto &[i, value] : changed) {
+    auto &point    = model->points[i];
+    point.position = value->position;
+    point.bias     = value->bias;
+    if (!(pointValue(source.points[i]) == *value))
+      replacements.emplace(point.id, *value);
+  }
+  auto editRevision = m_revision;
+  auto overrides    = paletteColorOverridesLocked(
+         m_renderPalette ? *m_renderPalette : *m_palette);
+  std::shared_ptr<const otam::Mesh> mesh, renderMesh;
   try {
     mesh = std::make_shared<otam::Mesh>(
         otam::previewMesh(*model, m_document->warnings));
+    renderMesh = meshWithColorsLocked(mesh, overrides);
   } catch (const std::runtime_error &e) {
-    qWarning().noquote() << "A:M control point edit:" << e.what();
+    qWarning().noquote() << "A:M control point edits:" << e.what();
     return false;
   }
 
-  if (pointValue(*point) == value)
-    m_pointEdits.erase(id);
-  else
-    m_pointEdits[id] = value;
-  m_editRevision  = m_pointEdits.empty() ? std::string() : m_revision;
+  // Publish the model, serialized edits and render snapshot together.
+  for (const auto &change : changed)
+    m_pointEdits.erase(source.points[change.first].id);
+  m_pointEdits.merge(replacements);
+  if (m_pointEdits.empty()) editRevision.clear();
+  m_editRevision   = std::move(editRevision);
   m_editableModel = std::move(model);
   m_mesh          = std::move(mesh);
-  m_renderMesh    = m_mesh;
-  m_colorOverrides.clear();
+  m_renderMesh     = std::move(renderMesh);
+  m_colorOverrides = std::move(overrides);
   m_actionSample = {};
-  updateRenderMeshLocked(m_renderPalette ? *m_renderPalette : *m_palette);
   return true;
 }
 
@@ -415,7 +443,8 @@ bool TXshAMLevel::updatePaletteColorsLocked() {
   return updateRenderMeshLocked(*m_palette) || wasAnimated;
 }
 
-bool TXshAMLevel::updateRenderMeshLocked(const TPalette &palette) const {
+std::map<int, TPixel32> TXshAMLevel::paletteColorOverridesLocked(
+    const TPalette &palette) const {
   std::map<int, TPixel32> overrides;
   auto resolve = [&](int id, const TPixel32 &source) {
     if (id >= palette.getStyleCount() || !palette.getStylePage(id)) return;
@@ -427,21 +456,23 @@ bool TXshAMLevel::updateRenderMeshLocked(const TPalette &palette) const {
   resolve(DefaultStyle, styleColor(DefaultSurface));
   for (const auto &[key, binding] : m_groupStyles)
     resolve(binding.id, binding.sourceColor);
+  return overrides;
+}
+
+bool TXshAMLevel::updateRenderMeshLocked(const TPalette &palette) const {
+  auto overrides = paletteColorOverridesLocked(palette);
   if (overrides == m_colorOverrides) return false;
-  if (overrides.empty()) {
-    m_renderMesh = m_mesh;
-  } else {
-    auto colored = std::make_shared<otam::Mesh>(*m_mesh);
-    applyColorsLocked(*colored, overrides);
-    m_renderMesh = std::move(colored);
-  }
+  m_renderMesh     = meshWithColorsLocked(m_mesh, overrides);
   m_colorOverrides = std::move(overrides);
   return true;
 }
 
-void TXshAMLevel::applyColorsLocked(
-    otam::Mesh &mesh, const std::map<int, TPixel32> &overrides) const {
-  for (auto &triangle : mesh.triangles) {
+std::shared_ptr<const otam::Mesh> TXshAMLevel::meshWithColorsLocked(
+    const std::shared_ptr<const otam::Mesh> &mesh,
+    const std::map<int, TPixel32> &overrides) const {
+  if (overrides.empty()) return mesh;
+  auto colored = std::make_shared<otam::Mesh>(*mesh);
+  for (auto &triangle : colored->triangles) {
     const int style = triangle.colorGroup < 0
                           ? DefaultStyle
                           : m_styleByGroup.at(triangle.colorGroup);
@@ -451,6 +482,7 @@ void TXshAMLevel::applyColorsLocked(
       triangle.color = {{p.r / 255.f, p.g / 255.f, p.b / 255.f}};
     }
   }
+  return colored;
 }
 
 void TXshAMLevel::sampleActionLocked(
@@ -511,10 +543,7 @@ std::shared_ptr<const otam::Mesh> TXshAMLevel::renderMesh(
     fallback->warnings.push_back(m_actionSample.warning);
     return fallback;
   }
-  if (m_colorOverrides.empty()) return m_actionSample.mesh;
-  auto colored = std::make_shared<otam::Mesh>(*m_actionSample.mesh);
-  applyColorsLocked(*colored, m_colorOverrides);
-  return colored;
+  return meshWithColorsLocked(m_actionSample.mesh, m_colorOverrides);
 }
 
 std::map<int, TPixel32> TXshAMLevel::sourceStyleColors() const {

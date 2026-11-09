@@ -247,6 +247,44 @@ int main(int argc, char **argv) {
     moved.position[2] = 0.1234567891234567;
     const TXshAMLevel::PointValue shaped{attached.position,
                                          {{0, 0, 1, 15, 25, 2}}};
+    const auto &otherHead = editable->points[0];
+    const TXshAMLevel::PointValue otherBefore{otherHead.position,
+                                              otherHead.bias};
+    auto otherMoved        = otherBefore;
+    otherMoved.position[2] = moved.position[2];
+    auto invalidAttached   = shaped;
+    invalidAttached.position[0] += 1;
+    const TXshAMLevel::PointValues moves{{head.id, moved},
+                                         {otherHead.id, otherMoved}};
+    check(
+        !level->setControlPoints(moves, "different source") &&
+            !level->setControlPoints({{head.id, moved}, {head.id, before}},
+                                     revision) &&
+            !level->setControlPoints({{head.id, moved}, {-1, otherMoved}},
+                                     revision) &&
+            !level->setControlPoints(
+                {{head.id, moved}, {attached.id, invalidAttached}}, revision) &&
+            level->editableModel() == editable && level->mesh() == sourceMesh,
+        "a rejected point batch changed the published model or mesh");
+    check(level->setControlPoints(moves, revision),
+          "batch movement of two position owners failed");
+    const auto batchModel = level->editableModel();
+    const auto batchMesh  = level->mesh();
+    check(batchModel->points[0].position == otherMoved.position &&
+              batchModel->points[1].position == moved.position &&
+              batchMesh != sourceMesh &&
+              level->renderMesh()->triangles[0].color == otam::Color{{0, 0, 1}},
+          "point batch did not publish both moves with the model palette");
+    check(!level->setControlPoints(moves, revision) &&
+              level->editableModel() == batchModel &&
+              level->mesh() == batchMesh,
+          "point batch rebuilt the model or mesh on a no-op");
+    check(level->setControlPoints(
+              {{head.id, before}, {otherHead.id, otherBefore}}, revision) &&
+              level->editableModel()->points[0].position ==
+                  otherBefore.position &&
+              level->editableModel()->points[1].position == before.position,
+          "restoring both points in a batch failed");
     check(!level->setControlPoint(head.id, moved, "different source"),
           "point edit accepted the wrong source revision");
     check(level->setControlPoint(head.id, moved, revision) &&
