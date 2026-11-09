@@ -233,6 +233,31 @@ int main(int argc, char **argv) {
     check(glbMoved &&
               glbMoved->triangles[0].vertices != glbBase->triangles[0].vertices,
           "GLB stage rotation did not reach render geometry");
+    const auto editable = level->editableModel();
+    check(bool(editable), "model has no editable snapshot");
+    const auto &head     = editable->points[1];
+    const auto &attached = editable->points[2];
+    const auto revision  = level->revision();
+    const TXshAMLevel::PointValue before{head.position, head.bias};
+    auto moved        = before;
+    moved.position[2] = 0.1234567891234567;
+    const TXshAMLevel::PointValue shaped{attached.position,
+                                         {{0, 0, 1, 15, 25, 2}}};
+    check(!level->setControlPoint(head.id, moved, "different source"),
+          "point edit accepted the wrong source revision");
+    check(level->setControlPoint(head.id, moved, revision) &&
+              level->setControlPoint(attached.id, shaped, revision),
+          "point move or occurrence bias was rejected");
+    check(
+        level->mesh() != sourceMesh &&
+            level->renderMesh()->triangles[0].color == otam::Color{{0, 0, 1}} &&
+            level->document()->models.front().points[1].position ==
+                before.position,
+        "point edit lost the palette or mutated the immutable source");
+    check(level->setControlPoint(head.id, before, revision) &&
+              level->editableModel()->points[1].position == before.position &&
+              level->setControlPoint(head.id, moved, revision),
+          "restoring and replaying a point move did not rebuild the mesh");
     // Serialization includes new native resource and ordinary stage channel
     // keys.
     const TFilePath serialized(temp.path() + "/sheet.xml");
@@ -258,6 +283,14 @@ int main(int argc, char **argv) {
               restoredLevel->renderMesh()->triangles[0].color ==
                   otam::Color{{0, 0, 1}},
           "A:M palette override was lost on reopen");
+    const auto reopened = restoredLevel->editableModel();
+    check(reopened && reopened->points[1].position == moved.position &&
+              reopened->points[2].bias == shaped.bias,
+          "control point edits lost precision or were omitted on reopen");
+    check(
+        prepareAMLevelGeometry(restored, 0, 0, false)->triangles[0].vertices ==
+            prepareAMLevelGeometry(xsheet, 0, 0, false)->triangles[0].vertices,
+        "reopened point edits produced different placed geometry");
     auto renamed = amtest::source;
     renamed.replace(renamed.find("Name=Red"), 8, "Name=Coat");
     {
@@ -268,6 +301,8 @@ int main(int argc, char **argv) {
             "write complete renamed fixture");
     }
     restoredLevel->load();
+    check(!restoredLevel->editableModel() && restoredLevel->mesh(),
+          "edits were applied to an externally modified source");
     check(restoredLevel->getPalette()->getStyle(2)->getName() == L"Coat" &&
               restoredLevel->renderMesh()->triangles[0].color ==
                   otam::Color{{0, 0, 1}},
@@ -394,6 +429,12 @@ int main(int argc, char **argv) {
     level->save();
     check(readFile(source).toStdString() == amtest::source,
           "source rewritten by save");
+    restoredLevel->load();
+    check(restoredLevel->editableModel() &&
+              restoredLevel->editableModel()->points[1].position ==
+                  moved.position,
+          "restoring the source did not recover suspended edits");
+    const auto meshBeforeSaveAs = level->mesh();
     // Preserve physical references and loaded snapshots during Save As.
     level->setPath(
         TFilePath("$scenefolder") + TFilePath(source).withoutParentDir(), true);
@@ -407,7 +448,8 @@ int main(int argc, char **argv) {
     }
     check(scene.decodeFilePath(level->getPath()) == originalPath,
           "Save As changed physical source");
-    check(level->mesh() == sourceMesh, "path recoding discarded cached mesh");
+    check(level->mesh() == meshBeforeSaveAs,
+          "path recoding discarded cached mesh");
     // Failed reload must not silently retain the last valid displayed model.
     level->setPath(TFilePath(temp.path() + "/absent.mdl"));
     try {

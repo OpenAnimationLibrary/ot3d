@@ -22,12 +22,7 @@
 #include <set>
 #include <stdexcept>
 
-namespace {
-struct ModelCamera {
-  otam::Matrix pose         = otam::translation(0, 0, 1000);
-  otam::Matrix imageToStage = otam::identity();
-};
-ModelCamera modelCamera(TXsheet *xsheet, double frame, bool preview) {
+AMModelCamera amModelCamera(TXsheet *xsheet, double frame, bool preview) {
   const auto id =
       preview ? xsheet->getStageObjectTree()->getCurrentPreviewCameraId()
               : xsheet->getStageObjectTree()->getCurrentCameraId();
@@ -36,7 +31,7 @@ ModelCamera modelCamera(TXsheet *xsheet, double frame, bool preview) {
   if (!std::isfinite(distance) || distance <= 0)
     throw std::runtime_error(
         "Spatial camera must remain in front of its film plane");
-  ModelCamera result;
+  AMModelCamera result;
   // The historical optical offset belongs to the camera's parent space.
   // A spatial parent must move the eye with the rig, not rotate the world
   // around a fixed eye. The animated Z channel itself remains unchanged.
@@ -54,6 +49,19 @@ ModelCamera modelCamera(TXsheet *xsheet, double frame, bool preview) {
       {a.a11, a.a12, 0, a.a13, a.a21, a.a22, 0, a.a23, 0, 0, 1, 0, 0, 0, 0, 1}};
   return result;
 }
+static otam::Matrix modelPlacement(TXsheet *xsheet, int column, double frame,
+                                   double units) {
+  auto *object       = xsheet->getStageObject(TStageObjectId::ColumnId(column));
+  const double scale = units * (1.0 - object->getGlobalNoScaleZ() / 1000.0);
+  return otam::multiply(object->getAMPlacement(frame),
+                        otam::scaling(scale, scale, scale));
+}
+
+otam::Matrix amModelPlacement(TXsheet *xsheet, int column, double frame) {
+  return modelPlacement(xsheet, column, frame, Stage::inch / 2.54);
+}
+
+namespace {
 otam::Matrix modelTransform(const otglb::ModelTransform &t) {
   for (double v : t.position)
     if (!std::isfinite(v)) throw std::runtime_error("Invalid 3D position");
@@ -103,14 +111,10 @@ static std::shared_ptr<const otam::Mesh> prepareModelGeometryImpl(
   } else {
     return {};
   }
-  auto *object = xsheet->getStageObject(TStageObjectId::ColumnId(column));
-  const double noScale = 1.0 - object->getGlobalNoScaleZ() / 1000.0;
-  const auto matrix    = otam::multiply(
-         object->getAMPlacement(frame),
-         otam::scaling(units * noScale, units * noScale, units * noScale));
+  const auto matrix = modelPlacement(xsheet, column, frame, units);
   auto result = std::make_shared<otam::Mesh>(otam::transformed(*mesh, matrix));
   if (projectToCamera) {
-    const auto camera = modelCamera(xsheet, frame, previewCamera);
+    const auto camera = amModelCamera(xsheet, frame, previewCamera);
     *result = otam::projected(*result, camera.pose, camera.imageToStage);
   }
   return result;
@@ -137,7 +141,7 @@ std::shared_ptr<const otam::Mesh> prepareNativeModelGeometry(
 class NativeModelRenderFx final : public TRasterFx, public T3DRenderSource {
   FX_DECLARATION(NativeModelRenderFx)
   std::shared_ptr<const otam::Mesh> m_geometry;
-  ModelCamera m_camera;
+  AMModelCamera m_camera;
   bool m_project         = false;
   TPixel32 m_colorFilter = TPixel32::Black;
   std::string m_key;
@@ -145,7 +149,8 @@ class NativeModelRenderFx final : public TRasterFx, public T3DRenderSource {
 public:
   NativeModelRenderFx() { enableComputeInFloat(true); }
   void setGeometry(std::shared_ptr<const otam::Mesh> geometry,
-                   bool project = false, ModelCamera camera = ModelCamera()) {
+                   bool project         = false,
+                   AMModelCamera camera = AMModelCamera()) {
     m_geometry = std::move(geometry);
     m_project  = project;
     m_camera   = camera;
@@ -553,7 +558,7 @@ static TRasterFx *makeModelSnapshot(TXsheet *xsheet, int column, double frame,
   if (!geometry) return nullptr;
   auto fx = std::make_unique<NativeModelRenderFx>();
   fx->setGeometry(std::move(geometry), true,
-                  modelCamera(xsheet, frame, previewCamera));
+                  amModelCamera(xsheet, frame, previewCamera));
   return fx.release();
 }
 TRasterFx *makeAMLevelRenderFx(TXsheet *xsheet, int column, double frame,

@@ -5,7 +5,7 @@
 Load an Animation:Master `.mdl` through **File > Load Level** or drop it into
 an Xsheet. It becomes an **A:M model level**, also listed in Scene Cast. It is
 not a GLB conversion, Plastic mesh, drawing level, or user-created Model FX.
-Scene Cast **Expose** creates another instance sharing the read-only asset.
+Scene Cast **Expose** creates another instance sharing the model level.
 A model has one exposure identifier (`1`); extend that cell to keep it visible.
 Internal A:M action playback is not implemented in this slice.
 
@@ -31,9 +31,28 @@ world-space editing and model picking are NOT implemented; select via Xsheet.
 The existing planar handles continue to edit XY/Z and Rz. Do not interpret their
 2D outlines as the full 3D bounding box.
 
-Save the OT3D scene to retain references, exposures and instance keys. `.mdl`
-bytes are never rewritten. Save As recodes the same physical source. Collect
-Assets copies the model source without conversion; linked material/image assets
+### Control Point Editor
+
+Select an exposed A:M cell in the top Xsheet, turn off Preview and choose
+**Control Point Editor**. The Viewer shows the model's splines and control points.
+Drag a point to move its attachment stack in the current view plane. Orbit the
+Camera 3D view to edit along a different plane. Drag the amber incoming or
+purple outgoing handle to change that spline occurrence's bias. Hold **Shift**
+while dragging a handle to change its length along its current direction.
+The same Shift gesture works on vector strokes and motion paths.
+
+At a junction, **Alt-click** the selected point or choose **Next Attached A:M
+Spline** from the Viewer context menu to show the next occurrence's handles.
+**Escape** cancels an active drag. A finished drag can be undone or redone.
+
+Save the OT3D scene to retain point and bias edits along with exposures and
+instance keys. All exposures of the same level share the edited geometry, and
+each column keeps its own transforms. Edits live in the scene and the source
+`.mdl` stays intact. If the source bytes change outside OT3D, OT3D displays
+the updated source and suspends the edits until the original revision is restored.
+
+Save As recodes the same physical source. Collect Assets copies the model
+source without conversion; linked material/image assets
 are not recursively collected yet. Reload through the normal level-loading path
 can be used after external edits; no file watcher or live synchronization exists.
 An unreadable/unsupported source is a diagnostic, not a successfully loaded empty
@@ -110,11 +129,14 @@ implementation supplied by the SDK. No SDK source is copied into this change.
 
 **Inferred/experimental:** loop flags observed in fixtures, axis/unit calibration,
 neighbor-based tangents, magnitude application and Coons surface interpolation.
-The preview is NOT the proprietary Hash patch evaluator. Alpha/gamma and special
-CP flags are retained but their effect is not evaluated. Warnings identify this.
-Four-corner patches use a Hermite-boundary Coons approximation; three-corner
-records use a flat triangular preview. Shared boundaries reuse topology-based
-curves; coincident but unattached points are not welded.
+The preview is NOT the proprietary Hash patch evaluator. Special CP flags are retained with limited evaluation. Warnings identify this.
+Four-corner patches use a Coons approximation and curved three-corner patches
+use a cubic triangular surface. Shared boundaries use the same cubic splines
+drawn by the editor. Gamma rotates in the local spline plane, alpha tilts out of
+it and magnitude scales the tangent. The plane and tangent are approximations
+informed by the SDK's
+[HCP documentation](https://github.com/OpenAnimationLibrary/amsdk/blob/ee3dd9fb82bf80de8cdd75e00273e2eeab925e33/docs/classHCP__02.md).
+Coincident but unattached points remain separate.
 
 **Unknown/deferred:** exact modern tangent rules, interior subdivision heuristic,
 peaked/special CP flags, hooks, five-point evaluation, complete patch orientation

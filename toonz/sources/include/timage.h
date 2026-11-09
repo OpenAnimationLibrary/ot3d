@@ -50,7 +50,8 @@ lines, curves, and shapes or polygon(s),
     VECTOR       = 2,  //!< A vector image.
     TOONZ_RASTER = 3,  //!< A colormap raster image.
     MESH         = 4,  //!< A textured mesh image.
-    META         = 5   //!< A non-painting data, GUI helpers, assistants, etc.
+    META         = 5,  //!< A non-painting data, GUI helpers, assistants, etc.
+    AM_MODEL     = 6   //!< Native A:M tool context (no TImage instance).
   };
 
   /*!

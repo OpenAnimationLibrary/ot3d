@@ -13,6 +13,7 @@
 namespace otam {
 using Id     = std::int64_t;
 using Vec3   = std::array<double, 3>;
+using Bias   = std::array<double, 3>;  // Alpha, gamma, magnitude.
 using Color  = std::array<float, 3>;
 using Matrix = std::array<double, 16>;  // Row major; column vectors.
 
@@ -58,6 +59,27 @@ struct Model {
   std::vector<Patch> patches;
   std::vector<Group> groups;
 };
+// The two handles belong to spline occurrences. Their origins belong to
+// attachment heads. The same cubic is used by the overlay and patch preview.
+struct BiasHandle {
+  Vec3 origin, forward, side, normal;
+  double length = 0;
+  Bias bias{};
+
+  Vec3 point() const;
+  Bias biasAt(const Vec3 &point, bool magnitudeOnly) const;
+};
+
+struct SplineSegment {
+  std::size_t from, to;
+  BiasHandle outgoing, incoming;
+
+  std::array<Vec3, 4> bezier() const;
+};
+
+Vec3 sampleSpline(const std::array<Vec3, 4> &points, double t);
+SplineSegment splineSegment(const Model &model, const Spline &spline,
+                            std::size_t start);
 struct Document {
   std::string source;
   std::vector<SourceNode> nodes;
@@ -88,6 +110,8 @@ Document parseSource(std::string source, const std::string &root,
                      const Limits &limits = Limits());
 Document parse(std::string source, const Limits &limits = Limits());
 Mesh previewMesh(const Document &document, std::size_t model = 0,
+                 unsigned subdivisions = 6, const Limits &limits = Limits());
+Mesh previewMesh(const Model &model, const std::vector<std::string> &warnings,
                  unsigned subdivisions = 6, const Limits &limits = Limits());
 Matrix identity();
 Matrix multiply(const Matrix &a, const Matrix &b);

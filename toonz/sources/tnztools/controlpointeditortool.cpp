@@ -515,6 +515,7 @@ void ControlPointEditorTool::leftButtonDown(const TPointD &pos,
     m_selection.selectNone();
     m_selection.select(pointIndex);
     m_action = isIn ? IN_SPEED_MOVEMENT : OUT_SPEED_MOVEMENT;
+    m_lastPointSelected = pointIndex;
     if (e.isAltPressed()) {
       initUndo();
       if (m_controlPointEditorStroke.isCusp(pointIndex))
@@ -711,8 +712,24 @@ void ControlPointEditorTool::leftButtonDrag(const TPointD &pos,
   if (m_action == OUT_SPEED_MOVEMENT || m_action == IN_SPEED_MOVEMENT) {
     if (e.isHighFrequent()) return;
     m_pos = pos;
-    moveSpeed(delta, m_action == IN_SPEED_MOVEMENT);
-    m_isImageChanged = true;
+    const bool incoming = m_action == IN_SPEED_MOVEMENT;
+    if (e.isShiftPressed() && m_lastPointSelected >= 0) {
+      const int i = m_lastPointSelected;
+      const TPointD handle =
+          incoming ? m_controlPointEditorStroke.getSpeedInPoint(i)
+                   : m_controlPointEditorStroke.getSpeedOutPoint(i);
+      const TPointD axis =
+          handle - m_controlPointEditorStroke.getControlPoint(i);
+      const double lengthSquared = norm2(axis);
+      if (lengthSquared > 0) {
+        const double fraction = (delta * axis) / lengthSquared;
+        delta                 = axis * std::max(-1.0, fraction);
+      }
+    }
+    if (norm2(delta) > 0) {
+      moveSpeed(delta, incoming);
+      m_isImageChanged = true;
+    }
   }
 
   if (m_action == RECT_SELECTION) {

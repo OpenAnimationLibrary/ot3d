@@ -1,5 +1,6 @@
 #include "ammodel.h"
 #include "amfixture.h"
+#include <algorithm>
 #include <cmath>
 #include <iostream>
 #include <stdexcept>
@@ -56,6 +57,46 @@ int main() {
         near(n[1], 0);
         near(n[2], 1);
       }
+    // CP 3 is attached to head 2. Its outgoing bias shapes the 2–4
+    // boundary without moving the attachment or changing spline 1–2.
+    auto biased          = d.models.front();
+    auto &occurrence     = biased.points[2];
+    const auto base      = otam::splineSegment(biased, biased.splines[1], 0);
+    const auto untouched = otam::splineSegment(biased, biased.splines[0], 0);
+    const otam::Vec3 goal{{1.35, -0.4, 0.5}};
+    const auto bias = base.outgoing.biasAt(goal, false);
+    std::copy(bias.begin(), bias.end(), occurrence.bias.begin() + 3);
+    const auto shaped = otam::splineSegment(biased, biased.splines[1], 0);
+    for (int k = 0; k < 3; ++k) near(shaped.outgoing.point()[k], goal[k]);
+    check(shaped.outgoing.origin == biased.points[1].position &&
+              shaped.incoming.point() == base.incoming.point() &&
+              otam::splineSegment(biased, biased.splines[0], 0).bezier() ==
+                  untouched.bezier(),
+          "bias edit leaked to a welded position or another tangent");
+    const auto magnitudeOnly =
+        shaped.outgoing.biasAt(shaped.outgoing.origin, true);
+    near(magnitudeOnly[0], bias[0]);
+    near(magnitudeOnly[1], bias[1]);
+    near(magnitudeOnly[2], 0);
+    const auto midpoint      = otam::sampleSpline(shaped.bezier(), 0.5);
+    const auto checkBoundary = [&](const otam::Mesh &patch) {
+      for (const auto &triangle : patch.triangles)
+        for (const auto &v : triangle.vertices)
+          if (std::hypot(v[0] - midpoint[0], v[1] - midpoint[1],
+                         v[2] - midpoint[2]) < 1e-8)
+            return;
+      throw std::runtime_error("patch did not follow the edited bias handle");
+    };
+    checkBoundary(otam::previewMesh(biased, {}, 2));
+    biased.patches[0].points.pop_back();
+    const auto triangular = otam::previewMesh(biased, {}, 2);
+    check(triangular.triangles.size() == 4, "curved triangle tessellation");
+    checkBoundary(triangular);
+    biased.points[1].position[2] = 2;
+    const auto movedIn  = otam::splineSegment(biased, biased.splines[0], 0);
+    const auto movedOut = otam::splineSegment(biased, biased.splines[1], 0);
+    near(movedIn.incoming.origin[2], 2);
+    near(movedOut.outgoing.origin[2], 2);
     auto curved                            = d;
     curved.models[0].points[3].position[2] = 1;
     const auto coarse                      = otam::previewMesh(curved, 0, 2),

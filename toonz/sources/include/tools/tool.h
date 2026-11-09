@@ -279,19 +279,22 @@ public:
     LevelTool = LevelReadTool | LevelWriteTool };
 
   enum ToolTargetType  //!  Object types the tool can operate on.
-  { NoTarget    = 0x0,
+  {
+    NoTarget    = 0x0,
     VectorImage = 0x1,   //!< Will work on vector images
     ToonzImage  = 0x2,   //!< Will work on colormap (tlv) images
     RasterImage = 0x4,   //!< Will work on fullcolor images
     MeshImage   = 0x8,   //!< Will work on mesh images
     Splines     = 0x10,  //!< Will work on motion paths
 
-    LevelColumns= 0x20,  //!< Will work on level columns
-    MeshColumns = 0x40,  //!< Will work on mesh columns
+    LevelColumns = 0x20,  //!< Will work on level columns
+    MeshColumns  = 0x40,  //!< Will work on mesh columns
 
     EmptyTarget = 0x80,  //!< Will work on empty cells/columns
 
-    MetaImage   = 0x100, //!< Will work on meta images
+    MetaImage = 0x100,  //!< Will work on meta images
+
+    AMModel = 0x200,  //!< Will work on native A:M model levels.
 
     CommonImages = VectorImage | ToonzImage | RasterImage,
     AllImages    = CommonImages | MeshImage | MetaImage,
@@ -705,6 +708,7 @@ public:
 
   virtual void rotate(const TPointD &center, double angle) = 0;
   virtual void rotate3D(double dPhi, double dTheta)        = 0;
+  virtual bool isPreviewEnabled() const { return false; }
   virtual bool is3DView() const                            = 0;
   virtual bool getIsFlippedX() const                       = 0;
   virtual bool getIsFlippedY() const                       = 0;

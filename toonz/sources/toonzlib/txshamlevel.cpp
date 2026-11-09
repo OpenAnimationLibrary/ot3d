@@ -8,6 +8,7 @@
 #include <stdexcept>
 #include <algorithm>
 #include <cmath>
+#include <charconv>
 #include <set>
 
 DEFINE_CLASS_CODE(TXshAMLevel, 55)
@@ -38,6 +39,15 @@ std::string membershipKey(const otam::Group &group) {
   }
   return hash.result().toHex().toStdString();
 }
+TXshAMLevel::PointValue pointValue(const otam::ControlPoint &point) {
+  return {point.position, point.bias};
+}
+
+bool validPointValue(const TXshAMLevel::PointValue &value) {
+  const auto finite = [](double n) { return std::isfinite(n); };
+  return std::all_of(value.position.begin(), value.position.end(), finite) &&
+         std::all_of(value.bias.begin(), value.bias.end(), finite);
+}
 }  // namespace
 
 TXshAMLevel::TXshAMLevel(std::wstring name)
@@ -53,6 +63,7 @@ void TXshAMLevel::setPath(const TFilePath &path, bool keepCached) {
   m_path = path;
   if (keepCached) return;  // Re-encode the same physical source after Save As.
   m_document.reset();
+  m_editableModel.reset();
   m_mesh.reset();
   m_renderMesh.reset();
   m_renderPalette.reset();
@@ -92,6 +103,41 @@ void TXshAMLevel::loadData(TIStream &is) {
                               SurfaceStyle{id, TPixel32(red, green, blue)});
         is.closeChild();
       }
+    } else if (tag == "controlPointEdits") {
+      if (!m_editRevision.empty())
+        throw TException("A:M level: duplicate control point edits");
+      is >> m_editRevision;
+      if (m_editRevision.size() != 64 ||
+          m_editRevision.find_first_not_of("0123456789abcdef") !=
+              std::string::npos)
+        throw TException("A:M level: invalid control point source revision");
+      const auto readNumber = [&] {
+        std::string token;
+        is >> token;
+        bool ok;
+        const double n = QByteArray::fromStdString(token).toDouble(&ok);
+        if (!ok || !std::isfinite(n))
+          throw TException("A:M level: invalid control point value");
+        return n;
+      };
+      std::string child;
+      while (is.matchTag(child)) {
+        if (child != "point" || m_pointEdits.size() >= otam::Limits().records)
+          throw TException("A:M level: invalid control point edit record");
+        std::string token;
+        is >> token;
+        otam::Id id       = 0;
+        const auto end    = token.data() + token.size();
+        const auto parsed = std::from_chars(token.data(), end, id);
+        if (parsed.ec != std::errc() || parsed.ptr != end)
+          throw TException("A:M level: invalid control point ID");
+        PointValue value;
+        for (auto &n : value.position) n = readNumber();
+        for (auto &n : value.bias) n = readNumber();
+        if (!m_pointEdits.emplace(id, value).second)
+          throw TException("A:M level: duplicate control point ID");
+        is.closeChild();
+      }
     } else
       throw TException("A:M level: unknown scene tag " + tag);
     is.closeChild();
@@ -110,6 +156,20 @@ void TXshAMLevel::saveData(TOStream &os) {
       os.child("group") << key << binding.id << int(binding.sourceColor.r)
                         << int(binding.sourceColor.g)
                         << int(binding.sourceColor.b);
+    os.closeChild();
+  }
+  if (!m_pointEdits.empty()) {
+    os.openChild("controlPointEdits");
+    os << m_editRevision;
+    for (const auto &[id, value] : m_pointEdits) {
+      os.openChild("point");
+      os << std::to_string(id);
+      for (auto n : value.position)
+        os << QByteArray::number(n, 'g', 17).toStdString();
+      for (auto n : value.bias)
+        os << QByteArray::number(n, 'g', 17).toStdString();
+      os.closeChild();
+    }
     os.closeChild();
   }
 }
@@ -132,19 +192,46 @@ void TXshAMLevel::load() {
     if (doc->models.size() != 1)
       throw std::runtime_error(
           "multiple models require a project importer; source is unchanged");
-    auto mesh = std::make_shared<otam::Mesh>(otam::previewMesh(*doc));
+    const auto revision =
+        QCryptographicHash::hash(bytes, QCryptographicHash::Sha256)
+            .toHex()
+            .toStdString();
+    std::lock_guard<std::mutex> lock(m_mutex);
+    const auto &source    = doc->models.front();
+    auto model            = std::shared_ptr<const otam::Model>(doc, &source);
+    auto warnings         = doc->warnings;
+    const bool staleEdits = !m_pointEdits.empty() && m_editRevision != revision;
+    if (staleEdits) {
+      warnings.push_back(
+          "A:M source changed. Control point edits are suspended until the "
+          "original source is restored.");
+    } else if (!m_pointEdits.empty()) {
+      auto edited         = std::make_shared<otam::Model>(source);
+      std::size_t applied = 0;
+      for (std::size_t i = 0; i < edited->points.size(); ++i) {
+        auto &point     = edited->points[i];
+        const auto edit = m_pointEdits.find(point.id);
+        if (edit == m_pointEdits.end()) continue;
+        if (point.head != i && edit->second.position != point.position)
+          throw std::runtime_error("an attached point cannot own a position");
+        point.position = edit->second.position;
+        point.bias     = edit->second.bias;
+        ++applied;
+      }
+      if (applied != m_pointEdits.size())
+        throw std::runtime_error("control point edit refers to an unknown ID");
+      model = std::move(edited);
+    }
+    auto mesh =
+        std::make_shared<otam::Mesh>(otam::previewMesh(*model, warnings));
     if (mesh->triangles.empty())
       throw std::runtime_error(
           "no supported explicit patches; patch discovery/special-patch "
           "evaluation is not yet available");
     for (const auto &warning : mesh->warnings)
       qWarning().noquote() << "A:M model:" << QString::fromStdString(warning);
-    const auto revision =
-        QCryptographicHash::hash(bytes, QCryptographicHash::Sha256)
-            .toHex()
-            .toStdString();
-    std::lock_guard<std::mutex> lock(m_mutex);
-    refreshPalette(doc->models.front(), revision);
+    refreshPalette(source, revision);
+    m_editableModel = staleEdits ? nullptr : std::move(model);
     m_document = std::move(doc);
     m_mesh     = std::move(mesh);
     m_renderMesh = m_mesh;
@@ -156,6 +243,7 @@ void TXshAMLevel::load() {
     std::lock_guard<std::mutex> lock(m_mutex);
     // Do not silently render stale geometry after a failed explicit reload.
     m_document.reset();
+    m_editableModel.reset();
     m_mesh.reset();
     m_renderMesh.reset();
     m_renderPalette.reset();
@@ -169,6 +257,52 @@ std::shared_ptr<const otam::Document> TXshAMLevel::document() const {
   std::lock_guard<std::mutex> lock(m_mutex);
   return m_document;
 }
+std::shared_ptr<const otam::Model> TXshAMLevel::editableModel() const {
+  std::lock_guard<std::mutex> lock(m_mutex);
+  return m_editableModel;
+}
+
+bool TXshAMLevel::setControlPoint(otam::Id id, const PointValue &value,
+                                  const std::string &sourceRevision) {
+  std::lock_guard<std::mutex> lock(m_mutex);
+  if (!m_editableModel || sourceRevision != m_revision ||
+      !validPointValue(value))
+    return false;
+
+  const auto &source = m_document->models.front();
+  const auto point   = std::find_if(source.points.begin(), source.points.end(),
+                                    [id](const auto &cp) { return cp.id == id; });
+  if (point == source.points.end()) return false;
+  const auto i = std::size_t(point - source.points.begin());
+  if ((point->head != i && point->position != value.position) ||
+      pointValue(m_editableModel->points[i]) == value)
+    return false;
+
+  auto model                = std::make_shared<otam::Model>(*m_editableModel);
+  model->points[i].position = value.position;
+  model->points[i].bias     = value.bias;
+  std::shared_ptr<const otam::Mesh> mesh;
+  try {
+    mesh = std::make_shared<otam::Mesh>(
+        otam::previewMesh(*model, m_document->warnings));
+  } catch (const std::runtime_error &e) {
+    qWarning().noquote() << "A:M control point edit:" << e.what();
+    return false;
+  }
+
+  if (pointValue(*point) == value)
+    m_pointEdits.erase(id);
+  else
+    m_pointEdits[id] = value;
+  m_editRevision  = m_pointEdits.empty() ? std::string() : m_revision;
+  m_editableModel = std::move(model);
+  m_mesh          = std::move(mesh);
+  m_renderMesh    = m_mesh;
+  m_colorOverrides.clear();
+  updateRenderMeshLocked(m_renderPalette ? *m_renderPalette : *m_palette);
+  return true;
+}
+
 std::shared_ptr<const otam::Mesh> TXshAMLevel::mesh() const {
   std::lock_guard<std::mutex> lock(m_mutex);
   return m_mesh;

@@ -150,6 +150,9 @@ void Toolbar::updateToolbar() {
   default:
     targetType = TTool::VectorImage;
     break;
+  case AM_XSHLEVEL:
+    targetType = TTool::AMModel;
+    break;
   case MESH_XSHLEVEL:
     targetType = TTool::MeshImage;
     break;

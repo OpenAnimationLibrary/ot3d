@@ -212,6 +212,8 @@ TTool *TTool::getTool(std::string toolName, ToolTargetType targetType) {
     }
   }
 
+  if (targetType == AMModel && (!tool || tool == &theDummyTool))
+    return getTool(toolName, EmptyTarget);
   return tool;
 }
 
@@ -244,13 +246,8 @@ void TTool::bind(const std::string &name, int targetType) {
 
   m_targetType = targetType;
 
-  ToolTargetType targets[] = {
-    EmptyTarget,
-    ToonzImage,
-    VectorImage,
-    RasterImage,
-    MeshImage,
-    MetaImage };
+  ToolTargetType targets[] = {EmptyTarget, ToonzImage, VectorImage, RasterImage,
+                              MeshImage,   MetaImage,  AMModel};
   int targetsCount = sizeof(targets)/sizeof(*targets);
 
   if (!registeredNames.count(name)) {
@@ -1042,8 +1039,7 @@ QString TTool::updateEnabled(int rowIndex, int columnIndex) {
 
   if (isNativeModelLevel(levelType) && (toolType & TTool::LevelTool))
     return (enable(false),
-            QObject::tr("A:M model levels are read-only. Use the Animate Tool "
-                        "for instance transforms."));
+            QObject::tr("The current tool cannot edit native model levels."));
 
   // Check against unplaced columns (not in filmstrip mode)
   if (column && !filmstrip) {

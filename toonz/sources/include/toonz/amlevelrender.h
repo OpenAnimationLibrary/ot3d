@@ -15,6 +15,15 @@
 #endif
 class TXsheet;
 
+// Model-space editor and rasterizer share the column and camera transforms.
+struct AMModelCamera {
+  otam::Matrix pose         = otam::translation(0, 0, 1000);
+  otam::Matrix imageToStage = otam::identity();
+};
+DVAPI AMModelCamera amModelCamera(TXsheet *xsheet, double frame,
+                                  bool preview = false);
+DVAPI otam::Matrix amModelPlacement(TXsheet *xsheet, int column, double frame);
+
 // Shared by the interactive Viewer and the final-render tree. A snapshot owns
 // all geometry and can safely outlive a source reload or scene changes.
 DVAPI std::shared_ptr<const otam::Mesh> prepareAMLevelGeometry(
