@@ -114,6 +114,18 @@ void ensureHelpActions(QMenu *helpMenu) {
   enableQuicklinkEditing(helpMenu);
 }
 
+void ensureLiveRenderAction(QMenu *renderMenu) {
+  auto *commands                 = CommandManager::instance();
+  QAction *liveRender            = commands->getAction(MI_LiveRender);
+  const QList<QAction *> actions = renderMenu->actions();
+  if (!liveRender || actions.contains(liveRender)) return;
+
+  int anchor = actions.indexOf(commands->getAction(MI_Preview));
+  if (anchor < 0) anchor = actions.indexOf(commands->getAction(MI_Render));
+  if (anchor >= 0)
+    renderMenu->insertAction(actions.value(anchor + 1), liveRender);
+}
+
 }  // namespace
 
 //=============================================================================
@@ -347,6 +359,7 @@ QMenuBar *StackedMenuBar::loadMenuBar(const TFilePath &fp) {
             // Older Windows profiles keep private menu XML files. Add the new
             // built-in command without replacing the user's customized menu.
             if (title == QStringLiteral("Help")) ensureHelpActions(menu);
+            if (title == QStringLiteral("Render")) ensureLiveRenderAction(menu);
             menuBar->addMenu(menu);
           } else {
             reader.raiseError(tr("Failed to load menu %1").arg(title));
