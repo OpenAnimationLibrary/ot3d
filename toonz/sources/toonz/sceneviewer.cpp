@@ -255,6 +255,16 @@ void copyBackBufferToFrontBuffer(const TRect &rect) {
 
 #endif
 
+QOpenGLFramebufferObject *createColorCalibrationFramebuffer(int width,
+                                                            int height) {
+  QOpenGLFramebufferObjectFormat format;
+  // The hybrid Viewer draws native model faces into this target too.
+  format.setAttachment(QOpenGLFramebufferObject::Depth);
+  if (Preferences::instance()->is30bitDisplayEnabled())
+    format.setInternalTextureFormat(TGL_TexFmt10);
+  return new QOpenGLFramebufferObject(width, height, format);
+}
+
 const TRectD InvalidateAllRect(0, 0, -1, -1);
 
 //-----------------------------------------------------------------------------
@@ -1289,14 +1299,8 @@ void SceneViewer::onPreferenceChanged(const QString &prefName) {
       m_lutCalibrator->initialize();
       connect(context(), &QOpenGLContext::aboutToBeDestroyed, this,
               &SceneViewer::onContextAboutToBeDestroyed);
-      if (m_lutCalibrator->isValid() && !m_fbo) {
-        if (Preferences::instance()->is30bitDisplayEnabled()) {
-          QOpenGLFramebufferObjectFormat format;
-          format.setInternalTextureFormat(TGL_TexFmt10);
-          m_fbo = new QOpenGLFramebufferObject(width(), height(), format);
-        } else  // normally, initialize with GL_RGBA8 format
-          m_fbo = new QOpenGLFramebufferObject(width(), height());
-      }
+      if (m_lutCalibrator->isValid() && !m_fbo)
+        m_fbo = createColorCalibrationFramebuffer(width(), height());
       doneCurrent();
     }
     update();
@@ -1354,12 +1358,7 @@ void SceneViewer::resizeGL(int w, int h) {
   // remake fbo with new size
   if (m_lutCalibrator && m_lutCalibrator->isValid()) {
     if (m_fbo) delete m_fbo;
-    if (Preferences::instance()->is30bitDisplayEnabled()) {
-      QOpenGLFramebufferObjectFormat format;
-      format.setInternalTextureFormat(TGL_TexFmt10);
-      m_fbo = new QOpenGLFramebufferObject(w, h, format);
-    } else  // normally, initialize with GL_RGBA8 format
-      m_fbo = new QOpenGLFramebufferObject(w, h);
+    m_fbo = createColorCalibrationFramebuffer(w, h);
   }
 
   // for updating the navigator in levelstrip
