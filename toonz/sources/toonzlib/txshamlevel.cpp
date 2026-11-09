@@ -224,10 +224,8 @@ void TXshAMLevel::load() {
     }
     auto mesh =
         std::make_shared<otam::Mesh>(otam::previewMesh(*model, warnings));
-    if (mesh->triangles.empty())
-      throw std::runtime_error(
-          "no supported explicit patches; patch discovery/special-patch "
-          "evaluation is not yet available");
+    if (mesh->triangles.empty() && mesh->splines.empty())
+      throw std::runtime_error("no renderable patches or splines");
     for (const auto &warning : mesh->warnings)
       qWarning().noquote() << "A:M model:" << QString::fromStdString(warning);
     refreshPalette(source, revision);

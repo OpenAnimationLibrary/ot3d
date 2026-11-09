@@ -130,6 +130,7 @@ struct RenderScene {
   std::vector<std::string> warnings;
   std::vector<std::string>
       materialGroups;  // Native patch assignment discovery.
+  std::vector<std::string> splineGroups;  // Native spline assignment discovery.
   bool wireframe = false;
   int textureWidth = 0, textureHeight = 0;
   std::shared_ptr<const std::vector<ColorPixel>> texture;

@@ -173,7 +173,8 @@ void ParamsPage::setPageField(TIStream &is, const TFxP &fx, bool isVertical) {
           if (auto stringField = dynamic_cast<StringParamField *>(field))
             stringField->enableAMMaterialFileControls();
         }
-        if (paramName == "STD_amMaterialFx.group") {
+        if (paramName == "STD_amMaterialFx.group" ||
+            paramName == "STD_inkLineFx.group") {
           if (auto stringField = dynamic_cast<StringParamField *>(field))
             stringField->enableAMMaterialGroupControls();
         }

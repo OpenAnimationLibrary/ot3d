@@ -1,6 +1,7 @@
 // Production FX and native-column regression, without an application or GL
 // context.
 #include "../../stdfx/ammaterialfx.cpp"
+#include "../../stdfx/inklinefx.cpp"
 #include "../../stdfx/transform3dfx.cpp"
 #include "../../stdfx/threepointlightfx.cpp"
 #include "../../stdfx/merge3dfx.cpp"
@@ -77,6 +78,61 @@ TRaster32P render(ToonzScene &scene, const TRenderSettings &settings) {
   renderer.uninstall();
   return raster;
 }
+void testInkLine(const QString &path) {
+  {
+    QFile file(path);
+    const auto &source = amtest::splineSource;
+    require(
+        file.open(QIODevice::WriteOnly) &&
+            file.write(source.data(), source.size()) == qint64(source.size()),
+        "write spline-only model fixture");
+  }
+  ToonzScene scene;
+  scene.setScenePath(TFilePath(path).withType("tnz"));
+  auto *level = scene.loadLevel(TFilePath(path));
+  require(level && level->getAMLevel() &&
+              level->getAMLevel()->mesh()->triangles.empty(),
+          "spline-only native model failed to load");
+  auto *xsheet = scene.getXsheet();
+  require(xsheet->setCell(0, 0, TXshCell(level, TFrameId(1))),
+          "expose spline-only model");
+  auto *column = xsheet->getColumn(0)->getFx();
+  TFxP owner   = new InkLineFx;
+  auto &ink    = *static_cast<InkLineFx *>(owner.getPointer());
+  require(canConnectFxPort(ink.getInputPort(0), column),
+          "ink rejects spline-only column");
+  ink.getInputPort(0)->setFx(column);
+  require(ink.getAMGroups(0) == std::vector<std::wstring>{L"Lower"},
+          "spline-only group unavailable to ink settings");
+  TRenderSettings info;
+  auto *terminals = xsheet->getFxDag()->getTerminalFxs();
+  require(coverage(render(scene, info)) == 0,
+          "source spline changed the raster without ink");
+  xsheet->getFxDag()->getInternalFxs()->addFx(owner.getPointer());
+  terminals->removeFx(column);
+  terminals->addFx(owner.getPointer());
+  const double whole = coverage(render(scene, info));
+  require(whole > 0, "scene renderer dropped the spline-only ink");
+  auto *group =
+      dynamic_cast<TStringParam *>(ink.getParams()->getParam("group"));
+  require(group, "ink group parameter");
+  group->setValue(L"Lower");
+  const double lower = coverage(render(scene, info));
+  require(lower > 0 && lower < whole,
+          "spline group did not limit the rendered ink");
+  set(ink, "fadeIn", 100);
+  require(coverage(render(scene, info)) < lower,
+          "ink fade did not affect output opacity");
+  TFxP transformOwner = new Transform3DFx;
+  auto &transform = *static_cast<Transform3DFx *>(transformOwner.getPointer());
+  transform.getInputPort(0)->setFx(owner.getPointer());
+  const auto before = transform.get3DRenderGeometry(0, nullptr);
+  set(transform, "positionX", 20);
+  const auto moved = transform.get3DRenderGeometry(0, nullptr);
+  require(before && moved && !before->empty() && !moved->empty() &&
+              std::abs(moved->bounds[0] - before->bounds[0] - 20) < 1e-6,
+          "downstream transform lost or failed to move ink bounds");
+}
 void testMaterials(ToonzScene &scene, TXshLevel *level, TFx *column,
                    const QString &path) {
   TFxP owner     = new AMMaterialFx;
@@ -104,7 +160,7 @@ void testMaterials(ToonzScene &scene, TXshLevel *level, TFx *column,
       "255\nAmbiance=100\nAmbianceBlend=100\nTransparency=50");
   stringParam("materialFile")->setValue(path.toStdWString());
   stringParam("group")->setValue(L"Red");
-  const auto discovered = material.getAMMaterialGroups(0);
+  const auto discovered = material.getAMGroups(0);
   require(discovered.size() == 1 && discovered[0] == L"Red",
           "material group chooser discovery");
   const auto summary = material.getAMMaterialSummary(0);
@@ -447,6 +503,7 @@ int main(int argc, char **argv) {
     auto *column = xsheet->getColumn(0)->getFx();
     require(isAMModelColumn(column), "native column classification");
     testMaterials(scene, level, column, temp.filePath("surface.mat"));
+    testInkLine(temp.filePath("ink-lines.mdl"));
     testShine(scene, temp.filePath("shine.mat"));
     const auto original = level->getAMLevel()->mesh();
     TFxP transformOwner = new Transform3DFx;

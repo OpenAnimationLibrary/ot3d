@@ -90,7 +90,8 @@ public:
       double frame, const int *canceled, const otglb::LightingRig * = nullptr,
       const std::vector<otglb::ModelTransform> *transforms = nullptr,
       const TRenderSettings *settings                      = nullptr,
-      const otam::MaterialBindings *materials = nullptr) const override {
+      const otam::MaterialBindings *materials              = nullptr,
+      const otam::InkBindings * = nullptr) const override {
     if (materials && !materials->empty())
       throw std::runtime_error(
           "A:M Material requires a native A:M model source");
@@ -100,7 +101,8 @@ public:
   std::shared_ptr<const otglb::RenderScene> get3DRenderGeometry(
       double frame, const int *,
       const std::vector<otglb::ModelTransform> *transforms = nullptr,
-      const TRenderSettings *settings = nullptr) const override {
+      const TRenderSettings *settings                      = nullptr,
+      const otam::InkBindings * = nullptr) const override {
     if (!m_input.isConnected()) return {};
     TRenderSettings neutral = settings ? *settings : TRenderSettings();
     neutral.m_affine        = TAffine();

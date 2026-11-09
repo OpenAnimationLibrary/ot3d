@@ -279,7 +279,8 @@ public:
       const otglb::LightingRig *lighting                   = nullptr,
       const std::vector<otglb::ModelTransform> *transforms = nullptr,
       const TRenderSettings *renderSettings                = nullptr,
-      const otam::MaterialBindings *materials = nullptr) const override {
+      const otam::MaterialBindings *materials              = nullptr,
+      const otam::InkBindings * = nullptr) const override {
     if (materials && !materials->empty())
       throw std::runtime_error(
           "A:M Material requires a native A:M model source");

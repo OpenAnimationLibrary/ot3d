@@ -1,0 +1,21 @@
+<fxlayout>
+  <page name="Ink Line">
+    <label>"Connect a native A:M model. Choose a group or apply ink to the whole model. Unfilled Splines Only skips segments that form patch edges."</label>
+    <control>group</control>
+    <control>scope</control>
+    <control>startWidth</control>
+    <control>startColor</control>
+    <control>roughness</control>
+    <control>fadeIn</control>
+    <control>fadeOut</control>
+  </page>
+  <page name="Line Profile">
+    <label>"Enable Vary Width and Color to blend the base settings with middle and end stops along each spline. Position follows the authored control-point spans. Color alpha controls opacity."</label>
+    <control>profile</control>
+    <control>middle</control>
+    <control>middleWidth</control>
+    <control>middleColor</control>
+    <control>endWidth</control>
+    <control>endColor</control>
+  </page>
+</fxlayout>

@@ -65,7 +65,8 @@ class Transform3DFx final : public TStandardRasterFx, public T3DRenderSource {
       const otglb::LightingRig *lighting                   = nullptr,
       const std::vector<otglb::ModelTransform> *downstream = nullptr,
       const TRenderSettings *renderSettings                = nullptr,
-      const otam::MaterialBindings *materials              = nullptr) const {
+      const otam::MaterialBindings *materials              = nullptr,
+      const otam::InkBindings *ink                         = nullptr) const {
     if (!m_source.isConnected()) return {};
     auto *source = m_source.source();
     if (!source)
@@ -79,7 +80,7 @@ class Transform3DFx final : public TStandardRasterFx, public T3DRenderSource {
       transforms.insert(transforms.end(), downstream->begin(),
                         downstream->end());
     return source->get3DRenderScene(frame, canceled, lighting, &transforms,
-                                    renderSettings, materials);
+                                    renderSettings, materials, ink);
   }
 
 public:
@@ -125,15 +126,17 @@ public:
       const otglb::LightingRig *lighting                   = nullptr,
       const std::vector<otglb::ModelTransform> *transforms = nullptr,
       const TRenderSettings *renderSettings                = nullptr,
-      const otam::MaterialBindings *materials = nullptr) const override {
+      const otam::MaterialBindings *materials              = nullptr,
+      const otam::InkBindings *ink = nullptr) const override {
     return scene(frame, canceled, lighting, transforms, renderSettings,
-                 materials);
+                 materials, ink);
   }
 
   std::shared_ptr<const otglb::RenderScene> get3DRenderGeometry(
       double frame, const int *canceled,
       const std::vector<otglb::ModelTransform> *downstream = nullptr,
-      const TRenderSettings *renderSettings = nullptr) const override {
+      const TRenderSettings *renderSettings                = nullptr,
+      const otam::InkBindings *ink = nullptr) const override {
     if (!m_source.isConnected()) return {};
     std::vector<otglb::ModelTransform> transforms;
     transforms.push_back(transform(frame));
@@ -141,7 +144,7 @@ public:
       transforms.insert(transforms.end(), downstream->begin(),
                         downstream->end());
     return m_source.source()->get3DRenderGeometry(frame, canceled, &transforms,
-                                                  renderSettings);
+                                                  renderSettings, ink);
   }
 
   void getParamUIs(TParamUIConcept *&concepts, int &length) override {

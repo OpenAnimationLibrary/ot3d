@@ -172,7 +172,8 @@ public:
       double frame, const int *canceled, const otglb::LightingRig *downstream,
       const std::vector<otglb::ModelTransform> *transforms,
       const TRenderSettings *settings,
-      const otam::MaterialBindings *materials = nullptr) const override {
+      const otam::MaterialBindings *materials = nullptr,
+      const otam::InkBindings *ink            = nullptr) const override {
     auto *source = m_source.source();
     if (!source || (canceled && *canceled)) return {};
 
@@ -189,16 +190,17 @@ public:
       }
     }
     return source->get3DRenderScene(frame, canceled, &rig, transforms, settings,
-                                    materials);
+                                    materials, ink);
   }
 
   std::shared_ptr<const otglb::RenderScene> get3DRenderGeometry(
       double frame, const int *canceled,
       const std::vector<otglb::ModelTransform> *transforms,
-      const TRenderSettings *settings) const override {
+      const TRenderSettings *settings = nullptr,
+      const otam::InkBindings *ink    = nullptr) const override {
     auto *source = m_source.source();
     return source ? source->get3DRenderGeometry(frame, canceled, transforms,
-                                                settings)
+                                                settings, ink)
                   : nullptr;
   }
 

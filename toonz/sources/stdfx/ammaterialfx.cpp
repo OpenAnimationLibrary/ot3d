@@ -1,5 +1,6 @@
 #include "stdfx.h"
 #include "t3dsource.h"
+#include "t3draster.h"
 #include "tfxparam.h"
 #include "tparamset.h"
 #include "tnotanimatableparam.h"
@@ -18,28 +19,6 @@
 #include <sstream>
 #include <iomanip>
 #include <locale>
-#include <type_traits>
-
-namespace {
-template <class PIXEL>
-void copyAMMaterialPixels(TRasterPT<PIXEL> raster,
-                          const std::vector<otglb::ColorPixel> &pixels,
-                          int yOffset) {
-  using Channel        = typename PIXEL::Channel;
-  const double maximum = PIXEL::maxChannelValue;
-  const double round   = std::is_floating_point<Channel>::value ? 0.0 : 0.5;
-  raster->lock();
-  const int rows = int(pixels.size() / raster->getLx());
-  for (int y = 0; y < rows; ++y)
-    for (int x = 0; x < raster->getLx(); ++x) {
-      const auto &p = pixels[std::size_t(y) * raster->getLx() + x];
-      raster->pixels(y + yOffset)[x] = PIXEL(
-          Channel(p.r * maximum + round), Channel(p.g * maximum + round),
-          Channel(p.b * maximum + round), Channel(p.alpha * maximum + round));
-    }
-  raster->unlock();
-}
-}  // namespace
 
 class AMMaterialFx final : public TStandardRasterFx,
                            public T3DRenderSource,
@@ -129,7 +108,7 @@ public:
     m_specularIntensity->setValueRange(0.0, 100000.0);
     enableComputeInFloat(true);
   }
-  std::vector<std::wstring> getAMMaterialGroups(double frame) const override {
+  std::vector<std::wstring> getAMGroups(double frame) const override {
     auto *source = m_source.source();
     const auto geometry =
         source ? source->get3DRenderGeometry(frame, nullptr) : nullptr;
@@ -218,7 +197,8 @@ public:
       const otglb::LightingRig *lighting                   = nullptr,
       const std::vector<otglb::ModelTransform> *transforms = nullptr,
       const TRenderSettings *settings                      = nullptr,
-      const otam::MaterialBindings *downstream = nullptr) const override {
+      const otam::MaterialBindings *downstream             = nullptr,
+      const otam::InkBindings *ink = nullptr) const override {
     auto *source = m_source.source();
     if (!source || (canceled && *canceled)) return {};
     otam::MaterialBindings materials;
@@ -228,17 +208,18 @@ public:
       materials.insert(materials.end(), downstream->begin(), downstream->end());
     if (materials.size() > 64)
       throw std::runtime_error("A:M material chain exceeds 64 assignments");
-    return source->get3DRenderScene(frame, canceled, lighting, transforms,
-                                    settings,
-                                    materials.empty() ? nullptr : &materials);
+    return source->get3DRenderScene(
+        frame, canceled, lighting, transforms, settings,
+        materials.empty() ? nullptr : &materials, ink);
   }
   std::shared_ptr<const otglb::RenderScene> get3DRenderGeometry(
       double frame, const int *canceled,
       const std::vector<otglb::ModelTransform> *transforms = nullptr,
-      const TRenderSettings *settings = nullptr) const override {
+      const TRenderSettings *settings                      = nullptr,
+      const otam::InkBindings *ink = nullptr) const override {
     auto *source = m_source.source();
     return source ? source->get3DRenderGeometry(frame, canceled, transforms,
-                                                settings)
+                                                settings, ink)
                   : nullptr;
   }
   bool doGetBBox(double frame, TRectD &bbox,
@@ -282,36 +263,7 @@ public:
           get3DRenderScene(frame, info.m_isCanceled, nullptr, nullptr, &info);
       if (!rendered || rendered->empty()) return;
 
-      otglb::RenderTile request;
-      request.width  = tile.getRaster()->getLx();
-      request.height = tile.getRaster()->getLy();
-      request.x      = tile.m_pos.x;
-      request.y      = tile.m_pos.y;
-      const auto &a  = info.m_affine;
-      request.affine = {{a.a11, a.a12, a.a13, a.a21, a.a22, a.a23}};
-      if (!request.width || !request.height) return;
-
-      const int band =
-          std::max(1, std::min(128, 2 * 1024 * 1024 / request.width));
-      const int height = request.height;
-      for (int y = 0; y < height; y += band) {
-        request.height = std::min(band, height - y);
-        request.y      = tile.m_pos.y + y;
-        const auto pixels =
-            otglb::renderTile(*rendered, request, info.m_isCanceled);
-        if (pixels.empty()) {
-          tile.getRaster()->clear();
-          return;
-        }
-        if (TRasterFP raster = tile.getRaster())
-          copyAMMaterialPixels<TPixelF>(raster, pixels, y);
-        else if (TRaster64P raster = tile.getRaster())
-          copyAMMaterialPixels<TPixel64>(raster, pixels, y);
-        else if (TRaster32P raster = tile.getRaster())
-          copyAMMaterialPixels<TPixel32>(raster, pixels, y);
-        else
-          throw std::runtime_error("Unsupported 3D output pixel type.");
-      }
+      ot3d::renderScene(*rendered, tile, info);
     } catch (const std::exception &error) {
       throw TException(QString("A:M Material [%1]: %2")
                            .arg(QString::fromStdWString(getFxId()),

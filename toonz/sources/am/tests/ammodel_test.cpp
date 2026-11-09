@@ -1,4 +1,5 @@
 #include "ammodel.h"
+#include "amink.h"
 #include "amfixture.h"
 #include <algorithm>
 #include <cmath>
@@ -29,6 +30,63 @@ std::string replace(std::string s, const std::string &a, const std::string &b) {
   s.replace(pos, a.size(), b);
   return s;
 }
+void testInk(const otam::Mesh &filled) {
+  const auto mesh = otam::previewMesh(otam::parse(amtest::splineSource));
+  check(mesh.triangles.empty() && mesh.splines.size() == 2,
+        "spline-only model lost its geometry");
+  const auto identity = otam::identity();
+  otam::InkStyle ink;
+  ink.unfilledOnly = true;
+  check(otam::strokeSplines(filled, {ink}, nullptr, identity).empty(),
+        "unfilled mode included filled patch boundaries");
+  const auto whole = otam::strokeSplines(mesh, {ink}, nullptr, identity);
+  ink.group        = "Lower";
+  const auto lower = otam::strokeSplines(mesh, {ink}, nullptr, identity);
+  check(!lower.empty() && whole.size() == lower.size() * 2,
+        "group ink did not filter the authored spline segments");
+  ink.group = "Missing";
+  check(otam::strokeSplines(mesh, {ink}, nullptr, identity).empty(),
+        "unknown group fell back to the whole model");
+  ink.group          = "Lower";
+  ink.middle         = 0.3;
+  ink.widths         = {{2, 8, 4}};
+  ink.colors[1]      = {{1, 0, 0, 1}};
+  ink.fadeIn         = 0.2;
+  ink.fadeOut        = 0.1;
+  const auto profile = otam::strokeSplines(mesh, {ink}, nullptr, identity);
+  near(profile.front().colors[0][3], 0);
+  near(profile.back().colors[2][3], 0);
+  bool hitMiddle = false;
+  for (const auto &triangle : profile)
+    for (int i = 0; i < 3; ++i)
+      if (triangle.colors[i][0] == 1) {
+        near(triangle.vertices[i][0], -0.4);
+        near(std::abs(triangle.vertices[i][1] + 0.5), 4);
+        hitMiddle = true;
+      }
+  check(hitMiddle, "ink profile skipped the requested middle position");
+  ink.roughness     = 1;
+  const auto rough  = otam::strokeSplines(mesh, {ink}, nullptr, identity);
+  const auto repeat = otam::strokeSplines(mesh, {ink}, nullptr, identity);
+  check(rough[2].vertices != profile[2].vertices &&
+            rough[2].vertices == repeat[2].vertices,
+        "ink roughness must change the edge deterministically");
+  auto disabled   = ink;
+  disabled.widths = {{0, 0, 0}};
+  check(otam::strokeSplines(mesh, {ink, disabled}, nullptr, identity).empty(),
+        "downstream ink did not replace the group style");
+
+  const auto placed    = otam::transformed(mesh, otam::translation(0, 0, -2));
+  const auto nearPlane = otam::rotation(0, 75, 0);
+  check(!otam::strokeSplines(placed, {ink}, &nearPlane, identity).empty(),
+        "ink crossing the near plane disappeared");
+  const auto behind = otam::translation(0, 0, 20);
+  check(otam::strokeSplines(placed, {ink}, &behind, identity).empty(),
+        "ink behind the camera remained visible");
+  const int canceled = 1;
+  check(otam::strokeSplines(mesh, {ink}, nullptr, identity, &canceled).empty(),
+        "ink ignored cancellation");
+}
 }  // namespace
 int main() {
   try {
@@ -46,6 +104,7 @@ int main() {
           "rich patch metadata lost");
     auto mesh = otam::previewMesh(d, 0, 2);
     check(mesh.triangles.size() == 8, "quad tessellation");
+    testInk(mesh);
     near(mesh.triangles[0].color[0], 1);
     near(mesh.triangles[0].color[1], 0);
     for (const auto &t : mesh.triangles)

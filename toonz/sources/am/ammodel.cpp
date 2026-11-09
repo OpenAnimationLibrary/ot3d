@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iterator>
 #include <limits>
 #include <locale>
 #include <map>
@@ -418,13 +419,46 @@ Mesh previewMesh(const Model &m, const std::vector<std::string> &warnings,
   // samples. Bias is read from the actual occurrence on that spline.
   using Edge = std::pair<std::size_t, std::size_t>;
   std::map<Edge, std::array<Vec3, 4>> curves;
+  std::set<Edge> patchEdges;
+  for (const auto &patch : m.patches) {
+    for (std::size_t i = 0; i < patch.points.size(); ++i) {
+      const auto a = m.points[ids.at(patch.points[i])].head;
+      const auto b =
+          m.points[ids.at(patch.points[(i + 1) % patch.points.size()])].head;
+      patchEdges.emplace(std::min(a, b), std::max(a, b));
+    }
+  }
+  std::vector<std::set<std::size_t>> memberships;
+  for (const auto &g : m.groups) {
+    std::set<std::size_t> heads;
+    for (auto id : g.points) {
+      auto it = ids.find(id);
+      if (it != ids.end()) heads.insert(m.points[it->second].head);
+    }
+    memberships.push_back(std::move(heads));
+  }
+  std::vector<std::vector<std::size_t>> pointGroups(m.points.size());
+  for (std::size_t g = 0; g < m.groups.size(); ++g) {
+    out.splineGroups.push_back(m.groups[g].name);
+    for (const auto head : memberships[g]) pointGroups[head].push_back(g);
+  }
   for (const auto &s : m.splines) {
-    const auto size = s.points.size();
-    for (std::size_t i = 0; i + 1 < size || (s.closed && i < size); ++i) {
+    if (s.points.size() < 2) continue;
+    auto &spline     = out.splines.emplace_back();
+    spline.closed    = s.closed;
+    const auto count = s.closed ? s.points.size() : s.points.size() - 1;
+    spline.curves.reserve(count);
+    for (std::size_t i = 0; i < count; ++i) {
       auto segment = splineSegment(m, s, i);
       const auto a = m.points[segment.from].head;
       const auto b = m.points[segment.to].head;
-      auto points  = segment.bezier();
+      auto points     = segment.bezier();
+      auto &curve     = spline.curves.emplace_back();
+      curve.points    = points;
+      curve.patchEdge = patchEdges.count({std::min(a, b), std::max(a, b)}) != 0;
+      std::set_intersection(pointGroups[a].begin(), pointGroups[a].end(),
+                            pointGroups[b].begin(), pointGroups[b].end(),
+                            std::back_inserter(curve.groups));
       curves.emplace(Edge(a, b), points);
       std::reverse(points.begin(), points.end());
       curves.emplace(Edge(b, a), points);
@@ -436,15 +470,6 @@ Mesh previewMesh(const Model &m, const std::vector<std::string> &warnings,
     const auto &p = m.points[a].position, &q = m.points[b].position;
     return std::array<Vec3, 4>{{p, mix(p, q, 1.0 / 3), mix(p, q, 2.0 / 3), q}};
   };
-  std::vector<std::set<std::size_t>> memberships;
-  for (const auto &g : m.groups) {
-    std::set<std::size_t> heads;
-    for (auto id : g.points) {
-      auto it = ids.find(id);
-      if (it != ids.end()) heads.insert(m.points[it->second].head);
-    }
-    memberships.push_back(std::move(heads));
-  }
   for (std::size_t p = 0; p < m.patches.size(); ++p) {
     const auto &patch = m.patches[p];
     std::vector<std::size_t> heads;
@@ -702,6 +727,9 @@ Mesh transformed(const Mesh &mesh, const Matrix &m) {
     if (t.hasNormals)
       for (auto &n : t.normals) n = transformNormal(normalMatrix, n);
   }
+  for (auto &spline : out.splines)
+    for (auto &curve : spline.curves)
+      for (auto &p : curve.points) p = transform(m, p);
   return out;
 }
 Mesh projected(const Mesh &mesh, double cx, double cy, double cz, double focus,

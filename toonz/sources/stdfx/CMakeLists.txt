@@ -170,6 +170,7 @@ set(SOURCES
     targetspotfx.cpp
     texturefx.cpp
     ammaterialfx.cpp
+    inklinefx.cpp
     threepointlightfx.cpp
     merge3dfx.cpp
     tilefx.cpp
