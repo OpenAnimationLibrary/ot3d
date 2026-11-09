@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <exception>
+#include <limits>
 #include <vector>
 
 namespace {
@@ -89,6 +90,7 @@ void HybridSceneViewer::drawScene() {
   TXsheet *xsheet = app->getCurrentXsheet()->getXsheet();
   const int frame = app->getCurrentFrame()->getFrame();
   if (!xsheet) return;
+  const bool view3D = is3DView();
 
   struct Item {
     std::shared_ptr<const otglb::ViewerGeometry> geometry;
@@ -98,6 +100,9 @@ void HybridSceneViewer::drawScene() {
   };
   std::vector<Item> items;
   std::size_t triangles = 0;
+  double farDepth       = std::numeric_limits<double>::infinity();
+  double nearDepth      = -farDepth;
+  bool hasUnprojectedFx = false;
   for (int i = 0; i < xsheet->getColumnCount(); ++i) {
     auto *column = xsheet->getColumn(i);
     if (!column || !column->isCamstandVisible() ||
@@ -106,8 +111,7 @@ void HybridSceneViewer::drawScene() {
     const auto cell = xsheet->getCell(frame, i);
     if (isNativeModelLevel(cell.m_level->getType())) {
       try {
-        auto snapshot =
-            prepareNativeModelGeometry(xsheet, i, frame, !is3DView());
+        auto snapshot = prepareNativeModelGeometry(xsheet, i, frame, !view3D);
         if (!snapshot) continue;
         for (const auto &warning : snapshot->warnings)
           reportDiagnostic(QString::fromStdString(warning));
@@ -118,8 +122,14 @@ void HybridSceneViewer::drawScene() {
         }
         auto geometry = std::make_shared<otglb::ViewerGeometry>();
         geometry->stageUnitsPerModelUnit = 1.0;
-        for (const auto &triangle : snapshot->triangles)
+        for (const auto &triangle : snapshot->triangles) {
           geometry->triangles.push_back({triangle.vertices, triangle.color});
+          if (!view3D)
+            for (const auto &p : triangle.vertices) {
+              farDepth  = std::min(farDepth, p[2]);
+              nearDepth = std::max(nearDepth, p[2]);
+            }
+        }
         triangles += geometry->triangles.size();
         // These vertices are already placed. Never apply the stage transform
         // twice.
@@ -146,7 +156,7 @@ void HybridSceneViewer::drawScene() {
       }
       auto *object      = xsheet->getStageObject(TStageObjectId::ColumnId(i));
       TAffine placement = object->getPlacement(frame);
-      if (!is3DView()) {
+      if (!view3D) {
         auto *camera = xsheet->getStageObject(
             xsheet->getStageObjectTree()->getCurrentCameraId());
         if (!TStageObject::perspective(
@@ -156,6 +166,7 @@ void HybridSceneViewer::drawScene() {
           continue;
       }
       triangles += geometry->triangles.size();
+      hasUnprojectedFx = true;
       items.push_back({geometry, placement, object->getZ(frame),
                        column->getOpacity() / 255.0});
     } catch (const std::exception &error) {
@@ -164,11 +175,20 @@ void HybridSceneViewer::drawScene() {
   }
   if (items.empty()) return;
 
+  // Camera-projected native meshes store reciprocal depth, which can span
+  // a tiny fraction of the Viewer depth buffer. Spread those values out with
+  // one affine map so thin layers keep their order and interpolate correctly.
+  const double depthSpan   = nearDepth - farDepth;
+  const bool spreadDepth   = !view3D && !hasUnprojectedFx && depthSpan > 0;
+  const double depthCenter = spreadDepth ? (farDepth + nearDepth) * 0.5 : 0;
+  const double depthScale =
+      spreadDepth ? 2000.0 / std::max(depthSpan, 1e-6) : 1;
+
   ModelDrawScope scope;
   for (const auto &item : items) {
     glPushMatrix();
-    if (!is3DView()) tglMultMatrix(getViewMatrix());
-    if (is3DView()) glTranslated(0, 0, item.z);
+    if (!view3D) tglMultMatrix(getViewMatrix());
+    if (view3D) glTranslated(0, 0, item.z);
     tglMultMatrix(item.placement);
     const double units = item.geometry->stageUnitsPerModelUnit;
     glScaled(units, units, units);
@@ -178,7 +198,12 @@ void HybridSceneViewer::drawScene() {
     for (const auto &triangle : item.geometry->triangles) {
       glColor4f(triangle.color[0], triangle.color[1], triangle.color[2],
                 float(item.opacity));
-      for (const auto &p : triangle.vertices) glVertex3dv(p.data());
+      for (const auto &p : triangle.vertices) {
+        if (spreadDepth)
+          glVertex3d(p[0], p[1], (p[2] - depthCenter) * depthScale);
+        else
+          glVertex3dv(p.data());
+      }
     }
     glEnd();
     glPopMatrix();

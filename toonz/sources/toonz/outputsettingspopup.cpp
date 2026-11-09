@@ -1871,6 +1871,7 @@ void OutputSettingsPopup::onPresetSelected(const QString &str) {
 
   TOutputProperties *prop = getProperties();
   TRenderSettings rs      = prop->getRenderSettings();
+  const double oldFrameRate = prop->getFrameRate();
 
   // set back the linear settings to default
   // in order to make old presets properly reproduce the settings before the
@@ -2030,7 +2031,10 @@ void OutputSettingsPopup::onPresetSelected(const QString &str) {
   /*-- renderSettingsを戻す --*/
   prop->setRenderSettings(rs);
 
-  TApp::instance()->getCurrentScene()->notifySceneChanged();
+  auto *app = TApp::instance();
+  app->getCurrentScene()->notifySceneChanged();
+  if (!m_isPreviewSettings && prop->getFrameRate() != oldFrameRate)
+    app->getCurrentXsheet()->notifyXsheetChanged();
 
   m_presetCombo->blockSignals(true);
   m_presetCombo->setCurrentIndex(m_presetCombo->findText(str));
