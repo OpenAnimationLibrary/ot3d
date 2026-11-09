@@ -210,7 +210,7 @@ void updateClosestModelHit(const QVector3D &origin, const QVector3D &ray,
 otam::Vec3 nativeModelDropPosition(TXsheet *xsheet, int frame,
                                    const TPointD &imagePoint, bool snap,
                                    double halfExtent) {
-  const auto camera = amModelCamera(xsheet, frame, false);
+  const auto camera      = amModelCamera(xsheet, frame, false);
   const auto film   = otam::transform(otam::inverse(camera.imageToStage),
                                       {imagePoint.x, imagePoint.y, 0});
   const auto eye    = otam::transform(camera.pose, {0, 0, 0});

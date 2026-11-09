@@ -332,7 +332,7 @@ bool TXshAMLevel::setControlPoints(const PointValues &values,
   m_mesh          = std::move(mesh);
   m_renderMesh     = std::move(renderMesh);
   m_colorOverrides = std::move(overrides);
-  m_actionSample = {};
+  m_actionSample   = {};
   return true;
 }
 

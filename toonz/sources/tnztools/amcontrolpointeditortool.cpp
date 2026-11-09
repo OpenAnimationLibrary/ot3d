@@ -158,7 +158,7 @@ struct ActionEdit {
   }
 
   bool removeKeys(const std::vector<otam::Id> &ids) {
-    auto action = std::make_shared<otam::Action>(*before.action);
+    auto action  = std::make_shared<otam::Action>(*before.action);
     bool changed = false;
     for (const auto id : ids) {
       auto track = action->channels.find(id);
