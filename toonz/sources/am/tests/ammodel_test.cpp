@@ -39,11 +39,23 @@ void testInk(const otam::Mesh &filled) {
   ink.unfilledOnly = true;
   check(otam::strokeSplines(filled, {ink}, nullptr, identity).empty(),
         "unfilled mode included filled patch boundaries");
+  const auto sharedEndpoints = otam::previewMesh(
+      otam::parse(replace(source, "<PATCHES>",
+                          "<SPLINE>\n262145 1 9 1 . .\n262145 1 10 2 . .\n"
+                          "</SPLINE>\n<PATCHES>")));
+  check(!otam::strokeSplines(sharedEndpoints, {ink}, nullptr, identity).empty(),
+        "unfilled mode lost a spline sharing a filled edge's endpoints");
   const auto whole = otam::strokeSplines(mesh, {ink}, nullptr, identity);
   ink.group        = "Lower";
   const auto lower = otam::strokeSplines(mesh, {ink}, nullptr, identity);
   check(!lower.empty() && whole.size() == lower.size() * 2,
         "group ink did not filter the authored spline segments");
+  auto duplicate = mesh;
+  duplicate.splineGroups.push_back("Lower");
+  duplicate.splines.back().curves.front().groups.push_back(1);
+  check(otam::strokeSplines(duplicate, {ink}, nullptr, identity).size() ==
+            whole.size(),
+        "group ink missed a second group with the assigned name");
   ink.group = "Missing";
   check(otam::strokeSplines(mesh, {ink}, nullptr, identity).empty(),
         "unknown group fell back to the whole model");

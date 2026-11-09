@@ -451,12 +451,14 @@ public:
       mesh = otam::projected(mesh, cameraPose, m_camera.imageToStage);
     auto scene        = std::make_shared<otglb::RenderScene>();
     scene->warnings   = mesh.warnings;
-    scene->splineGroups = m_geometry->splineGroups;
     std::set<std::string> groups;
     for (const auto &patch : mesh.patchGroups)
       groups.insert(patch.begin(), patch.end());
     groups.erase("");
     scene->materialGroups.assign(groups.begin(), groups.end());
+    groups = {m_geometry->splineGroups.begin(), m_geometry->splineGroups.end()};
+    groups.erase("");
+    scene->splineGroups.assign(groups.begin(), groups.end());
     scene->colorScale = {{m_colorFilter.r / 255.f, m_colorFilter.g / 255.f,
                           m_colorFilter.b / 255.f, m_colorFilter.m / 255.f}};
     scene->triangles.reserve(mesh.triangles.size() + strokes.size());

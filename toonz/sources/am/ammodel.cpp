@@ -452,14 +452,17 @@ Mesh previewMesh(const Model &m, const std::vector<std::string> &warnings,
       auto segment = splineSegment(m, s, i);
       const auto a = m.points[segment.from].head;
       const auto b = m.points[segment.to].head;
-      auto points     = segment.bezier();
-      auto &curve     = spline.curves.emplace_back();
-      curve.points    = points;
-      curve.patchEdge = patchEdges.count({std::min(a, b), std::max(a, b)}) != 0;
+      auto points  = segment.bezier();
+      auto &curve  = spline.curves.emplace_back();
+      curve.points = points;
+      // The first welded boundary is the one used by patch tessellation.
+      // Other authored splines can share its endpoints and remain unfilled.
+      const bool boundary = curves.emplace(Edge(a, b), points).second;
+      curve.patchEdge =
+          boundary && patchEdges.count({std::min(a, b), std::max(a, b)}) != 0;
       std::set_intersection(pointGroups[a].begin(), pointGroups[a].end(),
                             pointGroups[b].begin(), pointGroups[b].end(),
                             std::back_inserter(curve.groups));
-      curves.emplace(Edge(a, b), points);
       std::reverse(points.begin(), points.end());
       curves.emplace(Edge(b, a), points);
     }

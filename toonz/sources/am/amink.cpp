@@ -97,11 +97,6 @@ std::vector<InkTriangle> strokeSplines(const Mesh &mesh,
     }
     return p;
   };
-  std::vector<std::size_t> groupIds;
-  for (const auto &style : bindings)
-    groupIds.push_back(std::find(mesh.splineGroups.begin(),
-                                 mesh.splineGroups.end(), style.group) -
-                       mesh.splineGroups.begin());
   for (std::size_t s = 0; s < mesh.splines.size(); ++s) {
     const auto &spline    = mesh.splines[s];
     const auto count      = spline.curves.size();
@@ -121,8 +116,10 @@ std::vector<InkTriangle> strokeSplines(const Mesh &mesh,
         const auto &candidate = bindings[j - 1];
         if ((!candidate.unfilledOnly || !curve.patchEdge) &&
             (candidate.group.empty() ||
-             std::binary_search(curve.groups.begin(), curve.groups.end(),
-                                groupIds[j - 1]))) {
+             std::any_of(curve.groups.begin(), curve.groups.end(),
+                         [&](std::size_t group) {
+                           return mesh.splineGroups[group] == candidate.group;
+                         }))) {
           selected = &candidate;
           break;
         }
