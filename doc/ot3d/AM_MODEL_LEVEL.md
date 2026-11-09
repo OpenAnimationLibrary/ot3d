@@ -6,8 +6,8 @@ Load an Animation:Master `.mdl` through **File > Load Level** or drop it into
 an Xsheet. It becomes an **A:M model level**, also listed in Scene Cast. It is
 not a GLB conversion, Plastic mesh, drawing level, or user-created Model FX.
 Scene Cast **Expose** creates another instance sharing the model level.
-A model has one exposure identifier (`1`); extend that cell to keep it visible.
-Internal A:M action playback is not implemented in this slice.
+A model has one exposure identifier (`1`). Extend that cell to keep the
+model visible while an attached action plays.
 
 The Load Level dialog recognizes models as a single exposure and disables
 image-subsequence, DPI and raster-caching controls for them. Previous image
@@ -59,6 +59,46 @@ An unreadable/unsupported source is a diagnostic, not a successfully loaded empt
 model. Failed explicit reload drops the previous snapshot rather than hiding the
 failure with stale geometry. Keep original sources and work on scene copies.
 
+### Animate control points with an Action
+
+1. Right-click an exposed A:M cell in the top Xsheet or Timeline and choose
+   **Action > Create Action…**. Pick a location for the reusable `.act` file.
+   **Load Action…** attaches an existing compact muscle action. The clicked
+   scene frame is time zero for the action. The same menu is available in the
+   Viewer for the selected model.
+2. Select **Control Point Editor** with Preview off. Move to a frame at or
+   after the action's start and drag a control point. The drag adds or updates
+   that point's position key at the current frame. The editor highlights
+   keyed points in pink. Right-click in the Viewer after selecting a point to
+   set a key at its current position or remove its key on that frame.
+3. Scrub or play the scene. Motion is linear between keys and holds at the
+   end. The model retains its base pose before the action starts. The action
+   follows scene time, so extend the model's exposure over the frames you
+   want to see. In a 24 fps scene, an action starting at frame 1 reaches its
+   one-second key at frame 25.
+4. Save the scene to retain the attachment, start frame and working copy of
+   the animation. Use **Action > Save Action…** to update the external file
+   or save a reusable copy. The scene can reopen its working copy if the
+   external file has moved. **Set Start to This Frame** repositions the
+   action on the scene timeline. **Remove Action** detaches it from that instance.
+
+An action belongs to the model exposure's column. A second column can use the
+same model with its own action and placement. Action keys are model-space
+position offsets from the level's edited base shape. A welded point has one
+position track. A newly animated point keyed after the start gets a neutral
+key at time zero. Bias editing is available on instances without an attached
+action. Moving individual exposure cells keeps the action's start on its
+existing scene frame. Exported keys carry the motion offsets and use the
+recipient model's base shape on load.
+
+The first interchange scope is one text A:M `.act` with compact muscle
+position channels. OT3D checks the control-point IDs and their spline
+references against the destination model. Native action time uses 135,000
+ticks per second and retains fractional frame timing across frame rates.
+Mixed bone, bias, stride and other unsupported action data is rejected during
+load. Reopening and exporting this subset have automated coverage. Visual
+comparison in A:M remains part of interchange validation.
+
 ## Ownership and implementation
 
 `TXshAMLevel` / `AM_XSHLEVEL` is a distinct `TXshLevel` subclass. The Scene Cast
@@ -102,8 +142,9 @@ contribute full spatial placement to other model instances. Ordinary 2D children
 still use their legacy planar path. Legacy 2D IK on a model column is rejected.
 Spatial Sub-Xsheet flattening/edit-in-place and every camera/no-scale variant
 remain validation gates; the initial interactive model pass visits top-level
-columns only. Imported A:M rigs, CP animation, actions, relationships, cameras and
-choreographies are preserved as source records, NOT evaluated.
+columns only. The attached muscle action subset is evaluated independently of
+embedded A:M rigs, actions, relationships, cameras and choreographies. The
+native model reader retains those embedded records as source data.
 
 Final projection clips triangle portions at the camera near plane. Viewport and
 final-render paths share the snapshot evaluator, but existing hybrid Viewer
@@ -153,8 +194,9 @@ limits, transforms, clipping and rasterization. No user's original model or SDK 
 redistributed. `amlevel_test` exercises production native classes: load/exposure,
 shared model with independent stage keys, global keys, key removal/restoration,
 scene persistence, 2D isolation, final raster output, Save As and missing files.
-Linux native builds run the latter; portable core checks run on all three platforms
-with a separate Linux ASan/UBSan job. Passing these tests does not validate exact
+It also checks action binding, fractional poses, per-instance isolation and
+reopening the embedded action with its external file unavailable. The portable
+action test covers file parsing, offsets, timing and export round-trips. Passing these tests does not validate exact
 A:M evaluation or native visual interaction.
 
 Manual release gate: use an asymmetric A:M-authored fixture; load/expose, hold its

@@ -1,6 +1,7 @@
 // Native integration regression; synthetic fixtures, no A:M host or graphics
 // context.
 #include "amfixture.h"
+#include "amaction.h"
 #include "../../glb/tests/glbfixture.h"
 #include "toonz/txshglblevel.h"
 #include "toonz/txshamlevel.h"
@@ -10,11 +11,14 @@
 #include "toonz/sceneresources.h"
 #include "toonz/txsheet.h"
 #include "toonz/txshcell.h"
+#include "toonz/txshlevelcolumn.h"
 #include "toonz/txshsimplelevel.h"
 #include "toonz/txshleveltypes.h"
 #include "toonz/tstageobject.h"
 #include "toonz/stage.h"
 #include "tfiletype.h"
+#include "toutputproperties.h"
+#include "toonz/sceneproperties.h"
 #include "toonzqt/gutil.h"
 #include "tstream.h"
 #include "ttile.h"
@@ -258,6 +262,87 @@ int main(int argc, char **argv) {
               level->editableModel()->points[1].position == before.position &&
               level->setControlPoint(head.id, moved, revision),
           "restoring and replaying a point move did not rebuild the mesh");
+
+    // An action belongs to an instance column, while its offsets compose
+    // with the shared, edited model. Fractional renders use scene time.
+    scene.getProperties()->getOutputProperties()->setFrameRate(20);
+    constexpr int actionColumn = 4;
+    for (int row = 0; row <= 25; ++row)
+      check(xsheet->setCell(row, actionColumn, TXshCell(level, TFrameId(1))),
+            "hold action model exposure");
+    auto *animatedColumn = xsheet->getColumn(actionColumn)->getLevelColumn();
+    auto action          = std::make_shared<otam::Action>();
+    action->defaultModel = "Regression";
+    otam::setPositionKey(*action, *level->editableModel(), head.id, 0,
+                         {{0, 0, 0}});
+    otam::setPositionKey(*action, *level->editableModel(), head.id, 1,
+                         {{2, 0, 0}});
+    const TFilePath actPath(temp.filePath("missing-action.act"));
+    const AMActionBinding binding{TXshLevelP(level), actPath, 1, action};
+    animatedColumn->setAMAction(binding);
+    const double sample   = 13.5;
+    const auto actionPose = amModelAt(xsheet, actionColumn, sample);
+    check(actionPose && actionPose != level->editableModel(),
+          "action pose did not evaluate");
+    nearlyEqual(actionPose->points[1].position[0],
+                moved.position[0] + (sample - 1) * 2 / 20);
+    nearlyEqual(actionPose->points[1].position[2], moved.position[2]);
+    check(amModelAt(xsheet, actionColumn, 0) == level->editableModel() &&
+              amModelAt(xsheet, 1, 0) == level->editableModel() &&
+              !amModelAt(xsheet, actionColumn, 26),
+          "action leaked before its start, to another instance, or to an empty "
+          "cell");
+    const auto actionMesh =
+        prepareNativeModelGeometry(xsheet, actionColumn, sample, false);
+    check(
+        actionMesh && actionMesh->triangles[0].color == otam::Color{{0, 0, 1}},
+        "action mesh lost the model palette");
+    const TRasterFxP startFx(
+        makeNativeModelRenderFx(xsheet, actionColumn, 1, false));
+    const TRasterFxP sampleFx(
+        makeNativeModelRenderFx(xsheet, actionColumn, sample, false));
+    check(startFx->getAlias(1, TRenderSettings()) !=
+              sampleFx->getAlias(sample, TRenderSettings()),
+          "different action poses share a render cache identity");
+    auto editedAction = std::make_shared<otam::Action>(*action);
+    otam::setPositionKey(*editedAction, *level->editableModel(), head.id, 1,
+                         {{4, 0, 0}});
+    auto editedBinding   = binding;
+    editedBinding.action = editedAction;
+    animatedColumn->setAMAction(editedBinding);
+    const auto editedPose = amModelAt(xsheet, actionColumn, sample);
+    check(editedPose && editedPose != actionPose,
+          "same-frame key edit did not refresh the evaluated pose");
+    nearlyEqual(editedPose->points[1].position[0],
+                moved.position[0] + (sample - 1) * 4 / 20);
+    nearlyEqual(actionPose->points[1].position[0],
+                moved.position[0] + (sample - 1) * 2 / 20);
+    animatedColumn->setAMAction(binding);
+    const TXshColumnP duplicate(animatedColumn->clone());
+    auto *duplicateLevelColumn = duplicate->getLevelColumn();
+    check(duplicateLevelColumn->getAMAction().action == action,
+          "column clone lost the action");
+    duplicateLevelColumn->setAMAction({});
+    check(animatedColumn->getAMAction().action == action,
+          "detaching a cloned action changed the original column");
+    const TXshAMLevelP differentLevel(new TXshAMLevel(L"Other model"));
+    auto wrongBinding  = binding;
+    wrongBinding.level = differentLevel.getPointer();
+    animatedColumn->setAMAction(wrongBinding);
+    check(amModelAt(xsheet, actionColumn, sample) == level->editableModel(),
+          "action was applied to an unbound model level");
+    auto incompatible = std::make_shared<otam::Action>(*action);
+    incompatible->channels.at(head.id).reference = 99999;
+    auto staleBinding                            = binding;
+    staleBinding.action                          = incompatible;
+    animatedColumn->setAMAction(staleBinding);
+    check(amModelAt(xsheet, actionColumn, sample) == level->editableModel() &&
+              prepareNativeModelGeometry(xsheet, actionColumn, sample, false)
+                      ->warnings.back()
+                      .find("A:M action skipped") != std::string::npos,
+          "incompatible action did not safely restore the base pose");
+    animatedColumn->setAMAction(binding);
+
     // Serialization includes new native resource and ordinary stage channel
     // keys.
     const TFilePath serialized(temp.path() + "/sheet.xml");
@@ -273,6 +358,7 @@ int main(int argc, char **argv) {
     std::unique_ptr<TPersist> owner(persist);
     auto *restored = dynamic_cast<TXsheet *>(persist);
     check(restored, "xsheet persistence failed");
+    restored->setScene(&scene);
     auto *restoredLevel = restored->getCell(0, 0).m_level->getAMLevel();
     check(restoredLevel, "native level persistence registration failed");
     check(restored->getCell(0, 1).m_level.getPointer() == restoredLevel,
@@ -287,6 +373,15 @@ int main(int argc, char **argv) {
     check(reopened && reopened->points[1].position == moved.position &&
               reopened->points[2].bias == shaped.bias,
           "control point edits lost precision or were omitted on reopen");
+    const auto reopenedAction =
+        restored->getColumn(actionColumn)->getLevelColumn()->getAMAction();
+    const auto reopenedPose = amModelAt(restored, actionColumn, sample);
+    check(
+        reopenedAction.level.getPointer() == restoredLevel &&
+            reopenedAction.path == actPath && reopenedAction.startRow == 1 &&
+            reopenedPose &&
+            reopenedPose->points[1].position == actionPose->points[1].position,
+        "action attachment or working copy was lost on scene reopen");
     check(
         prepareAMLevelGeometry(restored, 0, 0, false)->triangles[0].vertices ==
             prepareAMLevelGeometry(xsheet, 0, 0, false)->triangles[0].vertices,
@@ -377,6 +472,8 @@ int main(int argc, char **argv) {
 
     const auto orangeGeometry =
         prepareNativeModelGeometry(xsheet, 1, 14, false);
+    const auto orangeActionGeometry =
+        prepareNativeModelGeometry(xsheet, actionColumn, 14, false);
     const auto redGeometry   = prepareNativeModelGeometry(xsheet, 1, 0, false);
     const auto tweenGeometry = prepareNativeModelGeometry(xsheet, 1, 7, false);
     const auto endGeometry   = prepareNativeModelGeometry(xsheet, 1, 35, false);
@@ -384,6 +481,8 @@ int main(int argc, char **argv) {
     const auto tween = palette->getStyle(2)->getMainColor();
     check(orangeGeometry->triangles[0].color ==
                   otam::Color{{1, orange.g / 255.f, orange.b / 255.f}} &&
+              orangeActionGeometry->triangles[0].color ==
+                  orangeGeometry->triangles[0].color &&
               redGeometry->triangles[0].color == otam::Color{{1, 0, 0}} &&
               tweenGeometry->triangles[0].color ==
                   otam::Color{{1, tween.g / 255.f, tween.b / 255.f}} &&

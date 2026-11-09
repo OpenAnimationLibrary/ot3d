@@ -4,6 +4,9 @@
 #define TXSHLEVELCOLUMN_INCLUDED
 
 #include "toonz/txshcolumn.h"
+#include "toonz/txshlevel.h"
+
+#include <memory>
 
 #undef DVAPI
 #undef DVVAR
@@ -18,7 +21,17 @@
 // Forward declarations
 class TLevelColumnFx;
 class TXshCell;
-class TXshLevel;
+
+namespace otam {
+struct Action;
+}
+
+struct AMActionBinding {
+  TXshLevelP level;
+  TFilePath path{};
+  int startRow = 0;
+  std::shared_ptr<const otam::Action> action;
+};
 
 //=============================================================================
 //! The TXshLevelColumn class provides a column of levels in xsheet and allows
@@ -39,6 +52,7 @@ class DVAPI TXshLevelColumn final : public TXshCellColumn {
 
   TLevelColumnFx *m_fx;
   bool m_iconVisible;
+  std::shared_ptr<const AMActionBinding> m_amAction;
 
 public:
   // Icon visibility management
@@ -57,6 +71,9 @@ public:
 
   // Column type casting
   TXshLevelColumn *getLevelColumn() override { return this; }
+
+  AMActionBinding getAMAction() const;
+  void setAMAction(const AMActionBinding &binding);
 
   // Cloning
   TXshColumn *clone() const override;

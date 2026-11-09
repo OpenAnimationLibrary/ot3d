@@ -1,4 +1,5 @@
 #include "toonz/txshamlevel.h"
+#include "amaction.h"
 #include "toonz/toonzscene.h"
 #include "toonz/txshleveltypes.h"
 #include "tstream.h"
@@ -68,6 +69,7 @@ void TXshAMLevel::setPath(const TFilePath &path, bool keepCached) {
   m_renderMesh.reset();
   m_renderPalette.reset();
   m_colorOverrides.clear();
+  m_actionSample = {};
   m_revision.clear();
   m_error.clear();
 }
@@ -236,6 +238,7 @@ void TXshAMLevel::load() {
     m_mesh     = std::move(mesh);
     m_renderMesh = m_mesh;
     m_colorOverrides.clear();
+    m_actionSample = {};
     updatePaletteColorsLocked();
     m_revision = revision;
     m_error.clear();
@@ -248,6 +251,7 @@ void TXshAMLevel::load() {
     m_renderMesh.reset();
     m_renderPalette.reset();
     m_colorOverrides.clear();
+    m_actionSample = {};
     m_revision.clear();
     m_error = "A:M model " + path.getQString().toStdString() + ": " + e.what();
     throw TException(m_error);
@@ -299,6 +303,7 @@ bool TXshAMLevel::setControlPoint(otam::Id id, const PointValue &value,
   m_mesh          = std::move(mesh);
   m_renderMesh    = m_mesh;
   m_colorOverrides.clear();
+  m_actionSample = {};
   updateRenderMeshLocked(m_renderPalette ? *m_renderPalette : *m_palette);
   return true;
 }
@@ -427,20 +432,57 @@ bool TXshAMLevel::updateRenderMeshLocked(const TPalette &palette) const {
     m_renderMesh = m_mesh;
   } else {
     auto colored = std::make_shared<otam::Mesh>(*m_mesh);
-    for (auto &triangle : colored->triangles) {
-      const int style = triangle.colorGroup < 0
-                            ? DefaultStyle
-                            : m_styleByGroup.at(triangle.colorGroup);
-      auto color      = overrides.find(style);
-      if (color != overrides.end()) {
-        const auto p   = color->second;
-        triangle.color = {{p.r / 255.f, p.g / 255.f, p.b / 255.f}};
-      }
-    }
+    applyColorsLocked(*colored, overrides);
     m_renderMesh = std::move(colored);
   }
   m_colorOverrides = std::move(overrides);
   return true;
+}
+
+void TXshAMLevel::applyColorsLocked(
+    otam::Mesh &mesh, const std::map<int, TPixel32> &overrides) const {
+  for (auto &triangle : mesh.triangles) {
+    const int style = triangle.colorGroup < 0
+                          ? DefaultStyle
+                          : m_styleByGroup.at(triangle.colorGroup);
+    auto color      = overrides.find(style);
+    if (color != overrides.end()) {
+      const auto p   = color->second;
+      triangle.color = {{p.r / 255.f, p.g / 255.f, p.b / 255.f}};
+    }
+  }
+}
+
+void TXshAMLevel::sampleActionLocked(
+    const std::shared_ptr<const otam::Action> &action, double seconds) const {
+  // Cache one immutable pose and its geometry. A renderer can hold either
+  // snapshot after the scene changes or this cache is replaced.
+  seconds = std::min(seconds, action->duration);
+  if (m_actionSample.action.lock() == action &&
+      m_actionSample.seconds == seconds)
+    return;
+  ActionSample sample;
+  sample.action  = action;
+  sample.seconds = seconds;
+  try {
+    auto model = std::make_shared<otam::Model>(*m_editableModel);
+    otam::applyAction(*action, *model, seconds);
+    sample.mesh = std::make_shared<otam::Mesh>(
+        otam::previewMesh(*model, m_document->warnings));
+    sample.model = std::move(model);
+  } catch (const std::runtime_error &e) {
+    sample.warning = std::string("A:M action skipped: ") + e.what();
+  }
+  m_actionSample = std::move(sample);
+}
+
+std::shared_ptr<const otam::Model> TXshAMLevel::actionModel(
+    const std::shared_ptr<const otam::Action> &action, double seconds) const {
+  std::lock_guard<std::mutex> lock(m_mutex);
+  if (!m_editableModel || !action || action->channels.empty() || seconds < 0)
+    return m_editableModel;
+  sampleActionLocked(action, seconds);
+  return m_actionSample.model ? m_actionSample.model : m_editableModel;
 }
 
 bool TXshAMLevel::updatePaletteColors() {
@@ -449,12 +491,30 @@ bool TXshAMLevel::updatePaletteColors() {
 }
 
 std::shared_ptr<const otam::Mesh> TXshAMLevel::renderMesh(int frame) const {
+  return renderMesh(frame, {}, 0);
+}
+
+std::shared_ptr<const otam::Mesh> TXshAMLevel::renderMesh(
+    int frame, const std::shared_ptr<const otam::Action> &action,
+    double seconds) const {
   std::lock_guard<std::mutex> lock(m_mutex);
   if (m_renderPalette && m_renderPalette->getFrame() != frame) {
     m_renderPalette->setFrame(frame);
     updateRenderMeshLocked(*m_renderPalette);
   }
-  return m_renderMesh;
+  if (!m_editableModel || !action || action->channels.empty() || seconds < 0)
+    return m_renderMesh;
+
+  sampleActionLocked(action, seconds);
+  if (!m_actionSample.mesh) {
+    auto fallback = std::make_shared<otam::Mesh>(*m_renderMesh);
+    fallback->warnings.push_back(m_actionSample.warning);
+    return fallback;
+  }
+  if (m_colorOverrides.empty()) return m_actionSample.mesh;
+  auto colored = std::make_shared<otam::Mesh>(*m_actionSample.mesh);
+  applyColorsLocked(*colored, m_colorOverrides);
+  return colored;
 }
 
 std::map<int, TPixel32> TXshAMLevel::sourceStyleColors() const {

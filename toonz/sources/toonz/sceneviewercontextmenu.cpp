@@ -3,6 +3,8 @@
 #include "sceneviewer.h"
 #include "sceneviewercontextmenu.h"
 
+#include "amactionmenu.h"
+
 // Toonz includes
 #include "tapp.h"
 #include "menubarcommandids.h"
@@ -54,6 +56,11 @@ SceneViewerContextMenu::SceneViewerContextMenu(SceneViewer *parent)
   // tool
   TTool *tool = app->getCurrentTool()->getTool();
   if (tool && tool->isEnabled()) tool->addContextMenuItems(this);
+
+  if (!isEditingLevel && !app->getCurrentObject()->isSpline())
+    addAMActionMenu(*this, app->getCurrentXsheet()->getXsheet(),
+                    app->getCurrentFrame()->getFrame(),
+                    app->getCurrentColumn()->getColumnIndex());
 
   // fullscreen
   if (ImageUtils::FullScreenWidget *fsWidget =

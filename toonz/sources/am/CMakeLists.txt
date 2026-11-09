@@ -5,7 +5,11 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
 else()
     set(AM_STANDALONE OFF)
 endif()
-add_library(otam STATIC ammodel.cpp ammodel.h ammaterial.cpp ammaterial.h)
+add_library(otam STATIC
+    ammodel.cpp ammodel.h
+    ammaterial.cpp ammaterial.h
+    amaction.cpp amaction.h
+)
 target_compile_features(otam PUBLIC cxx_std_17)
 target_include_directories(otam PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 set_target_properties(otam PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -18,6 +22,9 @@ if(BUILD_AM_TESTS)
     add_executable(ammaterial_test tests/ammaterial_test.cpp)
     target_link_libraries(ammaterial_test PRIVATE otam)
     add_test(NAME ammaterial COMMAND ammaterial_test)
+    add_executable(amaction_test tests/amaction_test.cpp)
+    target_link_libraries(amaction_test PRIVATE otam)
+    add_test(NAME amaction COMMAND amaction_test)
     add_executable(am_inspect am_inspect.cpp)
     target_link_libraries(am_inspect PRIVATE otam)
 endif()
