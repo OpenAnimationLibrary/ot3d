@@ -71,6 +71,18 @@ Vec3 scale(const Vec3 &a, double s) { return {{a[0] * s, a[1] * s, a[2] * s}}; }
 double length(const Vec3 &a) {
   return std::hypot(a[0], std::hypot(a[1], a[2]));
 }
+double dot(const Vec3 &a, const Vec3 &b) {
+  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+}
+Vec3 cross(const Vec3 &a, const Vec3 &b) {
+  return {{a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2],
+           a[0] * b[1] - a[1] * b[0]}};
+}
+Vec3 unit(const Vec3 &v) {
+  const double size = length(v);
+  return size > 1e-12 ? scale(v, 1 / size) : Vec3{};
+}
+constexpr double Radians = 3.14159265358979323846 / 180.0;
 Vec3 mix(const Vec3 &a, const Vec3 &b, double t) {
   return add(scale(a, 1 - t), scale(b, t));
 }
@@ -303,14 +315,98 @@ Document parse(std::string source, const Limits &limits) {
   return d;
 }
 
+Vec3 BiasHandle::point() const {
+  const double alpha = std::remainder(bias[0], 360.0) * Radians;
+  const double gamma = std::remainder(bias[1], 360.0) * Radians;
+  const auto inPlane =
+      add(scale(forward, std::cos(gamma)), scale(side, std::sin(gamma)));
+  const auto direction =
+      add(scale(inPlane, std::cos(alpha)), scale(normal, std::sin(alpha)));
+  return add(origin,
+             scale(direction, length * std::clamp(bias[2], -100.0, 100.0)));
+}
+
+Bias BiasHandle::biasAt(const Vec3 &target, bool magnitudeOnly) const {
+  if (length <= 1e-12) return bias;
+  const auto delta = sub(target, origin);
+  auto result      = bias;
+  if (magnitudeOnly) {
+    auto reference       = *this;
+    reference.bias[2]    = bias[2] < 0 ? -1 : 1;
+    const auto direction = scale(sub(reference.point(), origin), 1 / length);
+    const double amount =
+        std::clamp(dot(delta, direction) / length, 0.0, 100.0);
+    result[2] = bias[2] < 0 ? -amount : amount;
+    return result;
+  }
+  const double x = dot(delta, forward), y = dot(delta, side);
+  const double z      = dot(delta, normal);
+  const double planar = std::hypot(x, y);
+  const double size   = std::hypot(planar, z);
+  result[2]           = std::min(100.0, size / length);
+  if (size > 1e-12) {
+    result[0] = std::atan2(z, planar) / Radians;
+    if (planar > 1e-12) result[1] = std::atan2(y, x) / Radians;
+  }
+  return result;
+}
+
+std::array<Vec3, 4> SplineSegment::bezier() const {
+  return {
+      {outgoing.origin, outgoing.point(), incoming.point(), incoming.origin}};
+}
+Vec3 sampleSpline(const std::array<Vec3, 4> &p, double t) {
+  const double u = 1 - t;
+  return add(add(scale(p[0], u * u * u), scale(p[1], 3 * u * u * t)),
+             add(scale(p[2], 3 * u * t * t), scale(p[3], t * t * t)));
+}
+
+SplineSegment splineSegment(const Model &m, const Spline &s,
+                            std::size_t start) {
+  const auto size     = s.points.size();
+  const auto end      = (start + 1) % size;
+  const auto position = [&](std::size_t i) -> const Vec3 & {
+    return m.points[m.points[s.points[i]].head].position;
+  };
+  const double span = length(sub(position(end), position(start))) / 3;
+  const auto handle = [&](std::size_t i, bool incoming) {
+    const Vec3 origin = position(i);
+    const Vec3 prev =
+        (i > 0 || s.closed) ? position((i + size - 1) % size) : origin;
+    const Vec3 next =
+        (i + 1 < size || s.closed) ? position((i + 1) % size) : origin;
+    Vec3 forward = unit(incoming ? sub(prev, next) : sub(next, prev));
+    if (forward == Vec3{})
+      forward = unit(incoming ? sub(prev, origin) : sub(next, origin));
+    Vec3 normal = unit(cross(unit(sub(origin, prev)), unit(sub(next, origin))));
+    if (normal == Vec3{}) {
+      // A straight or open-ended spline has no unique plane.
+      const auto axis =
+          std::abs(forward[2]) < 0.9 ? Vec3{{0, 0, 1}} : Vec3{{0, 1, 0}};
+      normal = unit(sub(axis, scale(forward, dot(axis, forward))));
+    }
+    const auto &b     = m.points[s.points[i]].bias;
+    const auto offset = incoming ? 0 : 3;
+    return BiasHandle{
+        origin, forward, cross(normal, forward),
+        normal, span,    {{b[offset], b[offset + 1], b[offset + 2]}}};
+  };
+  return {s.points[start], s.points[end], handle(start, false),
+          handle(end, true)};
+}
+
 Mesh previewMesh(const Document &d, std::size_t modelIndex,
                  unsigned subdivisions, const Limits &limits) {
-  if (modelIndex >= d.models.size() || subdivisions < 1 || subdivisions > 32)
-    fail("invalid preview request");
-  const auto &m  = d.models[modelIndex];
+  if (modelIndex >= d.models.size()) fail("invalid preview request");
+  return previewMesh(d.models[modelIndex], d.warnings, subdivisions, limits);
+}
+
+Mesh previewMesh(const Model &m, const std::vector<std::string> &warnings,
+                 unsigned subdivisions, const Limits &limits) {
+  if (subdivisions < 1 || subdivisions > 32) fail("invalid preview request");
   const auto ids = index(m);
   Mesh out;
-  out.warnings = d.warnings;
+  out.warnings = warnings;
   out.patchGroups.resize(m.patches.size());
   warn(out.warnings,
        "Experimental A:M control-surface preview; Hash patch/bias evaluation "
@@ -318,52 +414,27 @@ Mesh previewMesh(const Document &d, std::size_t modelIndex,
   warn(out.warnings,
        "Only explicit three/four-corner patches are displayed; automatic patch "
        "discovery is not implemented.");
-  // Connected CP identity (not coincident coordinates) defines boundary edges.
+  // Use one curve per welded boundary so neighboring patches share the same
+  // samples. Bias is read from the actual occurrence on that spline.
   using Edge = std::pair<std::size_t, std::size_t>;
-  struct Curve {
-    Vec3 a, b, da, db;
-  };
-  std::map<Edge, Curve> curves;
-  const auto position = [&](std::size_t i) {
-    return m.points[m.points[i].head].position;
-  };
+  std::map<Edge, std::array<Vec3, 4>> curves;
   for (const auto &s : m.splines) {
-    const std::size_t size = s.points.size();
+    const auto size = s.points.size();
     for (std::size_t i = 0; i + 1 < size || (s.closed && i < size); ++i) {
-      std::size_t j = (i + 1) % size;
-      const auto ia = s.points[i], ib = s.points[j];
-      const Vec3 a = position(ia), b = position(ib);
-      const double chord = length(sub(b, a));
-      Vec3 ta =
-          sub(b, (i > 0 || s.closed) ? position(s.points[(i + size - 1) % size])
-                                     : a);
-      Vec3 tb = sub(
-          (j + 1 < size || s.closed) ? position(s.points[(j + 1) % size]) : b,
-          a);
-      ta             = scale(ta, length(ta) > 1e-12 ? chord / length(ta) : 0);
-      tb             = scale(tb, length(tb) > 1e-12 ? chord / length(tb) : 0);
-      const auto &ca = m.points[ia], &cb = m.points[ib];
-      // Deliberately approximate: no inferred gamma/alpha rotations.
-      if (ca.bias[3] || ca.bias[4] || cb.bias[0] || cb.bias[1])
-        warn(out.warnings,
-             "Nonzero alpha/gamma is retained but not applied to the "
-             "experimental preview.");
-      ta = scale(ta, std::max(-100.0, std::min(100.0, ca.bias[5])));
-      tb = scale(tb, std::max(-100.0, std::min(100.0, cb.bias[2])));
-      curves.emplace(Edge(ca.head, cb.head), Curve{a, b, ta, tb});
-      curves.emplace(Edge(cb.head, ca.head),
-                     Curve{b, a, scale(tb, -1), scale(ta, -1)});
+      auto segment = splineSegment(m, s, i);
+      const auto a = m.points[segment.from].head;
+      const auto b = m.points[segment.to].head;
+      auto points  = segment.bezier();
+      curves.emplace(Edge(a, b), points);
+      std::reverse(points.begin(), points.end());
+      curves.emplace(Edge(b, a), points);
     }
   }
-  const auto edge = [&](std::size_t a, std::size_t b, double t) {
+  const auto boundary = [&](std::size_t a, std::size_t b) {
     const auto it = curves.find({a, b});
-    if (it == curves.end())
-      return mix(m.points[a].position, m.points[b].position, t);
-    const auto &c   = it->second;
-    const double tt = t * t, ttt = tt * t;
-    return add(
-        add(scale(c.a, 2 * ttt - 3 * tt + 1), scale(c.b, -2 * ttt + 3 * tt)),
-        add(scale(c.da, ttt - 2 * tt + t), scale(c.db, ttt - tt)));
+    if (it != curves.end()) return it->second;
+    const auto &p = m.points[a].position, &q = m.points[b].position;
+    return std::array<Vec3, 4>{{p, mix(p, q, 1.0 / 3), mix(p, q, 2.0 / 3), q}};
   };
   std::vector<std::set<std::size_t>> memberships;
   for (const auto &g : m.groups) {
@@ -410,23 +481,86 @@ Mesh previewMesh(const Document &d, std::size_t modelIndex,
         color      = m.groups[g].color;
         colorGroup = int(g);
       }
-    const std::size_t count =
-        heads.size() == 3 ? 1 : 2 * subdivisions * subdivisions;
-    if (count > limits.triangles - out.triangles.size())
-      fail("preview triangle budget exceeded");
     if (heads.size() == 3) {
-      out.triangles.push_back(
-          {{{m.points[heads[0]].position, m.points[heads[1]].position,
-             m.points[heads[2]].position}},
-           color,
-           p,
-           colorGroup});
+      const auto ab       = boundary(heads[0], heads[1]);
+      const auto bc       = boundary(heads[1], heads[2]);
+      const auto ca       = boundary(heads[2], heads[0]);
+      const auto straight = [](const std::array<Vec3, 4> &edge) {
+        const auto chord  = sub(edge[3], edge[0]);
+        const double size = length(chord);
+        const auto axis   = unit(chord);
+        for (int i = 1; i < 3; ++i) {
+          const auto offset      = sub(edge[i], edge[0]);
+          const auto along       = dot(offset, axis);
+          const double tolerance = 1e-12 * std::max(size, 1.0);
+          if (along < -tolerance || along > size + tolerance ||
+              length(cross(offset, axis)) > tolerance)
+            return false;
+        }
+        return true;
+      };
+      const bool flat         = straight(ab) && straight(bc) && straight(ca);
+      const std::size_t count = flat ? 1 : subdivisions * subdivisions;
+      if (count > limits.triangles - out.triangles.size())
+        fail("preview triangle budget exceeded");
+      if (flat) {
+        out.triangles.push_back(
+            {{{ab[0], bc[0], ca[0]}}, color, p, colorGroup});
+        continue;
+      }
+
+      // A cubic triangular patch has six boundary handles and one interior
+      // handle. Use their mean for the interior so all three edges follow
+      // exactly the same splines as adjoining quads.
+      const auto middle = scale(
+          add(add(add(ab[1], ab[2]), add(bc[1], bc[2])), add(ca[1], ca[2])),
+          1.0 / 6);
+      const auto sample = [&](double u, double v) {
+        const double w              = 1 - u - v;
+        const auto edgeContribution = [](const std::array<Vec3, 4> &edge,
+                                         double a, double b) {
+          return add(scale(edge[0], a * a * a),
+                     add(scale(edge[1], 3 * a * a * b),
+                         scale(edge[2], 3 * a * b * b)));
+        };
+        return add(
+            add(edgeContribution(ab, w, u), edgeContribution(bc, u, v)),
+            add(edgeContribution(ca, v, w), scale(middle, 6 * w * u * v)));
+      };
+      const double step = 1.0 / subdivisions;
+      const auto normal = [&](double u, double v) {
+        constexpr double h = 1e-5;
+        return unit(cross(sub(sample(u + h, v), sample(u - h, v)),
+                          sub(sample(u, v + h), sample(u, v - h))));
+      };
+      for (unsigned y = 0; y < subdivisions; ++y)
+        for (unsigned x = 0; x + y < subdivisions; ++x) {
+          const double u = x * step, v = y * step;
+          const double u1 = (x + 1) * step, v1 = (y + 1) * step;
+          const auto a = sample(u, v), b = sample(u1, v), c = sample(u, v1);
+          const auto na = normal(u, v), nb = normal(u1, v), nc = normal(u, v1);
+          out.triangles.push_back(
+              {{{a, b, c}}, color, p, colorGroup, {{na, nb, nc}}, true});
+          if (x + y + 1 < subdivisions)
+            out.triangles.push_back({{{b, sample(u1, v1), c}},
+                                     color,
+                                     p,
+                                     colorGroup,
+                                     {{nb, normal(u1, v1), nc}},
+                                     true});
+        }
       continue;
     }
+    if (2 * subdivisions * subdivisions >
+        limits.triangles - out.triangles.size())
+      fail("preview triangle budget exceeded");
+    const auto ab     = boundary(heads[0], heads[1]);
+    const auto dc     = boundary(heads[3], heads[2]);
+    const auto ad     = boundary(heads[0], heads[3]);
+    const auto bc     = boundary(heads[1], heads[2]);
     const auto sample = [&](double u, double v) {
-      Vec3 ruled =
-          add(mix(edge(heads[0], heads[1], u), edge(heads[3], heads[2], u), v),
-              mix(edge(heads[0], heads[3], v), edge(heads[1], heads[2], v), u));
+      Vec3 ruled    = add(mix(sampleSpline(ab, u), sampleSpline(dc, u), v),
+                          mix(sampleSpline(ad, v), sampleSpline(bc, v), u));
       Vec3 bilinear = mix(
           mix(m.points[heads[0]].position, m.points[heads[1]].position, u),
           mix(m.points[heads[3]].position, m.points[heads[2]].position, u), v);

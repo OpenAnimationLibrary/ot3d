@@ -296,6 +296,7 @@ int TApp::getCurrentImageType() {
       }
     }
 
+    if (cell.m_level && cell.m_level->getAMLevel()) return TImage::AM_MODEL;
     sl = cell.getSimpleLevel();
   } else if (getCurrentFrame()->isEditingLevel())
     sl = getCurrentLevel()->getSimpleLevel();

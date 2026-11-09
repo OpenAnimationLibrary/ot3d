@@ -143,6 +143,9 @@ void ToolHandle::onImageChanged(TImage::Type imageType) {
   case TImage::MESH:
     targetType = TTool::MeshImage;
     break;
+  case TImage::AM_MODEL:
+    targetType = TTool::AMModel;
+    break;
   case TImage::META:
     targetType = TTool::MetaImage;
     break;

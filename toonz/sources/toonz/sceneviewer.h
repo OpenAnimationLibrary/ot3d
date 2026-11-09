@@ -220,7 +220,7 @@ public:
   void onRenderCompleted(int frame) override;
   void onPreviewUpdate() override;
 
-  bool isPreviewEnabled() const { return m_previewMode != NO_PREVIEW; }
+  bool isPreviewEnabled() const override { return m_previewMode != NO_PREVIEW; }
   int getPreviewMode() const { return m_previewMode; }
 
   void setVisual(const ImagePainter::VisualSettings &settings);

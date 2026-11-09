@@ -16,7 +16,7 @@
 #define DVVAR DV_IMPORT_VAR
 #endif
 
-// Native read-only A:M source. Column/stage objects, not this shared resource,
+// Native A:M source with scene-local edits. Column/stage objects
 // own placement and animation. No conversion to a TXshSimpleLevel or GLB.
 class DVAPI TXshAMLevel final : public TXshLevel {
   PERSIST_DECLARATION(TXshAMLevel)
@@ -27,6 +27,21 @@ class DVAPI TXshAMLevel final : public TXshLevel {
   std::shared_ptr<const otam::Mesh> m_mesh;
   std::string m_revision;
   std::string m_error;
+
+public:
+  struct PointValue {
+    otam::Vec3 position;
+    std::array<double, 6> bias;
+
+    bool operator==(const PointValue &other) const {
+      return position == other.position && bias == other.bias;
+    }
+  };
+
+private:
+  std::map<otam::Id, PointValue> m_pointEdits;
+  std::string m_editRevision;
+  std::shared_ptr<const otam::Model> m_editableModel;
 
   struct SurfaceStyle {
     int id;
@@ -55,9 +70,12 @@ public:
   void loadData(TIStream &is) override;
   void saveData(TOStream &os) override;
   void load() override;
-  // Saving an OT3D scene saves the reference only; never write into the MDL.
+  // The scene owns the edits. Level saves never write into the MDL.
   void save() override {}
   std::shared_ptr<const otam::Document> document() const;
+  std::shared_ptr<const otam::Model> editableModel() const;
+  bool setControlPoint(otam::Id id, const PointValue &value,
+                       const std::string &sourceRevision);
   std::shared_ptr<const otam::Mesh> mesh() const;
   std::shared_ptr<const otam::Mesh> renderMesh(int frame = 0) const;
   TPalette *getPalette() const { return m_palette.getPointer(); }
