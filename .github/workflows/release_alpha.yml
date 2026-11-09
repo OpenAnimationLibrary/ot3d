@@ -1,0 +1,171 @@
+name: Publish OT3D 0.1.0-alpha.3
+
+on:
+  push:
+    branches: [release/0.1.0-alpha.3]
+    paths: [.github/workflows/release_alpha.yml]
+
+permissions:
+  actions: read
+  contents: write
+  pull-requests: read
+
+concurrency:
+  group: ot3d-v0.1.0-alpha.3
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      SOURCE_SHA: 85591b300704d4b28249ecb9937235e4507ed5c1
+      SOURCE_TREE: 2e61a53b67871ec1afd0efd400cec6bd16fa0280
+      INTEGRATION_HEAD: c46e41d4e6a5d1e4ed7ae18caaab5ce87489cade
+      INTEGRATION_PR: 33
+      WINDOWS_RUN: 42672720763
+      BUILD_WORKFLOW_SHA: 31790d3225943d063a2d0ca30304a1b1235f367c
+      RELEASE_TAG: ot3d-v0.1.0-alpha.3
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: 85591b300704d4b28249ecb9937235e4507ed5c1
+          persist-credentials: false
+
+      - name: Verify and package the Windows build
+        shell: python
+        run: |
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import shutil
+          import subprocess
+          import zipfile
+
+          repo = os.environ['GH_REPO']
+          sha = os.environ['SOURCE_SHA']
+          tree = os.environ['SOURCE_TREE']
+          integration_head = os.environ['INTEGRATION_HEAD']
+          pull_number = os.environ['INTEGRATION_PR']
+          run_id = os.environ['WINDOWS_RUN']
+          build_workflow_sha = os.environ['BUILD_WORKFLOW_SHA']
+          tag = os.environ['RELEASE_TAG']
+          version = '0.1.0-alpha.3'
+          package_name = f'OT3D-{version}-windows-x64-portable'
+          if repo != 'OpenAnimationLibrary/ot3d':
+              raise RuntimeError('This release workflow is for OpenAnimationLibrary/ot3d')
+
+          def api(path):
+              return json.loads(subprocess.check_output(['gh', 'api', f'repos/{repo}/{path}']))
+
+          def sha256(path):
+              with path.open('rb') as file:
+                  return hashlib.file_digest(file, 'sha256').hexdigest()
+
+          if subprocess.check_output(['git', 'rev-parse', 'HEAD', 'HEAD^{tree}'],
+                                     text=True).splitlines() != [sha, tree]:
+              raise RuntimeError('Checked out source does not match the release source')
+          pull = api(f'pulls/{pull_number}')
+          if (pull['merged'], pull['base']['ref'], pull['head']['sha'],
+              pull['merge_commit_sha']) != (True, 'main', integration_head, sha):
+              raise RuntimeError('The integration pull request does not match the release source')
+
+          run = api(f'actions/runs/{run_id}')
+          if (run['head_repository']['full_name'], run['head_sha'], run['head_branch'],
+              run['name'], run['event'], run['status'], run['conclusion']) != (
+              repo, build_workflow_sha, f'release/{version}', 'Windows alpha.3 release build',
+              'push', 'completed', 'success'):
+              raise RuntimeError('The successful Windows build does not match the integration')
+          build_commit = api(f'git/commits/{build_workflow_sha}')
+          if [parent['sha'] for parent in build_commit['parents']] != [integration_head]:
+              raise RuntimeError('The build workflow is not based on the integration commit')
+
+          artifacts = api(f'actions/runs/{run_id}/artifacts')['artifacts']
+          [artifact] = [item for item in artifacts if not item['expired'] and
+                        item['name'] == f'Opentoonz-Windows-{integration_head}']
+          # The release build and the commit merged to main must have the
+          # same complete source tree.
+          if api(f'git/commits/{integration_head}')['tree']['sha'] != tree:
+              raise RuntimeError('The Windows artifact was built from a different source tree')
+
+          archive = Path('windows-build.zip')
+          with archive.open('wb') as file:
+              subprocess.run(['gh', 'api', f"repos/{repo}/actions/artifacts/{artifact['id']}/zip"],
+                             stdout=file, check=True)
+          digest = 'sha256:' + sha256(archive)
+          if digest != artifact['digest']:
+              raise RuntimeError('Windows artifact digest mismatch')
+
+          root = Path('staging') / package_name
+          root.mkdir(parents=True)
+          with zipfile.ZipFile(archive) as source:
+              for member in source.infolist():
+                  if not (root / member.filename).resolve().is_relative_to(root.resolve()):
+                      raise RuntimeError(f'Unsafe ZIP path {member.filename}')
+              source.extractall(root)
+          files = {path.name.lower(): path for path in root.iterdir() if path.is_file()}
+          for filename, commands in {
+              'opentoonz.exe': (b'Create A:M Action',),
+              'tnztools.dll': (b'Set A:M Position Keys', b'Remove A:M Position Keys'),
+          }.items():
+              binary = files[filename].read_bytes()
+              if not binary.startswith(b'MZ') or not all(command in binary for command in commands):
+                  raise RuntimeError(f'Missing A:M editing commands in {filename}')
+          if not (root / 'portablestuff').is_dir():
+              raise RuntimeError('Portable resource folder is missing')
+
+          out = Path('release-assets')
+          out.mkdir()
+          notes = out / 'RELEASE_NOTES.md'
+          notes.write_text(f"""## What's new
+
+          - Edit native Animation:Master model control points and spline bias in the Control Point Editor. Model group colors are visible with Preview off.
+          - Shift-click or box-select multiple points and drag them together. With an attached Action, one drag keys the selected points at the current frame and one Undo reverses the edit.
+          - Use the A:M Action context menu to create, attach, and save reusable `.act` files. This alpha supports control-point position channels.
+          - Drag shapes from the Primitive Library into the Viewer, animate A:M group colors with palette keys, and use optimized GIF output by default.
+
+          ## Windows x64 portable
+
+          Extract the entire ZIP to a new writable folder and run OpenToonz with `portablestuff` beside it. Use copies of scenes and model assets for alpha testing. Keep the previous alpha in its own folder to roll back. Remove the new folder to uninstall this portable copy.
+
+          The Windows CI build passed its native A:M, GLB, and OpenEXR tests. The package check verified the Action and multi-point commands in the shipped binaries. See `BUILD_INFO.json` and `OT3D-docs/COMPATIBILITY.md` inside the archive.
+
+          [Source commit](https://github.com/{repo}/commit/{sha}) · [Windows build]({run['html_url']}) · [Changes since alpha.2](https://github.com/{repo}/compare/ot3d-v0.1.0-alpha.2...{tag})
+          """, encoding='utf-8')
+          shutil.copy('LICENSE.txt', root)
+          shutil.copytree('stuff/doc/LICENSE', root / 'LICENSES')
+          shutil.copy('thirdparty/cgltf/LICENSE', root / 'LICENSES' / 'LICENSE_cgltf.txt')
+          shutil.copytree('thirdparty/libmypaint/license', root / 'LICENSES' / 'libmypaint-dependencies')
+          shutil.copytree('doc/ot3d', root / 'OT3D-docs')
+          shutil.copy(notes, root / 'README-OT3D.md')
+          info = dict(version=version, tag=tag, source_sha=sha, source_tree=tree,
+                      build_sha=integration_head, platform='windows-x64-portable',
+                      toolchain='windows-2022, Visual Studio 17 2022, MSVC x64',
+                      artifact_created_at=artifact['created_at'],
+                      upstream_baseline='9001fd493e4ec27bf3efc368252eccb7da703928',
+                      migration_record='OT3D-docs/THREE_D_MIGRATION.md',
+                      support_matrix='OT3D-docs/COMPATIBILITY.md',
+                      build_configuration='RelWithDebInfo',
+                      workflow_run=run['html_url'], source_artifact_id=artifact['id'],
+                      source_artifact_digest=digest,
+                      packaging_run=f"https://github.com/{repo}/actions/runs/{os.environ['GITHUB_RUN_ID']}")
+          (root / 'BUILD_INFO.json').write_text(json.dumps(info, indent=2) + '\n', encoding='utf-8')
+          package = Path(shutil.make_archive(str(out / package_name), 'zip', root.parent, root.name))
+          (out / 'SHA256SUMS').write_text(f'{sha256(package)}  {package.name}\n', encoding='utf-8')
+
+      - name: Publish the Windows alpha prerelease
+        shell: bash
+        run: |
+          set -euo pipefail
+          existing_tag="$(git ls-remote --tags origin "refs/tags/$RELEASE_TAG" | cut -f1)"
+          if [[ -n "$existing_tag" && "$existing_tag" != "$SOURCE_SHA" ]]; then
+            echo "The existing release tag points to a different commit."
+            exit 1
+          fi
+          gh release create "$RELEASE_TAG" \
+            release-assets/OT3D-0.1.0-alpha.3-windows-x64-portable.zip release-assets/SHA256SUMS \
+            --target "$SOURCE_SHA" --title "OT3D 0.1.0-alpha.3" --prerelease --latest=false \
+            --notes-file release-assets/RELEASE_NOTES.md
