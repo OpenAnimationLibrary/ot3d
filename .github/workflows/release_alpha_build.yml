@@ -1,0 +1,215 @@
+name: Windows alpha.3 release build
+
+on:
+  push:
+    branches: [release/0.1.0-alpha.3]
+    paths: [.github/workflows/release_alpha_build.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  Windows:
+    runs-on: windows-2022
+    timeout-minutes: 90
+    env:
+      # QT related variable
+      QT_PATH: ${{ github.workspace }}\thirdparty\qt\5.15.2_wintab\msvc2019_64  # Path to custom Qt
+
+      # Visual Studio related variables
+      MSVCVERSION: "Visual Studio 17 2022"  # Visual Studio version
+      
+      # Boost-related variables      
+      BOOST_TOOLSET: "14.3"                 # Boost MSVC Toolset version
+      BOOST_VERSION: "1.87.0"               # Boost version
+      BOOST_ROOT: C:\local\boost_1_87_0     # Path to Boost library root
+      
+      # OpenCV-related variables      
+      OPENCV_VERSION: "4.13.0"              # OpenCV version
+      OpenCV_DIR: C:\tools\opencv\build     # Path to OpenCV
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: c46e41d4e6a5d1e4ed7ae18caaab5ce87489cade
+          lfs: false
+          persist-credentials: false
+
+      # Cache OpenCV and Boost libraries
+      - name: Cache OpenCV and Boost
+        id: cache-deps
+        uses: actions/cache@v5
+        with:
+          path: |
+            C:\tools\opencv
+            ${{ env.BOOST_ROOT }}
+          key: ${{ runner.os }}-opencv-boost-${{ env.OPENCV_VERSION }}-boost-${{ env.BOOST_VERSION }}
+          restore-keys: |
+            ${{ runner.os }}-opencv-boost-${{ env.OPENCV_VERSION }}-boost-
+
+      # Install OpenCV and Boost if the cache is missing
+      - name: Install OpenCV and Boost if cache is missing
+        if: steps.cache-deps.outputs.cache-hit != 'true'
+        run: |
+          @echo on
+          choco install opencv --version=${{ env.OPENCV_VERSION }} -y
+          choco install boost-msvc-${{ env.BOOST_TOOLSET }} --version=${{ env.BOOST_VERSION }} -y
+        shell: cmd
+
+      - name: Install custom Qt 5.15.2 with WinTab support
+        shell: pwsh
+        run: |
+          $archive = 'Qt5.15.2_wintab.zip'
+          # Use the upstream release asset ID to avoid failures on the browser download URL.
+          curl.exe --fail --silent --show-error --location --retry 3 --retry-max-time 90 --connect-timeout 15 --max-time 180 `
+            --header 'Accept: application/octet-stream' --output $archive `
+            'https://api.github.com/repos/shun-iwasawa/qt5/releases/assets/34012654'
+          if ($LASTEXITCODE -ne 0) { throw 'Could not download the WinTab Qt archive.' }
+          $expectedHash = 'eba1a5da9cb631ccd11991e38e0aab6cd7ecb506436389b397abb6ccf591111a'
+          if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne $expectedHash) {
+            throw 'The WinTab Qt archive failed SHA-256 verification.'
+          }
+          7z x -y $archive
+          if ($LASTEXITCODE -ne 0) { throw 'Could not extract the WinTab Qt archive.' }
+          New-Item -ItemType Directory -Path 'thirdparty\qt' -Force | Out-Null
+          Move-Item -LiteralPath 'Qt5.15.2_wintab\5.15.2_wintab' -Destination 'thirdparty\qt'
+
+      - name: Install third-party prebuilt libs (LFS workaround)
+        run: |
+          @echo on
+          curl -fsSL -o thirdparty-libs.zip https://github.com/andeon/opentoonz-thirdparty-libs/releases/download/prebuilt-libs-v1/thirdparty-libs.zip
+          7z x -y thirdparty-libs.zip
+        shell: cmd    
+
+      # Add msbuild to PATH for build process
+      - name: Add msbuild to PATH
+        uses: microsoft/setup-msbuild@v3
+
+      # CMake configuration step
+      - name: CMake configuration
+        run: |
+          @echo on
+          cd thirdparty
+          copy /Y tiff-4.0.3\libtiff\tif_config.vc.h tiff-4.0.3\libtiff\tif_config.h
+          copy /Y tiff-4.0.3\libtiff\tiffconf.vc.h tiff-4.0.3\libtiff\tiffconf.h
+          copy /Y libpng-1.6.21\scripts\pnglibconf.h.prebuilt libpng-1.6.21\pnglibconf.h
+
+          cd ../toonz
+          rmdir /S /Q build
+          mkdir build
+          cd build
+
+          cmake ..\sources -G "%MSVCVERSION%" -Ax64 -DQT_PATH="%QT_PATH%" -DBOOST_ROOT="%BOOST_ROOT%" -DOpenCV_DIR="%OpenCV_DIR%" -DWITH_WINTAB=Y -DBUILD_EXR_TESTS=ON -DBUILD_EXR_AOV_FX_TESTS=ON -DBUILD_GLB_FX_TESTS=ON -DBUILD_AM_LEVEL_TESTS=ON
+        shell: cmd
+
+      - name: Build and test OpenEXR image I/O and level source
+        shell: cmd
+        run: |
+          cd toonz\build
+          cmake --build . --config RelWithDebInfo --target tiio_exr_test tiio_exr_level_test --parallel
+          if %errorlevel% neq 0 exit /b %errorlevel%
+          set "PATH=%QT_PATH%\bin;%GITHUB_WORKSPACE%\thirdparty\glut\3.7.6\lib;%GITHUB_WORKSPACE%\thirdparty\glew\glew-1.9.0\bin\64bit;%GITHUB_WORKSPACE%\thirdparty\libmypaint\dist\64;C:\tools\opencv\build\x64\vc16\bin;%PATH%"
+          ctest -C RelWithDebInfo --output-on-failure -R "^tiio_exr(_level)?$"
+          if %errorlevel% neq 0 exit /b %errorlevel%
+
+      # Run the focused regression before the longer application build.
+      - name: Build and test OpenEXR AOV FX
+        shell: cmd
+        run: |
+          cd toonz\build
+          cmake --build . --config RelWithDebInfo --target openexraovfx_test --parallel
+          if %errorlevel% neq 0 exit /b %errorlevel%
+          set "PATH=%QT_PATH%\bin;%GITHUB_WORKSPACE%\thirdparty\glut\3.7.6\lib;%GITHUB_WORKSPACE%\thirdparty\glew\glew-1.9.0\bin\64bit;%GITHUB_WORKSPACE%\thirdparty\libmypaint\dist\64;C:\tools\opencv\build\x64\vc16\bin;%PATH%"
+          ctest -C RelWithDebInfo --output-on-failure -R "^openexraovfx$"
+          if %errorlevel% neq 0 exit /b %errorlevel%
+
+      - name: Build and test GLB Model FX rendering
+        shell: cmd
+        run: |
+          cd toonz\build
+          msbuild /p:Configuration=RelWithDebInfo /m /verbosity:minimal stdfx\glbmodelfx_test.vcxproj
+          if %errorlevel% neq 0 exit /b %errorlevel%
+          msbuild /p:Configuration=RelWithDebInfo /m /verbosity:minimal stdfx\threepointlightfx_test.vcxproj
+          if %errorlevel% neq 0 exit /b %errorlevel%
+          set "PATH=%QT_PATH%\bin;%GITHUB_WORKSPACE%\thirdparty\glut\3.7.6\lib;%GITHUB_WORKSPACE%\thirdparty\glew\glew-1.9.0\bin\64bit;%GITHUB_WORKSPACE%\thirdparty\libmypaint\dist\64;C:\tools\opencv\build\x64\vc16\bin;%PATH%"
+          RelWithDebInfo\glbmodelfx_test.exe
+          if %errorlevel% neq 0 exit /b %errorlevel%
+          RelWithDebInfo\threepointlightfx_test.exe
+          if %errorlevel% neq 0 exit /b %errorlevel%
+
+      - name: Build and test native A:M levels and spatial FX
+        shell: cmd
+        run: |
+          cd toonz\build
+          cmake --build . --config RelWithDebInfo --target amlevel_test amfx_test amcamera_test --parallel
+          if %errorlevel% neq 0 exit /b %errorlevel%
+          set "PATH=%QT_PATH%\bin;%GITHUB_WORKSPACE%\thirdparty\glut\3.7.6\lib;%GITHUB_WORKSPACE%\thirdparty\glew\glew-1.9.0\bin\64bit;%GITHUB_WORKSPACE%\thirdparty\libmypaint\dist\64;C:\tools\opencv\build\x64\vc16\bin;%PATH%"
+          ctest -C RelWithDebInfo --output-on-failure -R "^(amlevel|amfx|amcamera)$"
+          if %errorlevel% neq 0 exit /b %errorlevel%
+
+      # Build Opentoonz using MSBuild
+      - name: Build Opentoonz
+        run: |
+          @echo on
+          cd toonz\build
+          msbuild /p:Configuration=RelWithDebInfo /m /verbosity:minimal ALL_BUILD.vcxproj
+        shell: cmd
+
+      # Create the package
+      - name: Create Package
+        run: |
+          @echo on
+          cd toonz\build
+          
+          REM Create Opentoonz directory and copy files from RelWithDebInfo
+          mkdir Opentoonz
+          copy /Y RelWithDebInfo\*.* Opentoonz\
+          REM Copy required DLLs for proper functionality
+          copy /Y ..\..\thirdparty\glut\3.7.6\lib\glut64.dll Opentoonz
+          copy /Y ..\..\thirdparty\glew\glew-1.9.0\bin\64bit\glew32.dll Opentoonz
+          copy /Y ..\..\thirdparty\libmypaint\dist\64\libiconv-2.dll Opentoonz
+          copy /Y ..\..\thirdparty\libmypaint\dist\64\libintl-8.dll Opentoonz
+          copy /Y ..\..\thirdparty\libmypaint\dist\64\libjson-c-2.dll Opentoonz
+          copy /Y ..\..\thirdparty\libmypaint\dist\64\libmypaint-1-4-0.dll Opentoonz
+          
+          REM Copy OpenCV DLL (IMPORTANT: Update path/filename when upgrading OpenCV version)
+          copy /Y "C:\tools\opencv\build\x64\vc16\bin\opencv_world4130.dll" Opentoonz
+          
+          REM Deploy Qt dependencies
+          "%QT_PATH%\bin\windeployqt.exe" Opentoonz\Opentoonz.exe --opengl
+          
+          del /Q Opentoonz\*.pdb  REM Remove .pdb files
+          del /Q Opentoonz\vc_redist.x64.exe REM Remove vc_redist.x64.exe file
+          
+          REM Create portablestuff directory and copy stuff folder
+          mkdir Opentoonz\portablestuff
+          xcopy /Y /E /I ..\..\stuff .\Opentoonz\portablestuff
+        shell: cmd
+
+      - name: Test packaged GLB Model FX rendering
+        shell: cmd
+        run: |
+          cd toonz\build\Opentoonz
+          glbmodelfx_test.exe
+          if %errorlevel% neq 0 exit /b %errorlevel%
+          threepointlightfx_test.exe
+          if %errorlevel% neq 0 exit /b %errorlevel%
+          del glbmodelfx_test.exe
+          del threepointlightfx_test.exe
+          del amlevel_test.exe
+          del amfx_test.exe
+          del amcamera_test.exe
+
+      # Create artifact from the build
+      - name: Create Artifact
+        run: |
+          mkdir artifact
+          xcopy toonz\build\Opentoonz artifact\ /E /H /Y
+        shell: cmd
+
+      # Upload the generated artifact
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: Opentoonz-Windows-c46e41d4e6a5d1e4ed7ae18caaab5ce87489cade
+          path: artifact
