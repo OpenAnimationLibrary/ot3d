@@ -6,6 +6,7 @@
 // Tnz6 includes
 #include "menubar.h"
 #include "menubarcommandids.h"
+#include "hybridsceneviewer.h"
 #include "xsheetviewer.h"
 #include "viewerpane.h"
 #include "flipbook.h"
@@ -2627,8 +2628,17 @@ void MainWindow::defineActions() {
                          "render");
   createMenuRenderAction(MI_FastRender, QT_TR_NOOP("&Fast Render to MP4"),
                          "Alt+R", "fast_render_mp4");
-  createMenuRenderAction(MI_LiveRender, QT_TR_NOOP("Live Render"), "",
-                         "preview");
+  QAction *liveRender = createToggle(MI_LiveRender, QT_TR_NOOP("Live Render"),
+                                     "", false, MenuRenderCommandType, "");
+  const auto syncLiveRender = [liveRender] {
+    auto *viewer =
+        dynamic_cast<HybridSceneViewer *>(TApp::instance()->getActiveViewer());
+    liveRender->setEnabled(viewer != nullptr);
+    liveRender->setChecked(viewer && viewer->isLiveRenderEnabled());
+  };
+  connect(TApp::instance(), &TApp::activeViewerChanged, liveRender,
+          syncLiveRender);
+  syncLiveRender();
   createMenuRenderAction(MI_Preview, QT_TR_NOOP("&Preview"), "Ctrl+R",
                          "preview");
   createMenuRenderAction(MI_SavePreviewedFrames,

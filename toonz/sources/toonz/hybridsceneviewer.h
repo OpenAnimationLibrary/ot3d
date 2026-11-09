@@ -15,15 +15,19 @@ struct LiveFrame;
 // Replacement behind the existing SceneViewer panel identifier. Inherited
 // tablet input, 2D drawing, playback, rulers and Preview remain in SceneViewer.
 class HybridSceneViewer final : public SceneViewer {
+  Q_OBJECT
+
   QSet<QString> m_reportedDiagnostics;
 
   bool m_liveRender = false, m_liveDirty = true, m_liveFailed = false;
+  bool m_livePaused = false;
   std::unique_ptr<LiveRenderController> m_liveController;
   std::unique_ptr<otglb::LiveGpu> m_liveGpu;
   std::shared_ptr<const otglb::LiveFrame> m_liveFrame;
   QLabel *m_liveStatus;
   QMetaObject::Connection m_liveContextConnection;
-  void invalidateLive();
+  void invalidateLive(bool cancelPreparation = true);
+  void setLiveStatus(const QString &message);
   bool drawLive();
   void releaseLiveGpu();
   void reportDiagnostic(const QString &message);
@@ -37,4 +41,7 @@ public:
   ~HybridSceneViewer() override;
   bool isLiveRenderEnabled() const { return m_liveRender; }
   void setLiveRenderEnabled(bool enabled);
+
+signals:
+  void liveRenderToggled(bool enabled);
 };
