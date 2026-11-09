@@ -1,6 +1,7 @@
 # Live Render: first GPU milestone
 
-Use **Render > Live Render**, or right-click the viewer and enable **Live Render**.
+Use the **Live Render** button beside the Viewer’s Preview buttons,
+**Render > Live Render**, or the Viewer context menu.
 The command is assignable in Configure Shortcuts. It is off initially and local to
 each viewer; scenes, output settings and final/Task Rendering are not switched to a
 new rendering backend. Enabling it turns off that viewer's Preview. Starting
@@ -31,6 +32,8 @@ on curved surfaces. The camera background remains independently composited.
 - Ordinary viewer pan/zoom reuses uploaded geometry and environments. Scene camera,
   model, lighting, frame and material changes prepare a replacement snapshot.
   The last completed frame remains visible while that snapshot is prepared.
+  During Animate-tool drags, completed intermediate transforms appear while
+  preparation coalesces newer edits. Releasing the drag requests the final pose.
 - Original tool interaction, gizmos, input and undo remain with SceneViewer.
 - Context-local resources, cleanup/recreation and diagnostics with normal-view
   fallback when Live Render cannot evaluate a graph or initialize the GPU.

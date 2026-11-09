@@ -19,9 +19,7 @@
 #include "toonz/palettecontroller.h"
 #include "toonz/tpalettehandle.h"
 #include "menubarcommandids.h"
-#include "tools/toolhandle.h"
 #include <QLabel>
-#include <QTimer>
 #include <QAction>
 #include "texception.h"
 
@@ -110,9 +108,7 @@ HybridSceneViewer::HybridSceneViewer(ImageUtils::FullScreenWidget *parent)
           m_liveFailed = true;
           reportDiagnostic(error);
         }
-        m_liveStatus->setText(error.isEmpty() ? tr("Live Render — GPU")
-                                              : error);
-        m_liveStatus->adjustSize();
+        if (!error.isEmpty()) setLiveStatus(error);
         update();
       };
   auto *app  = TApp::instance();
@@ -124,7 +120,12 @@ HybridSceneViewer::HybridSceneViewer(ImageUtils::FullScreenWidget *parent)
   });
   connect(app->getCurrentFrame(), &TFrameHandle::frameSwitched, this, dirty);
   connect(app->getCurrentFx(), &TFxHandle::fxChanged, this, dirty);
-  connect(app->getCurrentObject(), &TObjectHandle::objectChanged, this, dirty);
+  connect(app->getCurrentObject(), &TObjectHandle::objectChanged, this,
+          [this](bool dragging) {
+            // Show intermediate transforms during a drag. Superseding every
+            // in-flight snapshot can leave the displayed model stationary.
+            invalidateLive(!dragging);
+          });
   connect(app->getCurrentXsheet(), &TXsheetHandle::xsheetChanged, this, dirty);
   connect(app->getCurrentXsheet(), &TXsheetHandle::xsheetSwitched, this,
           [this] {
@@ -146,6 +147,8 @@ void HybridSceneViewer::initializeGL() {
       [this] { releaseLiveGpu(); }, Qt::DirectConnection);
 }
 HybridSceneViewer::~HybridSceneViewer() {
+  auto *app = TApp::instance();
+  if (app->getActiveViewer() == this) app->setActiveViewer(nullptr);
   disconnect(m_liveContextConnection);
   releaseLiveGpu();
 }
@@ -155,16 +158,21 @@ void HybridSceneViewer::releaseLiveGpu() {
   m_liveGpu->release();
   doneCurrent();
 }
-void HybridSceneViewer::invalidateLive() {
+void HybridSceneViewer::invalidateLive(bool cancelPreparation) {
   m_liveDirty  = true;
   m_liveFailed = false;
-  m_liveController->invalidate();
+  if (cancelPreparation) m_liveController->invalidate();
   if (m_liveRender) update();
+}
+void HybridSceneViewer::setLiveStatus(const QString &message) {
+  if (m_liveStatus->text() == message) return;
+  m_liveStatus->setText(message);
+  m_liveStatus->adjustSize();
 }
 void HybridSceneViewer::setLiveRenderEnabled(bool enabled) {
   if (m_liveRender == enabled) return;
   m_liveRender = enabled;
-  m_liveStatus->setVisible(enabled);
+  if (!enabled) m_liveStatus->hide();
   if (!enabled) {
     m_liveController->invalidate();
     m_liveFrame.reset();
@@ -172,6 +180,7 @@ void HybridSceneViewer::setLiveRenderEnabled(bool enabled) {
     enablePreview(NO_PREVIEW);
     invalidateLive();
   }
+  emit liveRenderToggled(enabled);
   update();
 }
 bool HybridSceneViewer::drawLive() {
@@ -181,11 +190,18 @@ bool HybridSceneViewer::drawLive() {
       m_drawCameraTest ||
       app->getCurrentScene()->getScene()->getChildStack()->getAncestorCount() >
           0) {
-    m_liveStatus->setText(
-        tr("Live Render paused — use camera view in scene editing"));
-    m_liveStatus->adjustSize();
+    if (!m_livePaused) {
+      m_livePaused = true;
+      invalidateLive();
+    }
+    setLiveStatus(isPreviewEnabled()
+                      ? tr("Live Render paused — Preview is on")
+                      : tr("Live Render paused — return to scene camera view"));
     return false;
   }
+  m_livePaused = false;
+  if (m_liveDirty || m_liveController->busy())
+    setLiveStatus(tr("Live Render — updating"));
   if (m_liveDirty && !m_liveController->busy()) {
     m_liveDirty = false;
     try {
@@ -206,15 +222,13 @@ bool HybridSceneViewer::drawLive() {
       settings.m_linearColorSpace = true;
       m_liveController->prepare(snapshot ? snapshot->clone(true) : TFxP(),
                                 frame, settings);
-      m_liveStatus->setText(tr("Live Render — updating"));
     } catch (const TException &e) {
       m_liveFailed = true;
-      m_liveStatus->setText(QString::fromStdWString(e.getMessage()));
+      setLiveStatus(QString::fromStdWString(e.getMessage()));
     } catch (const std::exception &e) {
       m_liveFailed = true;
-      m_liveStatus->setText(QString::fromUtf8(e.what()));
+      setLiveStatus(QString::fromUtf8(e.what()));
     }
-    m_liveStatus->adjustSize();
   }
   if (!m_liveFrame || m_liveFailed) return false;
   QMatrix4x4 matrix;
@@ -228,15 +242,12 @@ bool HybridSceneViewer::drawLive() {
   QString error;
   ModelDrawScope scope;
   if (m_liveGpu->draw(m_liveFrame, matrix, width(), height(), error)) {
-    if (!m_liveDirty && !m_liveController->busy()) {
-      m_liveStatus->setText(tr("Live Render — GPU"));
-      m_liveStatus->adjustSize();
-    }
+    if (!m_liveDirty && !m_liveController->busy())
+      setLiveStatus(tr("Live Render — GPU"));
     return true;
   }
   m_liveFailed = true;
-  m_liveStatus->setText(error);
-  m_liveStatus->adjustSize();
+  setLiveStatus(error);
   reportDiagnostic(error);
   return false;
 }
@@ -364,10 +375,8 @@ class LiveRenderCommand final : public MenuItemHandler {
 public:
   LiveRenderCommand() : MenuItemHandler(MI_LiveRender) {}
   void execute() override {
-    auto *viewer = dynamic_cast<HybridSceneViewer *>(
-        TApp::instance()->getCurrentTool()->getTool()
-            ? TApp::instance()->getCurrentTool()->getTool()->getViewer()
-            : nullptr);
+    auto *viewer =
+        dynamic_cast<HybridSceneViewer *>(TApp::instance()->getActiveViewer());
     if (viewer) viewer->setLiveRenderEnabled(!viewer->isLiveRenderEnabled());
   }
 } liveRenderCommand;

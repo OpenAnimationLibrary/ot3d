@@ -397,7 +397,7 @@ void BaseViewerPanel::initializeTitleBar(TPanelTitleBar *titleBar) {
 
   TPanelTitleBarButtonSet *viewModeButtonSet;
   m_referenceModeBs = viewModeButtonSet = new TPanelTitleBarButtonSet();
-  int x                                 = -244;
+  int x                                 = -267;
   int iconWidth                         = 20;
   TPanelTitleBarButton *button;
 
@@ -477,8 +477,32 @@ void BaseViewerPanel::initializeTitleBar(TPanelTitleBar *titleBar) {
   titleBar->add(QPoint(x, 0), m_subcameraPreviewButton);
   m_subcameraPreviewButton->setToolTip(tr("Sub-camera Preview"));
 
-  // ret = ret && connect(m_subcameraPreviewButton, SIGNAL(toggled(bool)),
-  //                      SLOT(enableSubCameraPreview(bool)));
+  auto *hybrid = static_cast<HybridSceneViewer *>(m_sceneViewer);
+  auto *live   = new TPanelTitleBarButton(titleBar, "render");
+  titleBar->add(QPoint(x + 31, 0), live);
+  live->setToolTip(tr("Live Render"));
+  live->setAccessibleName(tr("Live Render"));
+  live->setPressed(hybrid->isLiveRenderEnabled());
+  connect(live, &TPanelTitleBarButton::toggled, hybrid,
+          &HybridSceneViewer::setLiveRenderEnabled);
+  connect(hybrid, &HybridSceneViewer::liveRenderToggled, live,
+          &TPanelTitleBarButton::setPressed);
+  connect(hybrid, &HybridSceneViewer::liveRenderToggled, this,
+          [this](bool enabled) {
+            const bool active =
+                TApp::instance()->getActiveViewer() == m_sceneViewer;
+            auto *commands = CommandManager::instance();
+            if (active) commands->getAction(MI_LiveRender)->setChecked(enabled);
+            if (!enabled) return;
+            m_previewButton->setPressed(false);
+            m_subcameraPreviewButton->setPressed(false);
+            if (active) {
+              commands->getAction(MI_ToggleViewerPreview)->setChecked(false);
+              commands->getAction(MI_ToggleViewerSubCameraPreview)
+                  ->setChecked(false);
+            }
+            enableFlipConsoleForCamerastand(false);
+          });
 
   assert(ret);
 }
