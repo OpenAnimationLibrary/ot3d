@@ -10,6 +10,10 @@
 #include "../../stdfx/glbmodelfx.cpp"
 #include "../../glb/tests/glbfixture.h"
 #include "amfixture.h"
+#include "../../glb/liverender.h"
+#include "../../toonz/liverendercontroller.h"
+#include <QElapsedTimer>
+#include <QThread>
 #include "toonz/txshamlevel.h"
 #include "toonz/toonzscene.h"
 #include "toonz/txsheet.h"
@@ -205,6 +209,36 @@ void testEnvironment(ToonzScene &scene, TFx *column, TRasterFx *snapshot,
   const auto p        = otglb::renderTile(*redScene, tile)[16 * 32 + 16];
   require(p.r > 1 && p.g < .001 && p.alpha == 1,
           "native reflection or HDR missing");
+  const auto live = otglb::prepareLiveFrame(*redScene);
+  require(!live.batches.empty() && !live.batches[0].reflections.empty() &&
+              redScene->surfaceShader && redScene->surfaceCount > 0,
+          "native A:M lost live surface/environment data");
+  LiveRenderController controller(nullptr);
+  int presented        = 0;
+  controller.completed = [&](std::shared_ptr<const otglb::LiveFrame> result,
+                             const QString &error) {
+    require(error.isEmpty(), "live controller preparation failed");
+    if (result) {
+      require(!result->batches.empty(), "live controller lost model");
+      ++presented;
+    }
+  };
+  auto wait = [&] {
+    QElapsedTimer timer;
+    timer.start();
+    while (controller.busy() && timer.elapsed() < 10000) {
+      QCoreApplication::processEvents();
+      QThread::msleep(1);
+    }
+    require(!controller.busy(), "live controller failed to finish");
+  };
+  controller.prepare(fx.clone(true), 0, settings);
+  controller.invalidate();
+  wait();
+  require(presented == 0, "obsolete live frame was presented");
+  controller.prepare(fx.clone(true), 0, settings);
+  wait();
+  require(presented == 1, "current live frame was not presented");
   const auto linearOutput = evaluateEnvironmentFloat(fx, 0);
   require(
       std::abs(linearOutput->pixels(16)[16].r - otglb::srgbToLinear(p.r)) <

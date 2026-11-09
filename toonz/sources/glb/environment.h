@@ -21,6 +21,9 @@ class EnvironmentMap {
 public:
   static constexpr std::size_t MaxPixels = 4 * 1024 * 1024;
   EnvironmentMap(int width, int height, std::vector<EnvironmentColor> pixels);
+  int width() const { return m_width; }
+  int height() const { return m_height; }
+  const std::vector<EnvironmentColor> &pixels() const { return m_pixels; }
   EnvironmentColor sample(const EnvironmentDirection &direction) const;
   bool prepareIrradiance(const int *canceled = nullptr) const;
   // E/pi: Lambert irradiance, or A:M's min(1,N.L/falloff) kernel.

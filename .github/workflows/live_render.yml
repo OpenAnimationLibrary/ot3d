@@ -1,0 +1,33 @@
+name: Live Render GPU
+
+on:
+  pull_request:
+    paths:
+      - 'toonz/sources/glb/**'
+      - 'toonz/sources/toonz/liverendercontroller.*'
+      - 'toonz/sources/toonz/hybridsceneviewer.*'
+      - 'toonz/sources/toonzlib/amlevelrender.cpp'
+      - '.github/workflows/live_render.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-render-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  conformance:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Qt and software OpenGL
+        run: sudo apt-get update && sudo apt-get install -y qtbase5-dev libqt5opengl5-dev libgl1-mesa-dri xvfb xauth
+      - name: Configure
+        run: cmake -S toonz/sources/glb -B live-build -DCMAKE_BUILD_TYPE=Debug -DBUILD_LIVE_GPU_TESTS=ON
+      - name: Build
+        run: cmake --build live-build --parallel 2
+      - name: Test portable renderer and GPU conformance
+        run: xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 ctest --test-dir live-build --output-on-failure

@@ -466,14 +466,18 @@ public:
       const auto rig         = lighting ? *lighting : otglb::LightingRig();
       const otam::Vec3 eye{{cameraPose[3], cameraPose[7], cameraPose[11]}};
       const auto triangles = scene->triangles;
-      scene->sampleShader  = [samples = std::move(samples), surfaces,
-                             perspective, useRig, rig, eye, sampleLights,
-                             triangles](std::size_t index,
-                                        const std::array<double, 3> &bary) {
+      scene->environments       = rig.environments;
+      scene->surfaceCount       = scene->triangles.size();
+      scene->surfacePerspective = perspective;
+      scene->surfaceShader      = [samples = std::move(samples), surfaces,
+                              perspective, useRig, rig, eye, sampleLights,
+                              triangles](std::size_t index,
+                                         const std::array<double, 3> &bary) {
         const auto &sample = samples.at(index);
         if (sample.binding < 0 && rig.environments.empty() && !sampleLights)
-          return otglb::ColorPixel{sample.color[0], sample.color[1],
-                                   sample.color[2], 1};
+          return otglb::SurfaceSample{{{otglb::srgbToLinear(sample.color[0]),
+                                        otglb::srgbToLinear(sample.color[1]),
+                                        otglb::srgbToLinear(sample.color[2])}}};
         const ResolvedSurface fallback{otam::Surface(), true};
         const auto &binding =
             sample.binding < 0 ? fallback : surfaces.at(sample.binding);
@@ -509,7 +513,11 @@ public:
         }
         const double nl = std::sqrt(dot(normal, normal));
         const double vl = std::sqrt(dot(view, view));
-        if (nl < 1e-15 || vl < 1e-15) return otglb::ColorPixel{};
+        if (nl < 1e-15 || vl < 1e-15) {
+          otglb::SurfaceSample empty;
+          empty.alpha = 0;
+          return empty;
+        }
         const double facing = dot(normal, view) < 0 ? -1 : 1;
         for (int k = 0; k < 3; ++k) {
           normal[k] *= facing / nl;
@@ -544,15 +552,23 @@ public:
         for (int k = 0; k < 3; ++k)
           albedo[k] = float(otglb::srgbToLinear(diffuse[k]) *
                             (1 - surface.ambiance * surface.ambianceBlend));
-        color = otglb::shadeEnvironment(
-            color, normal, view, rig.environments, surface.reflectivity,
-            surface.reflectiveBlend, surface.reflectivityFalloff, albedo,
-            surface.diffuseFalloff);
-        const float alpha  = float(1 - surface.transparency);
-        return otglb::ColorPixel{otglb::linearToSrgbExtended(color[0]) * alpha,
-                                 otglb::linearToSrgbExtended(color[1]) * alpha,
-                                 otglb::linearToSrgbExtended(color[2]) * alpha,
-                                 alpha};
+        otglb::SurfaceSample result;
+        result.local   = color;
+        result.diffuse = albedo;
+        result.normal  = normal;
+        result.view    = view;
+        for (auto &component : result.view) component *= vl;
+        result.reflectivity    = surface.reflectivity;
+        result.blend           = surface.reflectiveBlend;
+        result.distanceFalloff = surface.reflectivityFalloff;
+        result.diffuseFalloff  = surface.diffuseFalloff;
+        result.alpha           = float(1 - surface.transparency);
+        return result;
+      };
+      scene->sampleShader = [surface = scene->surfaceShader,
+                             layers  = scene->environments](
+                                std::size_t i, const std::array<double, 3> &b) {
+        return otglb::shadeSurfaceSample(surface(i, b), layers);
       };
       for (const auto &binding : bindings)
         for (const auto &attribute : binding.material.deferred)

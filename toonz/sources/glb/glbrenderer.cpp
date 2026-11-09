@@ -223,6 +223,20 @@ std::array<float, 3> materialColor(const Asset &asset, std::size_t index) {
   return {{linearToSrgb(c[0]), linearToSrgb(c[1]), linearToSrgb(c[2])}};
 }
 
+ColorPixel shadeSurfaceSample(const SurfaceSample &s,
+                              const std::vector<EnvironmentLayer> &layers) {
+  auto view           = s.view;
+  const double length = std::hypot(view[0], view[1], view[2]);
+  if (length > 0)
+    for (auto &v : view) v /= length;
+  const auto color =
+      shadeEnvironment(s.local, s.normal, view, layers, s.reflectivity, s.blend,
+                       s.distanceFalloff, s.diffuse, s.diffuseFalloff);
+  return {linearToSrgbExtended(color[0]) * s.alpha,
+          linearToSrgbExtended(color[1]) * s.alpha,
+          linearToSrgbExtended(color[2]) * s.alpha, s.alpha};
+}
+
 RenderScene prepareRender(const Asset &asset, const RenderOptions &o,
                           const int *canceled) {
   for (double v : o.position) require(std::isfinite(v), "Non-finite GLB position.");
@@ -536,7 +550,10 @@ RenderScene prepareRender(const Asset &asset, const RenderOptions &o,
     // Cofactor columns transform normals correctly under camera scaling.
     const std::array<Vec, 3> cameraNormals{
         {cross(axisY, axisZ), cross(axisZ, axisX), cross(axisX, axisY)}};
-    out.sampleShader =
+    out.environments       = o.lighting.environments;
+    out.surfaceCount       = out.triangles.size();
+    out.surfacePerspective = o.perspective;
+    out.surfaceShader =
         [samples = std::move(environmentSamples), triangles = out.triangles,
          layers = o.lighting.environments, rig = o.lighting, sampleLights,
          perspective = o.perspective, eye, ortho,
@@ -559,7 +576,11 @@ RenderScene prepareRender(const Asset &asset, const RenderOptions &o,
             v[k]             = perspective ? e[k] - p[k] : o[k] - e[k];
           }
           const double l = std::hypot(v[0], v[1], v[2]);
-          if (!(l > 0)) return ColorPixel{};
+          if (!(l > 0)) {
+            SurfaceSample empty;
+            empty.alpha = 0;
+            return empty;
+          }
           double facing = 0;
           for (int k = 0; k < 3; ++k) {
             v[k] /= l;
@@ -594,12 +615,20 @@ RenderScene prepareRender(const Asset &asset, const RenderOptions &o,
             for (int k = 0; k < 3; ++k)
               color[k] = float(s.albedo[k] * energy[k] * rig.master);
           }
-          color = shadeEnvironment(color, n, v, layers, 0, 0, 0, s.albedo);
-          return ColorPixel{linearToSrgbExtended(color[0]),
-                            linearToSrgbExtended(color[1]),
-                            linearToSrgbExtended(color[2]), 1};
+          SurfaceSample result;
+          result.local  = color;
+          result.normal = n;
+          result.view   = v;
+          for (auto &component : result.view) component *= l;
+          result.diffuse = s.albedo;
+          return result;
         };
   }
+  if (out.surfaceShader)
+    out.sampleShader = [surface = out.surfaceShader, layers = out.environments](
+                           std::size_t i, const std::array<double, 3> &b) {
+      return shadeSurfaceSample(surface(i, b), layers);
+    };
   if (worldBounds) {
     std::array<double, 3> center{};
     for (int k = 0; k < 3; ++k)
