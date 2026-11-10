@@ -1,6 +1,7 @@
 #include "amactionmenu.h"
 
 #include "amaction.h"
+#include "functioneditortracks.h"
 #include "historytypes.h"
 #include "tapp.h"
 #include "texception.h"
@@ -18,7 +19,9 @@
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QInputDialog>
 #include <QMenu>
+#include <QMessageBox>
 #include <QSaveFile>
 
 #include <exception>
@@ -76,11 +79,11 @@ class UndoAMActionBinding final : public TUndo {
   }
 
 public:
-  UndoAMActionBinding(const ActionTarget &target, AMActionBinding after,
+  UndoAMActionBinding(TXshLevelColumn *column, AMActionBinding after,
                       QString name)
-      : m_column(target.column)
-      , m_scene(target.xsheet->getScene())
-      , m_before(target.column->getAMAction())
+      : m_column(column)
+      , m_scene(column->getXsheet()->getScene())
+      , m_before(column->getAMAction())
       , m_after(std::move(after))
       , m_name(std::move(name)) {}
 
@@ -109,10 +112,7 @@ public:
 
 void changeBinding(const ActionTarget &target, AMActionBinding binding,
                    const QString &name) {
-  auto undo =
-      std::make_unique<UndoAMActionBinding>(target, std::move(binding), name);
-  undo->redo();
-  TUndoManager::manager()->add(undo.release());
+  changeAMActionBinding(target.column.getPointer(), std::move(binding), name);
 }
 
 bool isActionPath(const QFileInfo &info) {
@@ -255,6 +255,62 @@ void runActionCommand(void (*command)(const ActionTarget &, QWidget *),
 
 }  // namespace
 
+void changeAMActionBinding(TXshLevelColumn *column, AMActionBinding binding,
+                           const QString &name) {
+  auto undo =
+      std::make_unique<UndoAMActionBinding>(column, std::move(binding), name);
+  undo->redo();
+  TUndoManager::manager()->add(undo.release());
+}
+
+void reloadAMActionFromFile(TXshLevelColumn *column, QWidget *parent) {
+  TXshLevelColumnP owner(column);
+  auto *app    = TApp::instance();
+  auto *xsheet = app->getCurrentXsheet()->getXsheet();
+  if (!xsheet || owner->getXsheet() != xsheet || owner->isLocked() ||
+      app->getCurrentFrame()->isPlaying())
+    return;
+
+  const auto current = owner->getAMAction();
+  if (!current.action || current.path.isEmpty()) return;
+  auto *level = current.level->getAMLevel();
+  auto model  = level ? level->editableModel() : nullptr;
+  if (!model) return;
+
+  const QString path =
+      xsheet->getScene()->decodeFilePath(current.path).getQString();
+  try {
+    auto source = std::make_shared<otam::Action>(readActionFile(path));
+    otam::validateAction(*source, *model);
+    if (otam::writeAction(*source) == otam::writeAction(*current.action))
+      return;
+    if (QMessageBox::question(
+            parent, QObject::tr("Reload A:M Action"),
+            QObject::tr("Replace the attached Action with the keys from %1?")
+                .arg(QDir::toNativeSeparators(path)),
+            QMessageBox::Yes | QMessageBox::Cancel,
+            QMessageBox::Cancel) != QMessageBox::Yes)
+      return;
+
+    if (app->getCurrentXsheet()->getXsheet() != xsheet ||
+        owner->getXsheet() != xsheet || owner->isLocked() ||
+        app->getCurrentFrame()->isPlaying())
+      return;
+    auto binding = owner->getAMAction();
+    if (binding.action != current.action || binding.path != current.path ||
+        binding.startRow != current.startRow ||
+        binding.level != current.level || level->editableModel() != model)
+      return;
+    binding.action = std::move(source);
+    changeAMActionBinding(owner.getPointer(), std::move(binding),
+                          QObject::tr("Reload A:M Action"));
+  } catch (const TException &error) {
+    DVGui::warning(QString::fromStdWString(error.getMessage()));
+  } catch (const std::exception &error) {
+    DVGui::warning(QString::fromUtf8(error.what()));
+  }
+}
+
 void addAMActionMenu(QMenu &menu, TXsheet *xsheet, int row, int column) {
   auto *app   = TApp::instance();
   auto *scene = app->getCurrentScene()->getScene();
@@ -286,6 +342,33 @@ void addAMActionMenu(QMenu &menu, TXsheet *xsheet, int row, int column) {
   const auto attached = target.binding();
   if (!attached.action) return;
   actionMenu->addSeparator();
+  auto *show = actionMenu->addAction(
+      QObject::tr("Show Control Point in Function Editor…"), actionMenu,
+      [parent, target] {
+        if (!target.isCurrent()) return;
+        const auto binding = target.binding();
+        if (!binding.action || binding.action->channels.empty()) return;
+        QStringList points;
+        for (const auto &entry : binding.action->channels)
+          points << QString::number(qlonglong(entry.first));
+        bool ok          = false;
+        const auto point = QInputDialog::getItem(
+            parent, QObject::tr("A:M Action Curves"),
+            QObject::tr("Control Point ID"), points, 0, false, &ok);
+        if (ok && target.isCurrent() &&
+            target.binding().action == binding.action)
+          showAMActionInFunctionEditor(target.column.getPointer(),
+                                       {point.toLongLong()});
+      });
+  show->setEnabled(!attached.action->channels.empty());
+  actionMenu
+      ->addAction(QObject::tr("Reload Action from File…"), actionMenu,
+                  [parent, target] {
+                    if (target.isCurrent())
+                      reloadAMActionFromFile(target.column.getPointer(),
+                                             parent);
+                  })
+      ->setEnabled(!attached.path.isEmpty());
   actionMenu->addAction(
       QObject::tr("Save Action..."), actionMenu,
       [parent, target] { runActionCommand(saveAction, target, parent); });

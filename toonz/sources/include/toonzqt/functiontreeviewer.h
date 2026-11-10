@@ -9,6 +9,7 @@
 
 // TnzQt includes
 #include "treemodel.h"
+#include "functionkeytrack.h"
 
 // Qt includes
 #include <QScrollBar>
@@ -99,6 +100,8 @@ to
   private:
     QString m_name;
     ShowFilter m_showFilter;
+    std::shared_ptr<FunctionKeyTrack> m_keyTrack;
+    bool m_sourceAvailable = true;
 
   public:
     ChannelGroup(const QString &name = "");
@@ -124,6 +127,10 @@ to
     void setChildrenAllActive(bool active);
 
     void displayAnimatedChannels();
+    void setKeyTrack(std::shared_ptr<FunctionKeyTrack> track) {
+      m_keyTrack = std::move(track);
+    }
+    void setSourceAvailable(bool available) { m_sourceAvailable = available; }
   };
 
   //----------------------------------------------------------------------------------
@@ -164,6 +171,7 @@ color, which
         *m_group;  //!< (\p not \p owned) Reference to the enclosing group
 
     std::string m_paramNamePref;
+    bool m_editorCurve = false;
 
     bool m_isActive;  //!< Whether the channels is active, ie visible
                       //!< as a curve and numeric column
@@ -171,6 +179,7 @@ color, which
     Channel(FunctionTreeModel *model, TDoubleParam *param,
             std::string paramNamePrefix = "", std::wstring fxId = L"");
     ~Channel();
+    void setEditorCurve() { m_editorCurve = true; }
 
     TDoubleParam *getParam() const {
       return (TDoubleParam *)m_param.getPointer();
@@ -209,6 +218,15 @@ private:
       *m_stageObjects,  //!< Predefined group for stage object channels.
       *m_fxs;           //!< Predefined group for fx parameters.
 
+  struct KeyTrackEntry {
+    QString id;
+    std::shared_ptr<FunctionKeyTrack> source;
+    std::vector<TDoubleParamP> curves;
+    Channel *firstChannel = nullptr;
+    FunctionKeyTrack::Snapshot displayed;
+    bool initialized = false;
+  };
+  std::vector<KeyTrackEntry> m_keyTracks;
   std::vector<Channel *> m_activeChannels;
 
   Channel *m_currentChannel;  //!< (\p not \p owned) Current channel.
@@ -256,6 +274,17 @@ public:
       const TFilePath
           &folder);  //!< See function FunctionViewer::addParameter().
 
+  Channel *addEditorCurves(const QString &folder, const QString &name,
+                           const std::vector<TDoubleParamP> &curves,
+                           bool activate = true);
+  Channel *addKeyTrack(const QString &id, const QString &folder,
+                       const QString &name, const QStringList &components,
+                       std::shared_ptr<FunctionKeyTrack> track,
+                       bool activate = true);
+  bool refreshKeyTracks();
+  std::shared_ptr<FunctionKeyTrack> keyTrack(TDoubleParam *curve,
+                                             int *component = nullptr) const;
+
   TFxHandle *getFxHandle() { return m_fxHandle; }
   void setFxHandle(TFxHandle *fxHandle) { m_fxHandle = fxHandle; }
 
@@ -269,6 +298,7 @@ signals:
   void activeChannelsChanged();
   void curveSelected(TDoubleParam *);
   void curveChanged(bool isDragging);
+  void editorCurveChanged();
   void currentChannelChanged(FunctionTreeModel::Channel *);
 
 private:

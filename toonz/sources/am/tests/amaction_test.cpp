@@ -86,6 +86,14 @@ int main() {
            "new empty action can be saved and reopened");
     expect(otam::canonicalActionTime(1.0 / 59) == 2288.0 / 135000,
            "scene frame quantizes to the nearest A:M tick");
+    expect(otam::isActionTimeAt(2288.0 / 135000, 1.0 / 59) &&
+               !otam::isActionTimeAt(2289.0 / 135000, 1.0 / 59) &&
+               !otam::isActionTimeAt(0, -1) && !otam::isActionTimeAt(0, 1e12),
+           "scene-frame keys resolve without discarding neighboring subframes");
+    expect(otam::samplePositionOffset(action, 2, 0.125) ==
+                   otam::Vec3{{0.5, 1, 1.5}} &&
+               otam::samplePositionOffset(action, 5, 0.125) == otam::Vec3{},
+           "inserting a key samples the native offset or the rest pose");
 
     auto batch = action;
     otam::setPositionKeys(

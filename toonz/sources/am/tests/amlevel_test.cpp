@@ -21,6 +21,8 @@
 #include "toonz/sceneproperties.h"
 #include "toonzqt/gutil.h"
 #include "tstream.h"
+#include "tdoublekeyframe.h"
+#include "tdoubleparam.h"
 #include "ttile.h"
 #include "traster.h"
 #include "trenderer.h"
@@ -41,6 +43,60 @@ void check(bool result, const char *message) {
 void nearlyEqual(double a, double b) {
   check(std::abs(a - b) < 1e-7, "coordinate/parameter mismatch");
 }
+void checkCurveTransfer() {
+  TDoubleParam source(10.0), target(3.0);
+  source.enableCycle(true);
+  TDoubleKeyframe first(1, 20), last(11, 40);
+  first.m_type = last.m_type = TDoubleKeyframe::Linear;
+  source.setKeyframe(first);
+  source.setKeyframe(last);
+  target.setName("Destination");
+  target.setValueRange(-50, 50);
+
+  target.copyCurve(source);
+  check(target.getName() == "Destination" && target.getDefaultValue() == 3.0 &&
+            target.isCycleEnabled() && target.getKeyframeCount() == 2,
+        "curve transfer changed destination identity or lost curve data");
+  double min, max, step;
+  check(target.getValueRange(min, max, step) && min == -50 && max == 50,
+        "curve transfer replaced the destination value range");
+  nearlyEqual(target.getValue(6), 30);
+  source.deleteKeyframe(1);
+  check(target.isKeyframe(1), "curve transfer shared mutable keys");
+}
+
+void checkPaletteKeyEdits(TPalette *source) {
+  TPaletteP palette(source->clone());
+  constexpr int style = 2;
+  auto keys           = palette->getStyleAnimation(style);
+  check(keys.count(0) && keys.count(14), "fixture palette lacks its keys");
+  palette->setFrame(7);
+  const auto visible = palette->getStyle(style)->getMainColor();
+  auto sampled       = palette->sampleStyle(style, 14);
+  check(sampled->getMainColor() == keys.at(14)->getMainColor() &&
+            palette->getStyle(style)->getMainColor() == visible &&
+            palette->getFrame() == 7,
+        "reading an exact palette key changed the live palette");
+
+  auto retimed   = keys;
+  auto moved     = retimed.extract(14);
+  moved.key()    = 7;
+  moved.mapped() = moved.mapped()->clone();
+  auto color     = moved.mapped()->getMainColor();
+  color.m        = 128;
+  moved.mapped()->setMainColor(color);
+  retimed.insert(std::move(moved));
+  palette->replaceStyleAnimation(style, retimed, *sampled);
+  check(palette->isKeyframe(style, 7) && !palette->isKeyframe(style, 14) &&
+            palette->getStyle(style)->getMainColor() == color &&
+            palette->getFrame() == 7,
+        "retime and alpha edit did not refresh the current palette frame");
+  palette->replaceStyleAnimation(style, keys, *sampled);
+  check(palette->isKeyframe(style, 14) && !palette->isKeyframe(style, 7) &&
+            palette->getStyle(style)->getMainColor() == visible,
+        "restoring the palette snapshots did not restore the earlier blend");
+}
+
 QByteArray readFile(const QString &path) {
   QFile f(path);
   check(f.open(QIODevice::ReadOnly), "read fixture");
@@ -501,6 +557,8 @@ int main(int argc, char **argv) {
       palette->getStyle(2)->setMainColor(color);
       palette->setKeyframe(2, row);
     }
+    checkCurveTransfer();
+    checkPaletteKeyEdits(palette);
     palette->setFrame(14);
     check(level->updatePaletteColors(),
           "palette keys did not refresh the model");

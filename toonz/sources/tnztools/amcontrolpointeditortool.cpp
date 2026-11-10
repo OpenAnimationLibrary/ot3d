@@ -805,10 +805,20 @@ public:
     if (!model || m_revision != active.level->revision()) return;
     const auto binding = actionBinding(active);
     if (binding.action) {
-      const auto time = keyTime(active, binding);
       if (m_selectedHeads.empty() ||
-          *m_selectedHeads.rbegin() >= model->points.size() || time < 0)
+          *m_selectedHeads.rbegin() >= model->points.size())
         return;
+      std::vector<otam::Id> points;
+      for (auto head : m_selectedHeads)
+        points.push_back(model->points[head].id);
+      menu->addAction(QObject::tr("Show Action Curves in Function Editor"),
+                      menu, [this, active, points = std::move(points)] {
+                        if (currentTarget() == active)
+                          getApplication()->showAMActionCurves(active.column,
+                                                               points);
+                      });
+      const auto time = keyTime(active, binding);
+      if (time < 0) return;
       const auto keyed = std::count_if(
           m_selectedHeads.begin(), m_selectedHeads.end(),
           [&](std::size_t head) {

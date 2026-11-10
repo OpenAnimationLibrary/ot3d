@@ -438,6 +438,28 @@ QPair<TDoubleParam *, int> FunctionSelection::getSelectedSegment() const {
     return qMakePair<TDoubleParam *, int>(0, -1);
 }
 
+std::shared_ptr<FunctionKeyTrack> FunctionSelection::keyTrack(
+    TDoubleParam *curve, int *component) const {
+  return m_model && curve ? m_model->keyTrack(curve, component) : nullptr;
+}
+
+bool FunctionSelection::editKeyTrack(
+    TDoubleParam *curve, const std::vector<FunctionKeyTrack::Edit> &edits) {
+  int component = 0;
+  auto track    = keyTrack(curve, &component);
+  if (!track || !track->canEdit() || !track->edit(component, edits))
+    return false;
+  selectNone();
+  m_model->refreshKeyTracks();
+  return true;
+}
+
+bool FunctionSelection::hasKeyTracks() const {
+  for (const auto &column : m_selectedKeyframes)
+    if (keyTrack(column.first)) return true;
+  return false;
+}
+
 void FunctionSelection::enableCommands() {
   enableCommand(this, "MI_Copy", &FunctionSelection::doCopy);
   enableCommand(this, "MI_Paste", &FunctionSelection::doPaste);
@@ -464,6 +486,7 @@ void FunctionSelection::doCopy() {
 }
 
 void FunctionSelection::doPaste() {
+  if (hasKeyTracks()) return;
   const FunctionKeyframesData *data =
       dynamic_cast<const FunctionKeyframesData *>(
           QApplication::clipboard()->mimeData());
@@ -479,6 +502,7 @@ void FunctionSelection::doPaste() {
     // numeric columns
     for (int c = 0; c < columnCount; c++) {
       TDoubleParam *curve = getCurveFromColumn(col + c);
+      if (keyTrack(curve)) return;
       if (curve) params.push_back(curve);
     }
     columnCount = (int)params.size();
@@ -513,6 +537,7 @@ void FunctionSelection::doPaste() {
 }
 
 void FunctionSelection::doCut() {
+  if (hasKeyTracks()) return;
   TUndoManager::manager()->beginBlock();
   doCopy();
 
@@ -554,6 +579,25 @@ void FunctionSelection::doCut() {
 
 void FunctionSelection::doDelete() {
   if (isEmpty()) return;
+  if (hasKeyTracks()) {
+    // Component selections on the same track refer to the same native key.
+    std::shared_ptr<FunctionKeyTrack> track;
+    TDoubleParam *curve = nullptr;
+    std::set<double> frames;
+    for (const auto &column : m_selectedKeyframes) {
+      if (column.second.isEmpty()) continue;
+      auto source = keyTrack(column.first);
+      if (!source || (track && source != track)) return;
+      track = source;
+      curve = column.first;
+      for (int index : column.second)
+        frames.insert(curve->keyframeIndexToFrame(index));
+    }
+    std::vector<FunctionKeyTrack::Edit> edits;
+    for (double frame : frames) edits.push_back({frame, {}, {}});
+    if (!edits.empty()) editKeyTrack(curve, edits);
+    return;
+  }
   std::vector<KeyframesDeleteUndo::Column> columns;
   for (int col = 0; col < (int)m_selectedKeyframes.size(); col++) {
     KeyframesDeleteUndo::Column column;
@@ -571,7 +615,7 @@ void FunctionSelection::doDelete() {
 }
 
 void FunctionSelection::insertCells() {
-  if (isEmpty()) return;
+  if (isEmpty() || hasKeyTracks()) return;
   QRect selectedCells     = getSelectedCells();
   int frameDelta          = selectedCells.height();
   int row                 = selectedCells.top();
@@ -591,7 +635,7 @@ void FunctionSelection::insertCells() {
 }
 
 void FunctionSelection::setStep(int step, bool inclusive) {
-  if (isEmpty()) return;
+  if (isEmpty() || hasKeyTracks()) return;
   TUndoManager::manager()->beginBlock();
 
   int row = getSelectedCells().top();
@@ -619,7 +663,7 @@ void FunctionSelection::setStep(int step, bool inclusive) {
 }
 
 int FunctionSelection::getCommonStep(bool inclusive) {
-  if (isEmpty()) return -1;
+  if (isEmpty() || hasKeyTracks()) return -1;
 
   int step = -1;
   int row  = getSelectedCells().top();
@@ -651,7 +695,7 @@ int FunctionSelection::getCommonStep(bool inclusive) {
 
 void FunctionSelection::setSegmentType(TDoubleKeyframe::Type type,
                                        bool inclusive) {
-  if (isEmpty()) return;
+  if (isEmpty() || hasKeyTracks()) return;
   TUndoManager::manager()->beginBlock();
 
   int row = getSelectedCells().top();
@@ -679,7 +723,7 @@ void FunctionSelection::setSegmentType(TDoubleKeyframe::Type type,
 }
 
 int FunctionSelection::getCommonSegmentType(bool inclusive) {
-  if (isEmpty()) return -1;
+  if (isEmpty() || hasKeyTracks()) return -1;
 
   int type = -1;
   int row  = getSelectedCells().top();

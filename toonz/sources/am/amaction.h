@@ -21,7 +21,9 @@ struct Action {
 Action parseAction(std::string source);
 std::string writeAction(const Action &action);
 double canonicalActionTime(double seconds);
+bool isActionTimeAt(double canonicalSeconds, double seconds);
 void validateAction(const Action &action, const Model &model);
+Vec3 samplePositionOffset(const Action &action, Id point, double seconds);
 void applyAction(const Action &action, Model &model, double seconds);
 // Offsets for attached occurrences are resolved to their shared position owner.
 // Conflicting offsets for the same owner reject the entire edit.

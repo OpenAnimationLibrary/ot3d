@@ -173,9 +173,10 @@ public:
                 //!  or \p -1 if it cannot be found on the page.
   };
 
+public:
+  using StyleAnimation = std::map<int, TColorStyleP>;
+
 private:
-  typedef std::map<int, TColorStyleP>
-      StyleAnimation;  //!< Style keyframes list.
   typedef std::map<int, StyleAnimation>
       StyleAnimationTable;  //!< Style keyframes list per style id.
 
@@ -200,7 +201,8 @@ private:
   std::vector<TFrameId> m_refLevelFids;
 
   bool m_dirtyFlag;  //!< Whether the palette changed and needs to be refreshed.
-  QMutex m_mutex;    //!< Synchronization mutex for multithreading purposes.
+  mutable QMutex
+      m_mutex;  //!< Synchronization mutex for multithreading purposes.
 
   bool m_isLocked;          //!< Whether the palette is locked.
   bool m_askOverwriteFlag;  //!< This variable is quite unique. This flag is to
@@ -375,6 +377,12 @@ between RGBA color components.
 
   int getFrame() const;      //!< Returns the index of the current frame.
   void setFrame(int frame);  //!< Sets the index of the current frame.
+
+  // The returned key styles are snapshots. Clone a style before editing it.
+  StyleAnimation getStyleAnimation(int styleId) const;
+  TColorStyleP sampleStyle(int styleId, int frame) const;
+  void replaceStyleAnimation(int styleId, const StyleAnimation &keys,
+                             const TColorStyle &unkeyedStyle);
 
   bool isKeyframe(int styleId, int frame) const;  //!< Returns whether the
                                                   //! specified frame is a \a

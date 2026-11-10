@@ -168,6 +168,7 @@ endif()
 set(HEADERS
     ${MOC_HEADERS}
     amactionmenu.h
+    functioneditortracks.h
     celldata.h
     cellkeyframedata.h
     cellkeyframeselection.h
@@ -221,6 +222,7 @@ set(HEADERS
 
 set(SOURCES
     amactionmenu.cpp
+    functioneditortracks.cpp
     floatingpanelcommand.cpp
     canvassizepopup.cpp
     commandbar.cpp

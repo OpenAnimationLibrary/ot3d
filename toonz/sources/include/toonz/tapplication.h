@@ -3,6 +3,9 @@
 #ifndef TAPPLICATION_H
 #define TAPPLICATION_H
 
+#include <cstdint>
+#include <vector>
+
 //====================================================
 
 //    Forward declarations
@@ -45,6 +48,8 @@ public:
   virtual TPaletteHandle *getCurrentPalette() const         = 0;
   virtual TFxHandle *getCurrentFx() const                   = 0;
   virtual PaletteController *getPaletteController() const   = 0;
+
+  virtual void showAMActionCurves(int, const std::vector<std::int64_t> &) {}
 
   // Current Palette (PaletteController) methods
   virtual TColorStyle *getCurrentLevelStyle() const = 0;

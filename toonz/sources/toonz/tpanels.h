@@ -1,5 +1,8 @@
 #pragma once
 
+#include <map>
+#include <memory>
+
 #ifndef TPANELS_INCLUDED
 #define TPANELS_INCLUDED
 
@@ -201,13 +204,22 @@ protected slots:
 // FunctionViewerPanel
 //---------------------------------------------------------
 
+class QFileSystemWatcher;
+
 class FunctionViewerPanel final : public TPanel {
   Q_OBJECT
 
+  struct OpenCurveFile;
   FunctionViewer *m_functionViewer;
+  QFileSystemWatcher *m_curveWatcher;
+  std::map<TDoubleParam *, std::unique_ptr<OpenCurveFile>> m_curveFiles;
+
+  void watchCurveFile(TDoubleParam *curve, const QString &path);
+  void reloadCurveFile(TDoubleParam *curve, bool manual);
 
 public:
   FunctionViewerPanel(QWidget *parent = 0);
+  ~FunctionViewerPanel() override;
 
   void reset() override;
 

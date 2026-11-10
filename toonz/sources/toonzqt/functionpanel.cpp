@@ -817,6 +817,7 @@ void FunctionPanel::updateGadgets(TDoubleParam *curve) {
     if (!channel) continue;
 
     TDoubleParam *curve = channel->getParam();
+    if (getSelection()->keyTrack(curve)) continue;
     for (int j = 0; j != curve->getKeyframeCount(); ++j) {
       TDoubleKeyframe kf = curve->getKeyframe(
           j);  // Well... this stuff gets called upon *painting*  o_o'
@@ -1176,6 +1177,70 @@ void FunctionPanel::paintEvent(QPaintEvent *e) {
 
 //-----------------------------------------------------------------------------
 
+namespace {
+class NativeKeyDragTool final : public FunctionPanel::DragTool {
+  FunctionPanel *m_panel;
+  TDoubleParamP m_curve;
+  std::vector<TDoubleKeyframe> m_keys;
+  FunctionKeyTrack::Snapshot m_initial;
+  QPoint m_start;
+  double m_frameDelta = 0, m_valueDelta = 0;
+
+public:
+  NativeKeyDragTool(FunctionPanel *panel, TDoubleParam *curve,
+                    const QList<int> &indices, const QPoint &start)
+      : m_panel(panel), m_curve(curve), m_start(start) {
+    m_initial = m_panel->getSelection()->keyTrack(curve)->read();
+    for (int index : indices) m_keys.push_back(curve->getKeyframe(index));
+  }
+
+  void drag(QMouseEvent *e) override {
+    QPoint pos         = e->pos();
+    const QPoint delta = pos - m_start;
+    if (e->modifiers() & Qt::ShiftModifier) {
+      if (std::abs(delta.x()) > std::abs(delta.y()))
+        pos.setY(m_start.y());
+      else
+        pos.setX(m_start.x());
+    }
+    m_frameDelta =
+        std::round(m_panel->xToFrame(pos.x()) - m_panel->xToFrame(m_start.x()));
+    m_valueDelta = m_panel->yToValue(m_curve.getPointer(), pos.y()) -
+                   m_panel->yToValue(m_curve.getPointer(), m_start.y());
+    m_panel->update();
+  }
+
+  void draw(QPainter &painter) override {
+    if (m_frameDelta == 0 && m_valueDelta == 0) return;
+    painter.setPen(m_panel->getSelectedColor());
+    for (const auto &key : m_keys)
+      painter.drawEllipse(
+          m_panel->getWinPos(m_curve.getPointer(), key.m_frame + m_frameDelta,
+                             key.m_value + m_valueDelta),
+          5, 5);
+  }
+
+  void release(QMouseEvent *e) override {
+    if (e->type() != QEvent::MouseButtonRelease ||
+        e->button() != Qt::LeftButton || e->pos() == m_start)
+      return;
+    drag(e);
+    if (m_frameDelta == 0 && m_valueDelta == 0) return;
+    auto *selection = m_panel->getSelection();
+    auto track      = selection->keyTrack(m_curve.getPointer());
+    if (!track || track->read().keys != m_initial.keys) return;
+
+    std::vector<FunctionKeyTrack::Edit> edits;
+    for (const auto &key : m_keys)
+      edits.push_back({key.m_frame, key.m_frame + m_frameDelta,
+                       m_valueDelta == 0 ? std::optional<double>{}
+                                         : std::optional<double>{
+                                               key.m_value + m_valueDelta}});
+    selection->editKeyTrack(m_curve.getPointer(), edits);
+  }
+};
+}  // namespace
+
 void FunctionPanel::mousePressEvent(QMouseEvent *e) {
   m_cursor.visible = false;
 
@@ -1264,6 +1329,33 @@ void FunctionPanel::mousePressEvent(QMouseEvent *e) {
     if (currentCurve) {
       int kIndex =
           closestGadgetId >= 0 ? m_gadgets[closestGadgetId].m_kIndex : -1;
+      if (auto track = getSelection()->keyTrack(currentCurve)) {
+        auto *selection = getSelection();
+        if (kIndex >= 0 && kIndex < currentCurve->getKeyframeCount() &&
+            handle == Point) {
+          if (!selection->isSelected(currentCurve, kIndex)) {
+            if (!(e->modifiers() & Qt::ShiftModifier))
+              selection->deselectAllKeyframes();
+            selection->select(currentCurve, kIndex);
+          }
+          emit keyframeSelected(currentCurve->keyframeIndexToFrame(kIndex));
+          if (track->canEdit())
+            m_dragTool = new NativeKeyDragTool(
+                this, currentCurve,
+                selection->getSelectedKeyIndices(currentCurve), e->pos());
+        } else if ((e->modifiers() & Qt::ControlModifier) &&
+                   getCurveDistance(currentCurve, winPos) < maxDistance) {
+          const double frame = std::round(xToFrame(winPos.x()));
+          if (!currentCurve->isKeyframe(frame))
+            selection->editKeyTrack(currentCurve, {{{}, frame, {}}});
+        } else {
+          selection->deselectAllKeyframes();
+          m_dragTool = new RectSelectTool(this, currentCurve);
+          m_dragTool->click(e);
+        }
+        update();
+        return;
+      }
       if (kIndex >= 0) {
         // keyframe clicked
         if (handle == FunctionPanel::Point) {
@@ -1519,6 +1611,17 @@ void FunctionPanel::fitGraphToWindow(bool currentCurveOnly) {
       }
     }
   }
+  if (currentCurveOnly && getSelection()->keyTrack(getCurrentCurve())) {
+    if (f0 >= f1) {
+      f0 -= 5;
+      f1 = f0 + 10;
+    }
+    if (v0 >= v1) {
+      const double pad = std::max(0.5, std::abs(v0) * 0.05);
+      v0 -= pad;
+      v1 += pad;
+    }
+  }
   if (f0 >= f1 || v0 >= v1) {
     m_viewTransform = QTransform();
     m_viewTransform.translate(m_valueAxisX, 200);
@@ -1585,6 +1688,31 @@ void FunctionPanel::openContextMenu(QMouseEvent *e) {
   if (!curve) return;
   TDoubleKeyframe kf;
   double frame = xToFrame(e->pos().x());
+  if (auto track = getSelection()->keyTrack(curve)) {
+    TDoubleParamP displayed(curve);
+    Handle handle    = None;
+    const int gadget = findClosestGadget(e->pos(), handle, 10);
+    const int index =
+        gadget >= 0 && handle == Point ? m_gadgets[gadget].m_kIndex : -1;
+    const bool keyed = index >= 0 && index < curve->getKeyframeCount();
+    const double keyFrame =
+        keyed ? curve->keyframeIndexToFrame(index) : std::round(frame);
+    QMenu menu;
+    QAction *edit = menu.addAction(keyed ? tr("Delete Key") : tr("Set Key"));
+    edit->setEnabled(track->canEdit());
+    QAction *fit    = menu.addAction(tr("Fit"));
+    QAction *action = menu.exec(e->globalPos());
+    if (action == edit) {
+      getSelection()->editKeyTrack(
+          displayed.getPointer(),
+          {keyed ? FunctionKeyTrack::Edit{keyFrame, {}, {}}
+                 : FunctionKeyTrack::Edit{{}, keyFrame, {}}});
+    } else if (action == fit) {
+      fitGraphToWindow();
+    }
+    update();
+    return;
+  }
 
   // build menu
   QMenu menu(0);

@@ -40,6 +40,8 @@
 #include "colormodelviewer.h"
 
 #include "curveio.h"
+#include "tdoubleparam.h"
+#include "toonz/txsheethandle.h"
 #include "menubarcommandids.h"
 #include "tapp.h"
 #include "mainwindow.h"
@@ -101,6 +103,16 @@
 #include "tsystem.h"
 
 // Qt includes
+#include <QCryptographicHash>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QFileSystemWatcher>
+#include <QMessageBox>
+#include <QTimer>
+
+#include <algorithm>
+
 #include <QAction>
 #include <QScreen>
 
@@ -398,11 +410,63 @@ FxPreviewCommand fxPreviewCommand;
 // FunctionViewer
 //-----------------------------------------------------------------------------
 
+struct FunctionViewerPanel::OpenCurveFile final : TParamObserver {
+  TDoubleParamP curve;
+  QString path;
+  QByteArray fingerprint;
+  bool edited    = false;
+  bool reloading = false;
+
+  explicit OpenCurveFile(TDoubleParam *parameter) : curve(parameter) {
+    curve->addObserver(this);
+  }
+  ~OpenCurveFile() override { curve->removeObserver(this); }
+  void onChange(const TParamChange &) override {
+    if (!reloading) edited = true;
+  }
+};
+
+namespace {
+QByteArray curveFingerprint(const QString &path) {
+  QFile file(path);
+  if (!file.open(QIODevice::ReadOnly)) return {};
+  QCryptographicHash hash(QCryptographicHash::Sha256);
+  return hash.addData(&file) ? hash.result() : QByteArray{};
+}
+}  // namespace
+
 FunctionViewerPanel::FunctionViewerPanel(QWidget *parent)
-    : TPanel(parent), m_functionViewer(new FunctionViewer(this)) {
+    : TPanel(parent)
+    , m_functionViewer(new FunctionViewer(this))
+    , m_curveWatcher(new QFileSystemWatcher(this)) {
   setWidget(m_functionViewer);
 
   attachHandles();
+
+  auto *app    = TApp::instance();
+  auto refresh = [this] {
+    if (m_functionViewer->isVisible()) m_functionViewer->refreshKeyTracks();
+  };
+  auto *palette = app->getPaletteController()->getCurrentLevelPalette();
+  connect(palette, &TPaletteHandle::paletteChanged, this, refresh,
+          Qt::QueuedConnection);
+  connect(palette, &TPaletteHandle::paletteSwitched, this, refresh,
+          Qt::QueuedConnection);
+  connect(palette, &TPaletteHandle::colorStyleChangedOnMouseRelease, this,
+          refresh, Qt::QueuedConnection);
+  connect(app->getCurrentScene(), &TSceneHandle::sceneChanged, this, refresh,
+          Qt::QueuedConnection);
+
+  auto *reloadTimer = new QTimer(this);
+  reloadTimer->setSingleShot(true);
+  reloadTimer->setInterval(200);
+  connect(m_curveWatcher, &QFileSystemWatcher::fileChanged, reloadTimer,
+          [reloadTimer] { reloadTimer->start(); });
+  connect(m_curveWatcher, &QFileSystemWatcher::directoryChanged, reloadTimer,
+          [reloadTimer] { reloadTimer->start(); });
+  connect(reloadTimer, &QTimer::timeout, this, [this] {
+    for (const auto &entry : m_curveFiles) reloadCurveFile(entry.first, false);
+  });
 
   bool ret =
       connect(m_functionViewer,
@@ -412,6 +476,64 @@ FunctionViewerPanel::FunctionViewerPanel(QWidget *parent)
                 SLOT(onEditObject()));
 
   assert(ret);
+}
+
+FunctionViewerPanel::~FunctionViewerPanel() = default;
+
+void FunctionViewerPanel::watchCurveFile(TDoubleParam *curve,
+                                         const QString &path) {
+  auto &entry = m_curveFiles[curve];
+  if (!entry) entry = std::make_unique<OpenCurveFile>(curve);
+  const QFileInfo info(path);
+  const QString oldPath = entry->path;
+  entry->path           = info.absoluteFilePath();
+  entry->fingerprint    = curveFingerprint(entry->path);
+  entry->edited         = false;
+  if (!oldPath.isEmpty() && oldPath != entry->path &&
+      std::none_of(m_curveFiles.begin(), m_curveFiles.end(),
+                   [&oldPath](const auto &file) {
+                     return file.second->path == oldPath;
+                   }) &&
+      m_curveWatcher->files().contains(oldPath))
+    m_curveWatcher->removePath(oldPath);
+  if (!m_curveWatcher->files().contains(entry->path))
+    m_curveWatcher->addPath(entry->path);
+  if (!m_curveWatcher->directories().contains(info.absolutePath()))
+    m_curveWatcher->addPath(info.absolutePath());
+}
+
+void FunctionViewerPanel::reloadCurveFile(TDoubleParam *curve, bool manual) {
+  const auto found = m_curveFiles.find(curve);
+  if (found == m_curveFiles.end()) return;
+  auto &file = *found->second;
+  if (QFileInfo::exists(file.path) &&
+      !m_curveWatcher->files().contains(file.path))
+    m_curveWatcher->addPath(file.path);  // File may have been replaced on save.
+  if (file.edited && !manual) return;
+  const auto fingerprint = curveFingerprint(file.path);
+  if (!manual && (fingerprint.isEmpty() || fingerprint == file.fingerprint))
+    return;
+  if (file.edited &&
+      QMessageBox::question(
+          this, tr("Reload Curve File"),
+          tr("Replace your unsaved curve edits with the data from %1?")
+              .arg(QDir::toNativeSeparators(file.path)),
+          QMessageBox::Yes | QMessageBox::Cancel,
+          QMessageBox::Cancel) != QMessageBox::Yes)
+    return;
+
+  TDoubleParam data;
+  if (!readCurveFile(file.path, &data)) {
+    if (manual) DVGui::warning(tr("It is not possible to reload the curve."));
+    return;
+  }
+  if (curveFingerprint(file.path) != fingerprint) return;
+  file.reloading = true;
+  m_functionViewer->prepareCurveFileReload(curve);
+  reloadCurveData(curve, data);
+  file.reloading   = false;
+  file.edited      = false;
+  file.fingerprint = fingerprint;
 }
 
 void FunctionViewerPanel::attachHandles() {
@@ -462,15 +584,42 @@ bool FunctionViewerPanel::widgetInThisPanelIsFocused() {
 void FunctionViewerPanel::onIoCurve(int type, TDoubleParam *curve,
                                     const std::string &name) {
   switch ((FunctionViewer::IoType)type) {
-  case FunctionViewer::eSaveCurve:
-    saveCurve(curve);
+  case FunctionViewer::eSaveCurve: {
+    const auto path = saveCurve(curve);
+    if (!path.isEmpty() && m_curveFiles.count(curve))
+      watchCurveFile(curve, path.getQString());
     break;
+  }
   case FunctionViewer::eLoadCurve:
     loadCurve(curve);
     break;
   case FunctionViewer::eExportCurve:
     exportCurve(curve, name);
     break;
+  case FunctionViewer::eOpenCurve: {
+    const auto path = chooseCurveFileToOpen(this);
+    if (path.isEmpty()) break;
+    TDoubleParamP standalone(new TDoubleParam());
+    if (!readCurveFile(path, standalone.getPointer())) {
+      DVGui::warning(tr("It is not possible to open the curve."));
+      break;
+    }
+    watchCurveFile(standalone.getPointer(), path);
+    m_functionViewer->showCurveFile(standalone.getPointer());
+    break;
+  }
+  case FunctionViewer::eReloadCurve:
+    reloadCurveFile(curve, true);
+    break;
+  case FunctionViewer::eApplyCurve: {
+    auto *app    = TApp::instance();
+    auto *xsheet = app->getCurrentXsheet()->getXsheet();
+    auto *source = m_functionViewer->chooseCurveFile();
+    if (source && xsheet == app->getCurrentXsheet()->getXsheet() &&
+        applyCurveFile(curve, source))
+      app->getCurrentScene()->notifySceneChanged();
+    break;
+  }
   default:
     assert(false);
     break;
