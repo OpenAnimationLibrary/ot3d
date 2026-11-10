@@ -88,6 +88,11 @@
   <item>"STD_inkLineFx.middleColor" "Middle Color" </item>
   <item>"STD_inkLineFx.endColor" "End Color" </item>
   <item>"STD_inkLineFx.middle" "Middle Position (%)" </item>
+  <item>"STD_inkLineFx.useSplineProfile" "Use Spline Profile" </item>
+  <item>"STD_inkLineFx.profileRange" "Profile Range" </item>
+  <item>"STD_inkLineFx.widthCurve" "Width Profile" </item>
+  <item>"STD_inkLineFx.useColorRamp" "Use Color and Opacity Ramp" </item>
+  <item>"STD_inkLineFx.colorRamp" "Color and Opacity" </item>
   <item>"STD_inkLineFx.roughness" "Roughness (%)" </item>
   <item>"STD_inkLineFx.fadeIn" "Start Fade Length (%)" </item>
   <item>"STD_inkLineFx.fadeOut" "End Fade Length (%)" </item>

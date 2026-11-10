@@ -58,9 +58,11 @@ class DVAPI ChennelCurveEditor final : public QWidget {
   QPointF m_preMousePos;
 
   bool m_isEnlarged;
+  bool m_widthCurve;
 
 public:
-  ChennelCurveEditor(QWidget *parent = 0, HistogramView *histogramView = 0);
+  ChennelCurveEditor(QWidget *parent = 0, HistogramView *histogramView = 0,
+                     bool widthCurve = false);
 
   void setPoints(QList<TPointD> points);
   QList<TPointD> getPoints();
@@ -141,9 +143,11 @@ class DVAPI ToneCurveField final : public QWidget {
   DoubleLineEdit *m_currentInput, *m_currentOutput;
   int m_currentPointIndex;
   QComboBox *m_rangeMode;
+  bool m_widthCurve;
 
 public:
-  ToneCurveField(QWidget *parent = 0, FxHistogramRender *fxHistogramRender = 0);
+  ToneCurveField(QWidget *parent = 0, FxHistogramRender *fxHistogramRender = 0,
+                 bool widthCurve = false);
 
   void setCurrentChannel(int currentChannel);
   ChennelCurveEditor *getChannelEditor(int channel) const;

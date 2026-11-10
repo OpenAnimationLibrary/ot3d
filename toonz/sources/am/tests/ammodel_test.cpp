@@ -99,6 +99,86 @@ void testInk(const otam::Mesh &filled) {
   check(otam::strokeSplines(mesh, {ink}, nullptr, identity, &canceled).empty(),
         "ink ignored cancellation");
 }
+void testSplineProfile() {
+  otam::Mesh mesh;
+  mesh.splineGroups     = {"Middle"};
+  auto &spline          = mesh.splines.emplace_back();
+  const double points[] = {0, 1, 4, 10};
+  for (int i = 0; i < 3; ++i) {
+    const double start = points[i], end = points[i + 1];
+    auto &curve = spline.curves.emplace_back();
+    for (int j = 0; j < 4; ++j)
+      curve.points[j] = {{start + j * (end - start) / 3, 0, 0}};
+  }
+  spline.curves[1].groups = {0};
+  otam::InkStyle ink;
+  ink.widths     = {{4, 4, 4}};
+  auto &profile  = ink.profile.emplace();
+  profile.width  = {{{{0, 1}, {1.0 / 6, 2}, {1.0 / 3, 2}, {0.5, 1}}},
+                    {{{0.5, 1}, {2.0 / 3, 1}, {5.0 / 6, 0}, {1, 0}}}};
+  profile.colors = {
+      {0, {{1, 0, 0, 1}}}, {0.5, {{0, 1, 0, 0.25f}}}, {1, {{0, 0, 1, 0}}}};
+  const auto identity   = otam::identity();
+  const auto whole      = otam::strokeSplines(mesh, {ink}, nullptr, identity);
+  const auto checkPoint = [](const auto &stroke, double x, double halfWidth,
+                             double green, double alpha) {
+    for (const auto &tri : stroke)
+      for (int i = 0; i < 3; ++i)
+        if (std::abs(tri.vertices[i][0] - x) < 1e-8) {
+          check(std::abs(std::abs(tri.vertices[i][1]) - halfWidth) < 1e-6,
+                "ink width profile value");
+          near(tri.colors[i][1], green);
+          near(tri.colors[i][3], alpha);
+          return;
+        }
+    throw std::runtime_error("ink profile sample missing");
+  };
+  checkPoint(whole, 5, 2, 0.25, 0.25);
+  checkPoint(whole, 2.5, 3.5, 0.3125, 0.625);
+  checkPoint(whole, 10, 0, 0, 0);
+
+  ink.group = "Middle";
+  const auto sectionOfWhole =
+      otam::strokeSplines(mesh, {ink}, nullptr, identity);
+  checkPoint(sectionOfWhole, 2.5, 3.5, 0.3125, 0.625);
+  profile.perSection = true;
+  const auto section = otam::strokeSplines(mesh, {ink}, nullptr, identity);
+  checkPoint(section, 1, 2, 0, 1);
+  checkPoint(section, 2.5, 2, 0.25, 0.25);
+  checkPoint(section, 4, 0, 0, 0);
+
+  const auto view =
+      otam::multiply(otam::translation(0, 0, -50), otam::rotation(0, 45, 0));
+  const auto p         = otam::transform(view, {{2.5, 0, 0}});
+  const auto projected = otam::strokeSplines(mesh, {ink}, &view, identity);
+  checkPoint(projected, -1000 * p[0] / p[2], 2, 0.25, 0.25);
+
+  const std::array<otam::Vec3, 4> corners{
+      {{{0, 0, 0}}, {{2, 0, 0}}, {{2, 2, 0}}, {{0, 2, 0}}}};
+  spline.closed = true;
+  spline.curves.resize(corners.size());
+  for (std::size_t i = 0; i < corners.size(); ++i) {
+    auto &curve   = spline.curves[i];
+    const auto &a = corners[i];
+    const auto &b = corners[(i + 1) % corners.size()];
+    curve.groups  = (i == 0 || i == 3) ? std::vector<std::size_t>{0}
+                                       : std::vector<std::size_t>{};
+    for (int j = 0; j < 4; ++j)
+      curve.points[j] = {
+          {a[0] + j * (b[0] - a[0]) / 3, a[1] + j * (b[1] - a[1]) / 3, 0}};
+  }
+  const auto acrossSeam = otam::strokeSplines(mesh, {ink}, nullptr, identity);
+  check(std::any_of(acrossSeam.begin(), acrossSeam.end(),
+                    [](const auto &tri) {
+                      for (int i = 0; i < 3; ++i)
+                        if (std::abs(tri.vertices[i][0] + 2) < 1e-8 &&
+                            std::abs(tri.vertices[i][1] + 2) < 1e-8 &&
+                            tri.colors[i][1] == 0.25f)
+                          return true;
+                      return false;
+                    }),
+        "closed ink section restarted at its spline seam");
+}
 }  // namespace
 int main() {
   try {
@@ -117,6 +197,7 @@ int main() {
     auto mesh = otam::previewMesh(d, 0, 2);
     check(mesh.triangles.size() == 8, "quad tessellation");
     testInk(mesh);
+    testSplineProfile();
     near(mesh.triangles[0].color[0], 1);
     near(mesh.triangles[0].color[1], 0);
     for (const auto &t : mesh.triangles)
