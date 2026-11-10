@@ -2,6 +2,7 @@
 
 #include "glbrenderer.h"
 #include "ammaterial.h"
+#include "amink.h"
 #include <memory>
 class TRenderSettings;
 class TAffine;
@@ -18,15 +19,17 @@ public:
       const otglb::LightingRig *lighting                   = nullptr,
       const std::vector<otglb::ModelTransform> *transforms = nullptr,
       const TRenderSettings *renderSettings                = nullptr,
-      const otam::MaterialBindings *materials              = nullptr) const = 0;
+      const otam::MaterialBindings *materials              = nullptr,
+      const otam::InkBindings *ink                         = nullptr) const = 0;
 
   // Bounds queries must not evaluate a raster input outside a render session.
   virtual std::shared_ptr<const otglb::RenderScene> get3DRenderGeometry(
       double frame, const int *canceled,
       const std::vector<otglb::ModelTransform> *transforms = nullptr,
-      const TRenderSettings *renderSettings                = nullptr) const {
+      const TRenderSettings *renderSettings                = nullptr,
+      const otam::InkBindings *ink                         = nullptr) const {
     return get3DRenderScene(frame, canceled, nullptr, transforms,
-                            renderSettings);
+                            renderSettings, nullptr, ink);
   }
 };
 

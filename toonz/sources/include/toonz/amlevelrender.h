@@ -1,6 +1,7 @@
 #pragma once
 #include "ammodel.h"
 #include "ammaterial.h"
+#include "amink.h"
 #include "glbrenderer.h"
 #include "tpixel.h"
 #include "trasterfx.h"
@@ -59,4 +60,5 @@ prepareNativeModelColumnRenderScene(
     const otglb::LightingRig *lighting                   = nullptr,
     const std::vector<otglb::ModelTransform> *transforms = nullptr,
     const TRenderSettings *settings                      = nullptr,
-    const otam::MaterialBindings *materials              = nullptr);
+    const otam::MaterialBindings *materials              = nullptr,
+    const otam::InkBindings *ink                         = nullptr);

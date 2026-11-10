@@ -40,7 +40,8 @@ class Merge3DFx final : public TStandardRasterFx,
       double frame, const int *canceled, const otglb::LightingRig *lighting,
       const std::vector<otglb::ModelTransform> *transforms,
       const TRenderSettings *settings, bool geometryOnly,
-      const otam::MaterialBindings *materials = nullptr) const {
+      const otam::MaterialBindings *materials = nullptr,
+      const otam::InkBindings *ink            = nullptr) const {
     auto result                  = std::make_shared<otglb::RenderScene>();
     const T3DSourcePort *ports[] = {&m_foreground, &m_background};
     TRectD bounds;
@@ -48,12 +49,18 @@ class Merge3DFx final : public TStandardRasterFx,
       if (canceled && *canceled) return {};
       auto *source = ports[i]->source();
       if (!source) continue;
-      auto child = geometryOnly ? source->get3DRenderGeometry(
-                                      frame, canceled, transforms, settings)
-                                : source->get3DRenderScene(frame, canceled,
-                                                           lighting, transforms,
-                                                           settings, materials);
-      if (!child || child->empty()) continue;
+      auto child =
+          geometryOnly
+              ? source->get3DRenderGeometry(frame, canceled, transforms,
+                                            settings, ink)
+              : source->get3DRenderScene(frame, canceled, lighting, transforms,
+                                         settings, materials, ink);
+      if (!child) continue;
+      for (const auto &group : child->splineGroups)
+        if (std::find(result->splineGroups.begin(), result->splineGroups.end(),
+                      group) == result->splineGroups.end())
+          result->splineGroups.push_back(group);
+      if (child->empty()) continue;
       const auto &a = m_affines[i];
       const auto &b = child->bounds;
       bounds += a * TRectD(b[0], b[1], b[2], b[3]);
@@ -100,15 +107,18 @@ public:
       const otglb::LightingRig *lighting                   = nullptr,
       const std::vector<otglb::ModelTransform> *transforms = nullptr,
       const TRenderSettings *settings                      = nullptr,
-      const otam::MaterialBindings *materials = nullptr) const override {
+      const otam::MaterialBindings *materials              = nullptr,
+      const otam::InkBindings *ink = nullptr) const override {
     return scene(frame, canceled, lighting, transforms, settings, false,
-                 materials);
+                 materials, ink);
   }
   std::shared_ptr<const otglb::RenderScene> get3DRenderGeometry(
       double frame, const int *canceled,
       const std::vector<otglb::ModelTransform> *transforms = nullptr,
-      const TRenderSettings *settings = nullptr) const override {
-    return scene(frame, canceled, nullptr, transforms, settings, true);
+      const TRenderSettings *settings                      = nullptr,
+      const otam::InkBindings *ink = nullptr) const override {
+    return scene(frame, canceled, nullptr, transforms, settings, true, nullptr,
+                 ink);
   }
   bool doGetBBox(double frame, TRectD &bbox,
                  const TRenderSettings &info) override {

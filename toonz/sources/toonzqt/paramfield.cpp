@@ -1709,10 +1709,10 @@ void StringParamField::enableAMMaterialGroupControls() {
       tr("Choose a group from the exposed model at the current frame."));
   m_layout->addWidget(choose);
   connect(choose, &QPushButton::clicked, this, [this]() {
-    auto *source = dynamic_cast<TFxAMMaterialSource *>(m_actualFx.getPointer());
+    auto *source = dynamic_cast<TFxAMGroupSource *>(m_actualFx.getPointer());
     if (!source) return;
     try {
-      const auto groups = source->getAMMaterialGroups(m_frame);
+      const auto groups = source->getAMGroups(m_frame);
       QStringList labels;
       labels << tr("Whole Model (no group)");
       int current = 0;
@@ -1722,9 +1722,9 @@ void StringParamField::enableAMMaterialGroupControls() {
         labels << tr("Group: %1").arg(name);
       }
       bool accepted       = false;
-      const auto selected = QInputDialog::getItem(
-          this, tr("Choose A:M Group"), tr("Apply material to:"), labels,
-          current, false, &accepted);
+      const auto selected =
+          QInputDialog::getItem(this, tr("Choose A:M Group"), tr("Apply to:"),
+                                labels, current, false, &accepted);
       if (!accepted) return;
       const int index = labels.indexOf(selected);
       if (index < 0) return;

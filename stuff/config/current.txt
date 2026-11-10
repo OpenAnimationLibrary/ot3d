@@ -77,6 +77,20 @@
   <item>"STD_amMaterialFx.diffuseSource" "Diffuse Color Source" </item>
   <item>"STD_amMaterialFx.unsupportedAttributes" "Unsupported Attributes" </item>
   <item>"STD_threePointLightFx" "Three-Point Light" </item>
+  <item>"STD_inkLineFx" "Ink Line" </item>
+  <item>"STD_inkLineFx.group" "Group (empty = whole model)" </item>
+  <item>"STD_inkLineFx.scope" "Spline Scope" </item>
+  <item>"STD_inkLineFx.profile" "Vary Width and Color" </item>
+  <item>"STD_inkLineFx.startWidth" "Width / Start Width" </item>
+  <item>"STD_inkLineFx.middleWidth" "Middle Width" </item>
+  <item>"STD_inkLineFx.endWidth" "End Width" </item>
+  <item>"STD_inkLineFx.startColor" "Color / Start Color" </item>
+  <item>"STD_inkLineFx.middleColor" "Middle Color" </item>
+  <item>"STD_inkLineFx.endColor" "End Color" </item>
+  <item>"STD_inkLineFx.middle" "Middle Position (%)" </item>
+  <item>"STD_inkLineFx.roughness" "Roughness (%)" </item>
+  <item>"STD_inkLineFx.fadeIn" "Start Fade Length (%)" </item>
+  <item>"STD_inkLineFx.fadeOut" "End Fade Length (%)" </item>
   <item>"STD_merge3DFx" "3D Merge" </item>
   <item>"STD_threePointLightFx.masterIntensity" "Master Intensity (%)" </item>
   <item>"STD_threePointLightFx.ambient" "Ambient (%)" </item>

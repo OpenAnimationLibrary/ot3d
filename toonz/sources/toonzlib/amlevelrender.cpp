@@ -310,6 +310,22 @@ public:
       hash.addData(m_geometry->amMaterials ? "AM" : "GLB");
       for (const auto &t : m_geometry->triangles)
         hash.addData(QByteArray::number(qulonglong(t.patch)) + ":");
+      hash.addData("splines:");
+      for (const auto &group : m_geometry->splineGroups) {
+        hash.addData(QByteArray::number(qulonglong(group.size())) + ":");
+        hash.addData(group.data(), int(group.size()));
+      }
+      for (const auto &spline : m_geometry->splines) {
+        hash.addData(spline.closed ? "closed" : "open");
+        for (const auto &curve : spline.curves) {
+          hash.addData(curve.patchEdge ? "patchEdge" : "freeEdge");
+          for (const auto &point : curve.points)
+            hash.addData(reinterpret_cast<const char *>(point.data()),
+                         int(3 * sizeof(double)));
+          for (const auto group : curve.groups)
+            hash.addData(QByteArray::number(qulonglong(group)) + ":");
+        }
+      }
     }
     hash.addData(reinterpret_cast<const char *>(m_camera.pose.data()),
                  int(16 * sizeof(double)));
@@ -339,7 +355,8 @@ public:
       double, const int *canceled, const otglb::LightingRig *lighting = nullptr,
       const std::vector<otglb::ModelTransform> *transforms = nullptr,
       const TRenderSettings *settings                      = nullptr,
-      const otam::MaterialBindings *materials = nullptr) const override {
+      const otam::MaterialBindings *materials              = nullptr,
+      const otam::InkBindings *ink = nullptr) const override {
     if (!m_geometry || (canceled && *canceled)) return {};
     const otglb::LightingRig dark;
     if (settings && settings->m_flatRender)
@@ -464,6 +481,13 @@ public:
                                         energy[k] * lighting->master));
       }
     }
+    std::vector<otam::InkTriangle> strokes;
+    if (ink && !mesh.splines.empty()) {
+      const auto view =
+          m_project ? otam::inverse(cameraPose) : otam::identity();
+      strokes = otam::strokeSplines(mesh, *ink, m_project ? &view : nullptr,
+                                    m_camera.imageToStage, canceled);
+    }
     if (m_project)
       mesh = otam::projected(mesh, cameraPose, m_camera.imageToStage);
     auto scene        = std::make_shared<otglb::RenderScene>();
@@ -473,16 +497,19 @@ public:
       groups.insert(patch.begin(), patch.end());
     groups.erase("");
     scene->materialGroups.assign(groups.begin(), groups.end());
+    groups = {m_geometry->splineGroups.begin(), m_geometry->splineGroups.end()};
+    groups.erase("");
+    scene->splineGroups.assign(groups.begin(), groups.end());
     scene->colorScale = {{m_colorFilter.r / 255.f, m_colorFilter.g / 255.f,
                           m_colorFilter.b / 255.f, m_colorFilter.m / 255.f}};
-    scene->triangles.reserve(mesh.triangles.size());
-    for (const auto &t : mesh.triangles) {
-      if (canceled && *canceled) return {};
-      otglb::RenderTriangle triangle;
-      triangle.color = t.color;
+    scene->triangles.reserve(mesh.triangles.size() + strokes.size());
+    const auto appendTriangle = [&](const std::array<otam::Vec3, 3> &points,
+                                    const otam::Color &color) {
+      otglb::RenderTriangle triangle{};
+      triangle.color = color;
       triangle.edges = {{true, true, true}};
       for (int i = 0; i < 3; ++i) {
-        const auto &v        = t.vertices[i];
+        const auto &v        = points[i];
         triangle.vertices[i] = {v[0], v[1], v[2]};
         if (scene->triangles.empty() && i == 0)
           scene->bounds = {{v[0], v[1], v[0], v[1]}};
@@ -492,6 +519,10 @@ public:
         scene->bounds[3] = std::max(scene->bounds[3], v[1]);
       }
       scene->triangles.push_back(triangle);
+    };
+    for (const auto &t : mesh.triangles) {
+      if (canceled && *canceled) return {};
+      appendTriangle(t.vertices, t.color);
     }
     if (!assigned.empty()) {
       struct MaterialSample {
@@ -612,6 +643,41 @@ public:
           "A:M specular highlights use a Blinn preview; Hash renderer parity "
           "is unvalidated.");
     }
+    if (!strokes.empty()) {
+      const auto first = scene->triangles.size();
+      std::vector<std::array<std::array<float, 4>, 3>> colors;
+      colors.reserve(strokes.size());
+      for (const auto &stroke : strokes) {
+        if (canceled && *canceled) return {};
+        appendTriangle(stroke.vertices, {});
+        colors.push_back(stroke.colors);
+      }
+      auto surface = std::move(scene->sampleShader);
+      std::vector<otam::Color> baseColors;
+      if (!surface) {
+        baseColors.reserve(first);
+        for (std::size_t i = 0; i < first; ++i)
+          baseColors.push_back(scene->triangles[i].color);
+      }
+      scene->sampleShader = [first, surface = std::move(surface),
+                             baseColors = std::move(baseColors),
+                             colors     = std::move(colors)](
+                                std::size_t index,
+                                const std::array<double, 3> &bary) {
+        if (index < first) {
+          if (surface) return surface(index, bary);
+          const auto &c = baseColors[index];
+          return otglb::ColorPixel{c[0], c[1], c[2], 1};
+        }
+        const auto &c          = colors[index - first];
+        const auto interpolate = [&](int channel) {
+          return float(bary[0] * c[0][channel] + bary[1] * c[1][channel] +
+                       bary[2] * c[2][channel]);
+        };
+        return otglb::ColorPixel{interpolate(0), interpolate(1), interpolate(2),
+                                 std::clamp(interpolate(3), 0.f, 1.f)};
+      };
+    }
     return scene;
   }
   bool canHandle(const TRenderSettings &, double) override { return true; }
@@ -724,7 +790,8 @@ std::shared_ptr<const otglb::RenderScene> prepareNativeModelColumnRenderScene(
     TLevelColumnFx *column, double frame, const int *canceled,
     const otglb::LightingRig *lighting,
     const std::vector<otglb::ModelTransform> *transforms,
-    const TRenderSettings *settings, const otam::MaterialBindings *materials) {
+    const TRenderSettings *settings, const otam::MaterialBindings *materials,
+    const otam::InkBindings *ink) {
   if (!column || !column->getColumn() || (canceled && *canceled)) return {};
   auto *source        = column->getColumn();
   TRasterFxP snapshot = makeNativeModelRenderFx(
@@ -732,6 +799,6 @@ std::shared_ptr<const otglb::RenderScene> prepareNativeModelColumnRenderScene(
   const auto *model =
       dynamic_cast<const T3DRenderSource *>(snapshot.getPointer());
   return model ? model->get3DRenderScene(frame, canceled, lighting, transforms,
-                                         settings, materials)
+                                         settings, materials, ink)
                : nullptr;
 }

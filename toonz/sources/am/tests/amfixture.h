@@ -34,4 +34,23 @@ DiffuseColor=255 0 0
 <BONES><BONE>Name=Retained</BONE></BONES>
 <UNKNOWN>Preserve me</UNKNOWN>
 </MODEL></OBJECTS></MODELFILE>)AM";
-}
+inline const std::string splineSource = R"AM(<MODELFILE>
+ProductVersion=19.5
+<OBJECTS><MODEL>
+Name=InkRegression
+<MESH>
+<SPLINE>
+262145 0 1 -1 -0.5 0 . .
+262145 0 2 1 -0.5 0 . .
+</SPLINE>
+<SPLINE>
+262145 0 3 -1 0.5 0 . .
+262145 0 4 1 0.5 0 . .
+</SPLINE>
+</MESH>
+<GROUPS><GROUP>
+Name=Lower
+<CPS>1 2</CPS>
+</GROUP></GROUPS>
+</MODEL></OBJECTS></MODELFILE>)AM";
+}  // namespace amtest

@@ -25,11 +25,11 @@ class T3DSourcePort final : public TRasterFxPort,
   std::shared_ptr<const otglb::RenderScene> get3DRenderScene(
       double frame, const int *canceled, const otglb::LightingRig *lighting,
       const std::vector<otglb::ModelTransform> *transforms,
-      const TRenderSettings *settings,
-      const otam::MaterialBindings *materials = nullptr) const override {
+      const TRenderSettings *settings, const otam::MaterialBindings *materials,
+      const otam::InkBindings *ink) const override {
     return prepareNativeModelColumnRenderScene(
         dynamic_cast<TLevelColumnFx *>(getFx()), frame, canceled, lighting,
-        transforms, settings, materials);
+        transforms, settings, materials, ink);
   }
 
 public:

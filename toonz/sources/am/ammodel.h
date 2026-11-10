@@ -97,11 +97,22 @@ struct Triangle {
   std::array<Vec3, 3> normals{};
   bool hasNormals = false;
 };
+struct InkCurve {
+  std::array<Vec3, 4> points;
+  std::vector<std::size_t> groups;
+  bool patchEdge = false;
+};
+struct InkSpline {
+  std::vector<InkCurve> curves;
+  bool closed = false;
+};
 struct Mesh {
   // All containing groups, independent of the palette color winner.
   std::vector<std::vector<std::string>> patchGroups;
   bool amMaterials = true;
   std::vector<Triangle> triangles;
+  std::vector<InkSpline> splines;
+  std::vector<std::string> splineGroups;
   std::vector<std::string> warnings;
 };
 
