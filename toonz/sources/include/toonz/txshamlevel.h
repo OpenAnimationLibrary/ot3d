@@ -5,6 +5,8 @@
 #include "tpalette.h"
 #include <map>
 #include <mutex>
+#include <utility>
+#include <vector>
 
 #undef DVAPI
 #undef DVVAR
@@ -15,6 +17,10 @@
 #define DVAPI DV_IMPORT_API
 #define DVVAR DV_IMPORT_VAR
 #endif
+
+namespace otam {
+struct Action;
+}
 
 // Native A:M source with scene-local edits. Column/stage objects
 // own placement and animation. No conversion to a TXshSimpleLevel or GLB.
@@ -37,6 +43,7 @@ public:
       return position == other.position && bias == other.bias;
     }
   };
+  using PointValues = std::vector<std::pair<otam::Id, PointValue>>;
 
 private:
   std::map<otam::Id, PointValue> m_pointEdits;
@@ -54,9 +61,25 @@ private:
   mutable std::map<int, TPixel32> m_colorOverrides;
   mutable std::shared_ptr<const otam::Mesh> m_renderMesh;
 
+  struct ActionSample {
+    std::weak_ptr<const otam::Action> action;
+    double seconds = 0;
+    std::shared_ptr<const otam::Model> model;
+    std::shared_ptr<const otam::Mesh> mesh;
+    std::string warning;
+  };
+  mutable ActionSample m_actionSample;
+
   void refreshPalette(const otam::Model &model, const std::string &revision);
   bool updatePaletteColorsLocked();
+  std::map<int, TPixel32> paletteColorOverridesLocked(
+      const TPalette &palette) const;
   bool updateRenderMeshLocked(const TPalette &palette) const;
+  std::shared_ptr<const otam::Mesh> meshWithColorsLocked(
+      const std::shared_ptr<const otam::Mesh> &mesh,
+      const std::map<int, TPixel32> &overrides) const;
+  void sampleActionLocked(const std::shared_ptr<const otam::Action> &action,
+                          double seconds) const;
 
 public:
   explicit TXshAMLevel(std::wstring name = L"");
@@ -74,10 +97,17 @@ public:
   void save() override {}
   std::shared_ptr<const otam::Document> document() const;
   std::shared_ptr<const otam::Model> editableModel() const;
+  std::shared_ptr<const otam::Model> actionModel(
+      const std::shared_ptr<const otam::Action> &action, double seconds) const;
   bool setControlPoint(otam::Id id, const PointValue &value,
                        const std::string &sourceRevision);
+  bool setControlPoints(const PointValues &values,
+                        const std::string &sourceRevision);
   std::shared_ptr<const otam::Mesh> mesh() const;
   std::shared_ptr<const otam::Mesh> renderMesh(int frame = 0) const;
+  std::shared_ptr<const otam::Mesh> renderMesh(
+      int frame, const std::shared_ptr<const otam::Action> &action,
+      double seconds) const;
   TPalette *getPalette() const { return m_palette.getPointer(); }
   // Called on the UI thread after palette edits. Renderers use the snapshot.
   bool updatePaletteColors();

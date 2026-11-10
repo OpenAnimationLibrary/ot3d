@@ -1,6 +1,7 @@
 
 
 #include "toonz/txshlevelcolumn.h"
+#include "amaction.h"
 
 // TnzLib includes
 #include "toonz/txshsimplelevel.h"
@@ -13,7 +14,11 @@
 #include "tstream.h"
 
 // Qt includes
+#include <QByteArray>
 #include <QRegularExpression>
+
+#include <stdexcept>
+#include <utility>
 
 //-----------------------------------------------------------------------------
 
@@ -99,6 +104,23 @@ TFx *TXshLevelColumn::getFx() const { return m_fx; }
 
 //-----------------------------------------------------------------------------
 
+AMActionBinding TXshLevelColumn::getAMAction() const {
+  const auto binding = std::atomic_load(&m_amAction);
+  return binding ? *binding : AMActionBinding{};
+}
+
+void TXshLevelColumn::setAMAction(const AMActionBinding &binding) {
+  if (binding.action &&
+      (!binding.level || !binding.level->getAMLevel() || binding.startRow < 0))
+    throw TException("A:M action: invalid column attachment");
+  std::shared_ptr<const AMActionBinding> replacement;
+  if (binding.action)
+    replacement = std::make_shared<const AMActionBinding>(binding);
+  std::atomic_store(&m_amAction, std::move(replacement));
+}
+
+//-----------------------------------------------------------------------------
+
 TXshColumn *TXshLevelColumn::clone() const {
   TXshLevelColumn *column = new TXshLevelColumn;
   column->setStatusWord(getStatusWord());
@@ -107,6 +129,7 @@ TXshColumn *TXshLevelColumn::clone() const {
   column->m_first = m_first;
   column->setColorTag(getColorTag());
   column->setColorFilterId(getColorFilterId());
+  column->setAMAction(getAMAction());
 
   return column;
 }
@@ -161,6 +184,28 @@ void TXshLevelColumn::loadData(TIStream &is) {
         }
         is.closeChild();
       }
+    } else if (tagName == "amAction") {
+      if (getAMAction().action)
+        throw TException("A:M action: duplicate column attachment");
+      TPersist *persist = nullptr;
+      AMActionBinding binding;
+      std::string encoded;
+      is >> persist >> binding.path >> binding.startRow >> encoded;
+      auto *level = dynamic_cast<TXshLevel *>(persist);
+      if (!level || !level->getAMLevel() || binding.startRow < 0 ||
+          encoded.size() > (otam::Limits().bytes + 2) / 3 * 4)
+        throw TException("A:M action: invalid column attachment");
+      const auto bytes =
+          QByteArray::fromBase64(QByteArray::fromStdString(encoded),
+                                 QByteArray::AbortOnBase64DecodingErrors);
+      try {
+        binding.action = std::make_shared<const otam::Action>(
+            otam::parseAction(bytes.toStdString()));
+      } catch (const std::runtime_error &e) {
+        throw TException(e.what());
+      }
+      binding.level = level;
+      setAMAction(binding);
     } else if (tagName == "fx") {
       TPersist *p = nullptr;
       is >> p;
@@ -242,6 +287,15 @@ void TXshLevelColumn::saveData(TOStream &os) {
       r += n - 1;
     }
     os.closeChild();
+  }
+
+  const auto binding = getAMAction();
+  if (binding.action) {
+    const auto bytes =
+        QByteArray::fromStdString(otam::writeAction(*binding.action));
+    // Keep the native ACTIONFILE payload separate from the scene's tags.
+    os.child("amAction") << binding.level.getPointer() << binding.path
+                         << binding.startRow << bytes.toBase64().toStdString();
   }
 
   os.child("fx") << m_fx;
