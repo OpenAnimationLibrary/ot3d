@@ -114,6 +114,28 @@ void ensureHelpActions(QMenu *helpMenu) {
   enableQuicklinkEditing(helpMenu);
 }
 
+bool menuContainsAction(QMenu *menu, QAction *target) {
+  for (QAction *action : menu->actions()) {
+    if (action == target) return true;
+    if (action->menu() && menuContainsAction(action->menu(), target))
+      return true;
+  }
+  return false;
+}
+
+void ensureAlignmentPanelAction(QMenu *windowsMenu) {
+  QAction *alignment =
+      CommandManager::instance()->getAction(MI_OpenAlignmentPanel);
+  if (!alignment || menuContainsAction(windowsMenu, alignment)) return;
+
+  QAction *customPanels =
+      CommandManager::instance()->getAction(MI_OpenCustomPanels);
+  if (windowsMenu->actions().contains(customPanels))
+    windowsMenu->insertAction(customPanels, alignment);
+  else
+    windowsMenu->addAction(alignment);
+}
+
 }  // namespace
 
 //=============================================================================
@@ -305,6 +327,14 @@ void StackedMenuBar::createMenuBarByName(const QString &roomName) {
   /* OSX では stacked menu が動いていないのでとりあえず full のみ作成する */
   addWidget(createFullMenuBar());
 #endif
+  // Legacy room menus also need the panel when no saved menu is available.
+  QMenuBar *menuBar = qobject_cast<QMenuBar *>(widget(count() - 1));
+  if (menuBar) {
+    for (QAction *action : menuBar->actions()) {
+      if (action->menu() && action->menu()->title() == tr("Windows"))
+        ensureAlignmentPanelAction(action->menu());
+    }
+  }
 }
 
 //---------------------------------------------------------------------------------
@@ -348,6 +378,7 @@ QMenuBar *StackedMenuBar::loadMenuBar(const TFilePath &fp) {
             // built-in command without replacing the user's customized menu.
             if (title == QStringLiteral("Help")) ensureHelpActions(menu);
             if (title == QStringLiteral("Windows")) {
+              ensureAlignmentPanelAction(menu);
               auto *library = CommandManager::instance()->getAction(
                   MI_OpenPrimitiveLibrary);
               if (library && !menu->actions().contains(library))
@@ -1570,6 +1601,7 @@ QMenuBar *StackedMenuBar::createFullMenuBar() {
 #endif
   addMenuItem(windowsMenu, MI_StartupPopup);
   addMenuItem(windowsMenu, MI_OpenGuidedDrawingControls);
+  addMenuItem(windowsMenu, MI_OpenAlignmentPanel);
   addMenuItem(windowsMenu, MI_OpenCustomPanels);
   // windowsMenu->addSeparator();
   // addMenuItem(windowsMenu, MI_OpenExport);
