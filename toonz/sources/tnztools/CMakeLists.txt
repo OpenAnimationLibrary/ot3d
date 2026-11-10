@@ -78,6 +78,7 @@ set(SOURCES
     toolutils.cpp
     bendertool.cpp
     bluredbrush.cpp
+    alignmentselection.cpp
     amcontrolpointeditortool.cpp
     controlpointeditortool.cpp
     cuttertool.cpp

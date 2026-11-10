@@ -1776,7 +1776,7 @@ public:
     panel->setIsMaximizable(false);
     panel->setObjectName(getPanelType());
     panel->setWindowTitle(QObject::tr("Align and Distribute"));
-    panel->setMinimumSize(235, 198);
+    panel->setMinimumSize(235, 218);
     return panel;
   }
   void initialize(TPanel *panel) override {}

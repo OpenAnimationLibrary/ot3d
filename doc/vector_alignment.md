@@ -44,6 +44,24 @@ Point edits use the existing editor's handle movement and undo implementation;
 selection-preserving undo is enabled only for the new alignment operations.
 Panel state never enables or disables another component's global actions.
 
+## OT3D columns and A:M control points
+
+- Select column headers in the Xsheet or Timeline. The panel measures exposed
+  content at the current frame in stage X/Y, before camera projection or FX.
+  The first and last column references follow Xsheet column order. Alignment
+  keys column position, including compensation for movement inherited from
+  another selected column. The underlying drawings and exposure timing are
+  preserved. Locked, hidden, empty and unsupported columns are skipped.
+- With the Control Point Editor on an A:M model, use Shift-click or marquee
+  selection to select point heads. Alignment works on the model's local X/Y
+  plane even when the column or camera is rotated. It preserves each point's
+  local Z and spline bias. Welded occurrences follow their shared point head.
+  With an attached Action, the command keys the changed points at the current
+  Action time. Otherwise it edits the model using the same path as a drag.
+- Both targets need two eligible items to align and three to distribute.
+  Distribution uses Selection Area and spaces centers. One undo restores
+  the complete edit.
+
 ## Validation
 
 The standalone numerical regression checks cover all eight operations,

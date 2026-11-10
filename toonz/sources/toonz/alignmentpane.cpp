@@ -1,8 +1,11 @@
 // Panel and icons adapted from manongjohn, Tahoma2D PR #1275.
 #include "alignmentpane.h"
+#include "columnselection.h"
 #include "menubarcommandids.h"
 #include "tapp.h"
 
+#include "toonz/tframehandle.h"
+#include "toonz/txsheethandle.h"
 #include "toonz/txshlevelhandle.h"
 #include "toonz/txshleveltypes.h"
 
@@ -15,7 +18,6 @@
 
 #include <QComboBox>
 #include <QPushButton>
-#include <QButtonGroup>
 #include <QGridLayout>
 #include <QBoxLayout>
 #include <QGroupBox>
@@ -27,9 +29,8 @@ AlignmentPane::AlignmentPane(QWidget* parent, Qt::WindowFlags flags)
     : QFrame(parent, flags) {
   setObjectName("AlignmentPanel");
 
-  m_alignMethodCB = new QComboBox();
-  m_alignMethodCB->addItem(tr("Selection Area"));
-  m_alignMethodCB->setCurrentIndex(0);
+  m_targetLabel   = new QLabel(this);
+  m_alignMethodCB = new QComboBox(this);
 
   QAction* action;
   m_alignLeftBtn = new QPushButton(createQIcon("select_align_left"), 0, this);
@@ -97,9 +98,10 @@ AlignmentPane::AlignmentPane(QWidget* parent, Qt::WindowFlags flags)
   mainlayout->setMargin(5);
   mainlayout->setSpacing(2);
   {
-    mainlayout->addWidget(new QLabel(tr("Relative to: ")), 0, 0,
+    mainlayout->addWidget(m_targetLabel, 0, 0, 1, 2);
+    mainlayout->addWidget(new QLabel(tr("Relative to: ")), 1, 0,
                           Qt::AlignRight);
-    mainlayout->addWidget(m_alignMethodCB, 0, 1);
+    mainlayout->addWidget(m_alignMethodCB, 1, 1);
 
     QGroupBox* alignBox      = new QGroupBox(tr("Align"), this);
     QGridLayout* alignLayout = new QGridLayout();
@@ -115,7 +117,7 @@ AlignmentPane::AlignmentPane(QWidget* parent, Qt::WindowFlags flags)
       alignLayout->addWidget(m_alignBottomBtn, 1, 2, Qt::AlignCenter);
     }
     alignBox->setLayout(alignLayout);
-    mainlayout->addWidget(alignBox, 1, 0, 1, 2);
+    mainlayout->addWidget(alignBox, 2, 0, 1, 2);
 
     QGroupBox* distributeBox      = new QGroupBox(tr("Distribute"), this);
     QGridLayout* distributeLayout = new QGridLayout();
@@ -126,7 +128,7 @@ AlignmentPane::AlignmentPane(QWidget* parent, Qt::WindowFlags flags)
       distributeLayout->addWidget(m_distributeVBtn, 0, 1, Qt::AlignCenter);
     }
     distributeBox->setLayout(distributeLayout);
-    mainlayout->addWidget(distributeBox, 2, 0, 1, 2);
+    mainlayout->addWidget(distributeBox, 3, 0, 1, 2);
   }
 
   setLayout(mainlayout);
@@ -141,38 +143,72 @@ AlignmentPane::AlignmentPane(QWidget* parent, Qt::WindowFlags flags)
 //-----------------------------------------------------------------------------
 
 void AlignmentPane::updateButtons() {
-  TTool* tool  = TApp::instance()->getCurrentTool()->getTool();
-  bool strokes = tool && tool->getName() == T_Selection;
-  bool points  = tool && tool->getName() == T_ControlPointEditor;
-  int method   = tool ? tool->getAlignMethod() : VectorAlignment::SELECT_AREA;
-  QStringList inputs;
-  inputs << tr("Selection Area") << tr("First Selected") << tr("Last Selected");
-  if (strokes)
-    inputs << tr("Smallest Object") << tr("Largest Object")
-           << tr("Camera Area");
-  if (method >= inputs.size()) method = VectorAlignment::SELECT_AREA;
-  {
-    QSignalBlocker blocker(m_alignMethodCB);
-    m_alignMethodCB->clear();
-    m_alignMethodCB->addItems(inputs);
-    m_alignMethodCB->setCurrentIndex(method);
+  using namespace VectorAlignment;
+  auto* app          = TApp::instance();
+  auto* tool         = app->getCurrentTool()->getTool();
+  auto* selection    = app->getCurrentSelection()->getSelection();
+  auto* target       = dynamic_cast<AlignmentSelection*>(selection);
+  const bool columns = dynamic_cast<TColumnSelection*>(target) != nullptr;
+  const bool modelPoints =
+      !columns && (target || (tool && tool->getName() == T_ControlPointEditor &&
+                              tool->getTargetType() == TTool::AMModel));
+  const bool strokes = !target && tool && tool->getName() == T_Selection;
+  const bool points  = !target && !modelPoints && tool &&
+                      tool->getName() == T_ControlPointEditor;
+  const auto method = target ? target->alignmentMethod()
+                      : tool ? tool->getAlignMethod()
+                             : SELECT_AREA;
+
+  if (columns) {
+    m_targetLabel->setText(tr("Columns (Stage X/Y)"));
+    m_targetLabel->setToolTip(
+        tr("Uses the bounds of the current frame's exposed content and "
+           "sets column position keys in the Xsheet."));
+  } else if (modelPoints) {
+    m_targetLabel->setText(tr("A:M Control Points (Model X/Y)"));
+    m_targetLabel->setToolTip(
+        tr("Uses the model's local X and Y axes and preserves each point's "
+           "Z coordinate. With an Action attached, sets position keys."));
+  } else {
+    m_targetLabel->setText(strokes  ? tr("Vector Strokes")
+                           : points ? tr("Vector Control Points")
+                                    : QString());
+    m_targetLabel->setToolTip({});
   }
-  TSelection* selection =
-      TApp::instance()->getCurrentSelection()->getSelection();
-  bool enabled = (strokes || points) && tool->isEnabled() && selection &&
-                 !selection->isEmpty();
-  m_alignMethodCB->setEnabled(strokes || points);
+  m_targetLabel->setVisible(!m_targetLabel->text().isEmpty());
+
+  {
+    const QSignalBlocker blocker(m_alignMethodCB);
+    m_alignMethodCB->clear();
+    m_alignMethodCB->addItem(tr("Selection Area"), SELECT_AREA);
+    m_alignMethodCB->addItem(
+        columns ? tr("First Column") : tr("First Selected"), FIRST_SELECTED);
+    m_alignMethodCB->addItem(columns ? tr("Last Column") : tr("Last Selected"),
+                             LAST_SELECTED);
+    if (strokes || columns) {
+      m_alignMethodCB->addItem(tr("Smallest Object"), SMALLEST_OBJECT);
+      m_alignMethodCB->addItem(tr("Largest Object"), LARGEST_OBJECT);
+    }
+    if (strokes) m_alignMethodCB->addItem(tr("Camera Area"), CAMERA_AREA);
+    const auto index = m_alignMethodCB->findData(method);
+    m_alignMethodCB->setCurrentIndex(index < 0 ? 0 : index);
+  }
+
+  const bool enabled = (strokes || points) && tool->isEnabled() && selection &&
+                       !selection->isEmpty();
+  const auto count = target ? target->alignmentCount() : 0;
+  m_alignMethodCB->setEnabled(target || strokes || points);
   QPushButton* buttons[] = {
       m_alignLeftBtn,    m_alignRightBtn,   m_alignTopBtn,    m_alignBottomBtn,
       m_alignCenterHBtn, m_alignCenterVBtn, m_distributeHBtn, m_distributeVBtn};
   for (int i = 0; i < 8; ++i) {
-    QAction* action = buttons[i]->actions().front();
-    bool available  = enabled && action->isEnabled();
-    if (i >= 6)
-      available =
-          available && (method == VectorAlignment::SELECT_AREA ||
-                        (strokes && method == VectorAlignment::CAMERA_AREA));
-    buttons[i]->setEnabled(available);
+    const bool distribute = i >= 6;
+    bool available        = target ? count >= (distribute ? 3u : 2u) : enabled;
+    if (distribute)
+      available = available &&
+                  (method == SELECT_AREA || (strokes && method == CAMERA_AREA));
+    buttons[i]->setEnabled(available &&
+                           buttons[i]->actions().front()->isEnabled());
   }
 }
 
@@ -197,6 +233,14 @@ void AlignmentPane::showEvent(QShowEvent*) {
                        SIGNAL(selectionChanged(TSelection*)), this,
                        SLOT(onSelectionChanged()));
   assert(ret);
+  connect(app->getCurrentFrame(), &TFrameHandle::frameSwitched, this,
+          &AlignmentPane::updateButtons);
+  connect(app->getCurrentFrame(), &TFrameHandle::isPlayingStatusChanged, this,
+          &AlignmentPane::updateButtons);
+  connect(app->getCurrentXsheet(), &TXsheetHandle::xsheetChanged, this,
+          &AlignmentPane::updateButtons);
+  connect(app->getCurrentXsheet(), &TXsheetHandle::xsheetSwitched, this,
+          &AlignmentPane::updateButtons);
   updateButtons();
 }
 
@@ -206,6 +250,8 @@ void AlignmentPane::hideEvent(QHideEvent*) {
   TApp* app = TApp::instance();
 
   disconnect(app->getCurrentLevel(), 0, this, 0);
+  disconnect(app->getCurrentFrame(), nullptr, this, nullptr);
+  disconnect(app->getCurrentXsheet(), nullptr, this, nullptr);
   disconnect(app->getCurrentTool(), 0, this, 0);
   disconnect(app->getCurrentSelection(), 0, this, 0);
 }
@@ -221,10 +267,18 @@ void AlignmentPane::onToolSwitched() { updateButtons(); }
 //-----------------------------------------------------------------------------
 
 void AlignmentPane::onAlignMethodChanged(int index) {
-  TTool* tool = TApp::instance()->getCurrentTool()->getTool();
-  if (!tool) return;
-  tool->setAlignMethod(static_cast<VectorAlignment::Method>(index));
-  TApp::instance()->getCurrentTool()->notifyToolChanged();
+  if (index < 0) return;
+  auto* app         = TApp::instance();
+  const auto method = static_cast<VectorAlignment::Method>(
+      m_alignMethodCB->itemData(index).toInt());
+  auto* selection = app->getCurrentSelection()->getSelection();
+  if (auto* target = dynamic_cast<AlignmentSelection*>(selection)) {
+    target->setAlignmentMethod(method);
+    updateButtons();
+  } else if (auto* tool = app->getCurrentTool()->getTool()) {
+    tool->setAlignMethod(method);
+    app->getCurrentTool()->notifyToolChanged();
+  }
 }
 
 //-----------------------------------------------------------------------------

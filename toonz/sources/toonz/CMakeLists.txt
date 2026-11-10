@@ -275,6 +275,7 @@ set(SOURCES
     viewerpane.cpp
     castselection.cpp
     cellselection.cpp
+    columnalignment.cpp
     columnselection.cpp
     fileselection.cpp
     filmstripselection.cpp

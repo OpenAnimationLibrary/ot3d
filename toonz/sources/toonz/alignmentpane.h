@@ -10,11 +10,12 @@
 
 class QComboBox;
 class QPushButton;
-class QButtonGroup;
+class QLabel;
 
 class AlignmentPane final : public QFrame {
   Q_OBJECT
 
+  QLabel *m_targetLabel;
   QComboBox *m_alignMethodCB;
 
   QPushButton *m_alignLeftBtn, *m_alignRightBtn, *m_alignTopBtn,
@@ -25,14 +26,12 @@ public:
   AlignmentPane(QWidget *parent = 0, Qt::WindowFlags flags = Qt::WindowFlags());
   ~AlignmentPane(){};
 
-private:
-  void updateButtons();
-
 protected:
   void showEvent(QShowEvent *) override;
   void hideEvent(QHideEvent *) override;
 
 protected slots:
+  void updateButtons();
   void onLevelSwitched(TXshLevel *);
   void onToolSwitched();
   void onSelectionChanged();

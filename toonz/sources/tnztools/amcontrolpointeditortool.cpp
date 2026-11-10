@@ -1,6 +1,8 @@
 #include "amaction.h"
+#include "tools/alignmentselection.h"
 #include "tools/tool.h"
 #include "tools/toolcommandids.h"
+#include "tools/toolhandle.h"
 #include "toonz/amlevelrender.h"
 #include "toonz/stage2.h"
 #include "toonz/tcolumnhandle.h"
@@ -10,7 +12,7 @@
 #include "toonz/txshamlevel.h"
 #include "toonz/txshlevelcolumn.h"
 #include "toonz/txsheethandle.h"
-#include "toonzqt/selection.h"
+#include "toonzqt/tselectionhandle.h"
 #include "historytypes.h"
 #include "tgl.h"
 #include "tundo.h"
@@ -51,6 +53,7 @@ class UndoAMPoints final : public TUndo {
   PointValues m_before, m_after;
   std::string m_revision;
   bool m_bias;
+  QString m_history;
 
   void apply(const PointValues &values) const {
     if (m_level->setControlPoints(values, m_revision))
@@ -59,12 +62,13 @@ class UndoAMPoints final : public TUndo {
 
 public:
   UndoAMPoints(TXshAMLevelP level, PointValues before, PointValues after,
-               std::string revision, bool bias)
+               std::string revision, bool bias, QString history = {})
       : m_level(level)
       , m_before(std::move(before))
       , m_after(std::move(after))
       , m_revision(std::move(revision))
-      , m_bias(bias) {}
+      , m_bias(bias)
+      , m_history(std::move(history)) {}
 
   int getSize() const override {
     return int(sizeof(*this) + m_revision.size() +
@@ -74,6 +78,7 @@ public:
   void undo() const override { apply(m_before); }
   void redo() const override { apply(m_after); }
   QString getHistoryString() override {
+    if (!m_history.isEmpty()) return m_history;
     if (m_bias) return QObject::tr("Adjust A:M Spline Bias");
     return m_before.size() > 1 ? QObject::tr("Move A:M Control Points")
                                : QObject::tr("Move A:M Control Point");
@@ -90,6 +95,7 @@ class UndoAMPositionKey final : public TUndo {
   TXshLevelColumnP m_column;
   AMActionBinding m_before, m_after;
   bool m_removed, m_multiple;
+  QString m_history;
 
   void apply(const AMActionBinding &expected,
              const AMActionBinding &replacement) const {
@@ -104,12 +110,14 @@ class UndoAMPositionKey final : public TUndo {
 
 public:
   UndoAMPositionKey(TXshLevelColumnP column, AMActionBinding before,
-                    AMActionBinding after, bool removed, bool multiple)
+                    AMActionBinding after, bool removed, bool multiple,
+                    QString history)
       : m_column(std::move(column))
       , m_before(std::move(before))
       , m_after(std::move(after))
       , m_removed(removed)
-      , m_multiple(multiple) {}
+      , m_multiple(multiple)
+      , m_history(std::move(history)) {}
 
   int getSize() const override {
     std::size_t bytes = sizeof(*this) + m_after.action->defaultModel.size();
@@ -122,6 +130,7 @@ public:
   void undo() const override { apply(m_after, m_before); }
   void redo() const override { apply(m_before, m_after); }
   QString getHistoryString() override {
+    if (!m_history.isEmpty()) return m_history;
     if (m_removed)
       return m_multiple ? QObject::tr("Remove A:M Position Keys")
                         : QObject::tr("Remove A:M Position Key");
@@ -173,12 +182,12 @@ struct ActionEdit {
     return replace(updated);
   }
 
-  void finish(bool multiple, bool removed = false) const {
+  void finish(bool multiple, bool removed = false, QString history = {}) const {
     if (before.action == after.action ||
         !sameBinding(column->getAMAction(), after))
       return;
-    TUndoManager::manager()->add(
-        new UndoAMPositionKey(column, before, after, removed, multiple));
+    TUndoManager::manager()->add(new UndoAMPositionKey(
+        column, before, after, removed, multiple, std::move(history)));
     notifyModelChanged(*after.level->getAMLevel());
   }
 };
@@ -398,12 +407,108 @@ class AMControlPointEditor final : public TTool {
     }
   }
 
+  // Keep the selection in the tool so dragging, key editing and alignment
+  // always address the same welded point heads.
+  class PointSelection final : public AlignmentSelection {
+    AMControlPointEditor &m_editor;
+
+    void align(VectorAlignment::Type type) override {
+      m_editor.alignPoints(type, alignmentMethod());
+    }
+
+  public:
+    explicit PointSelection(AMControlPointEditor &editor) : m_editor(editor) {}
+    bool isEmpty() const override { return m_editor.m_selectedHeads.empty(); }
+    void selectNone() override { m_editor.setSelection({}); }
+    std::size_t alignmentCount() const override {
+      return m_editor.canAlignPoints() ? m_editor.m_selectedHeads.size() : 0;
+    }
+  };
+
+  PointSelection m_pointSelection{*this};
+  std::vector<std::size_t> m_selectionOrder;
+
+  bool canAlignPoints() const {
+    const auto active = currentTarget();
+    return getApplication()->getCurrentTool()->getTool() == this &&
+           !isDragging() && active.level && m_drawTarget == active &&
+           getViewer() && m_drawViewer == getViewer() &&
+           !getViewer()->isPreviewEnabled() &&
+           m_revision == active.level->revision() &&
+           (!actionBinding(active).action ||
+            keyTime(active, actionBinding(active)) >= 0);
+  }
+
+  void alignPoints(VectorAlignment::Type type, VectorAlignment::Method method) {
+    if (!canAlignPoints() || m_selectionOrder.size() < 2) return;
+    const auto active = currentTarget();
+    const auto model  = amModelAt(active.xsheet, active.column, active.row);
+    if (!model || *m_selectedHeads.rbegin() >= model->points.size()) return;
+
+    std::vector<TRectD> boxes;
+    for (auto head : m_selectionOrder) {
+      const auto &p = model->points[head].position;
+      boxes.emplace_back(p[0], p[1], p[0], p[1]);
+    }
+    const auto deltas     = VectorAlignment::offsets(boxes, type, method);
+    const bool actionMode = bool(actionBinding(active).action);
+    auto action           = actionMode ? beginActionEdit(active) : std::nullopt;
+    if (actionMode && !action) return;
+
+    PointValues before, after;
+    PositionOffsets keyOffsets;
+    for (std::size_t i = 0; i < deltas.size(); ++i) {
+      const auto head   = m_selectionOrder[i];
+      const auto &point = model->points[head];
+      auto position     = point.position;
+      position[0] += deltas[i].x;
+      position[1] += deltas[i].y;
+      if (position == point.position) continue;
+
+      if (action) {
+        keyOffsets.emplace(
+            point.id,
+            offsetFrom(position, action->rest->points[head].position));
+      } else {
+        before.emplace_back(
+            point.id, TXshAMLevel::PointValue{point.position, point.bias});
+        after.emplace_back(point.id,
+                           TXshAMLevel::PointValue{position, point.bias});
+      }
+    }
+
+    const auto history = VectorAlignment::isDistribution(type)
+                             ? QObject::tr("Distribute A:M Control Points")
+                             : QObject::tr("Align A:M Control Points");
+    if (action) {
+      if (keyOffsets.empty() || !action->setPositions(keyOffsets)) return;
+      action->finish(true, false, history);
+    } else {
+      if (after.empty() || !active.level->setControlPoints(after, m_revision))
+        return;
+      TUndoManager::manager()->add(
+          new UndoAMPoints(active.level, std::move(before), std::move(after),
+                           m_revision, false, history));
+      notifyModelChanged(*active.level);
+    }
+    invalidate();
+  }
+
   void setSelection(HeadSelection heads) {
     if (m_selectedHeads == heads) return;
+    m_selectionOrder.erase(
+        std::remove_if(m_selectionOrder.begin(), m_selectionOrder.end(),
+                       [&](auto head) { return !heads.count(head); }),
+        m_selectionOrder.end());
+    for (auto head : heads)
+      if (!m_selectedHeads.count(head)) m_selectionOrder.push_back(head);
     m_selectedHeads = std::move(heads);
     m_occurrence.reset();
     if (m_selectedHeads.size() == 1) m_occurrence = *m_selectedHeads.begin();
     m_handles.clear();
+    invalidate();
+    if (TSelection::getCurrent() == &m_pointSelection)
+      TSelectionHandle::getCurrent()->notifySelectionChanged();
   }
 
   void finishBox(const TPointD &pos) {
@@ -596,6 +701,7 @@ public:
 
   void onDeactivate() override {
     finishDrag();
+    m_pointSelection.makeNotCurrent();
     setSelection({});
     m_selectionBox.reset();
     m_drawTarget = {};
@@ -629,6 +735,8 @@ public:
         active.xsheet != m_drawTarget.xsheet ||
         active.column != m_drawTarget.column || revision != m_revision)
       setSelection({});
+    const bool targetChanged =
+        !(m_drawTarget == active) || m_drawViewer != viewer;
     m_drawTarget = active;
     m_drawViewer = viewer;
     m_revision   = revision;
@@ -711,6 +819,8 @@ public:
     }
     glPopMatrix();
     glPopAttrib();
+    if (targetChanged && TSelection::getCurrent() == &m_pointSelection)
+      TSelectionHandle::getCurrent()->notifySelectionChanged();
   }
 
   void leftButtonDown(const TPointD &, const TMouseEvent &event) override {
@@ -754,7 +864,7 @@ public:
       }
     }
 
-    TSelection::setCurrent(nullptr);
+    m_pointSelection.makeCurrent();
     if (!hit) {
       m_selectionBox = SelectionBox{active, event.m_pos, event.m_pos,
                                     event.isShiftPressed()};
@@ -792,6 +902,8 @@ public:
       updateDrag(event, true);
       finishDrag();
     }
+    if (TSelection::getCurrent() == &m_pointSelection)
+      TSelectionHandle::getCurrent()->notifySelectionChanged();
   }
 
   void addContextMenuItems(QMenu *menu) override {
@@ -842,6 +954,7 @@ public:
     if (m_selectionBox) {
       m_selectionBox.reset();
       invalidate();
+      TSelectionHandle::getCurrent()->notifySelectionChanged();
       return true;
     }
     auto drag = std::move(*m_drag);
@@ -851,6 +964,7 @@ public:
     else if (!(drag.before == drag.after))
       drag.target.level->setControlPoints(drag.before, drag.revision);
     invalidate();
+    TSelectionHandle::getCurrent()->notifySelectionChanged();
     return true;
   }
 };
