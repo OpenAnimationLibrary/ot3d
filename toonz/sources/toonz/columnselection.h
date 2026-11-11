@@ -3,7 +3,7 @@
 #ifndef TCOLUMNSELECTION_H
 #define TCOLUMNSELECTION_H
 
-#include "toonzqt/selection.h"
+#include "tools/alignmentselection.h"
 #include "tgeometry.h"
 #include <set>
 #include "toonz/txshlevel.h"
@@ -14,9 +14,11 @@ class ReframePopup;
 // TColumnSelection
 //-----------------------------------------------------------------------------
 
-class TColumnSelection final : public TSelection {
+class TColumnSelection final : public AlignmentSelection {
   std::set<int> m_indices;
   ReframePopup *m_reframePopup;
+
+  void align(VectorAlignment::Type type) override;
 
 public:
   TColumnSelection();
@@ -31,6 +33,7 @@ public:
   const std::set<int> &getIndices() const { return m_indices; }
 
   void enableCommands() override;
+  std::size_t alignmentCount() const override;
   void setAlternativeCommandNames();
 
   void copyColumns();

@@ -43,6 +43,7 @@ TColumnSelection::~TColumnSelection() {}
 //-----------------------------------------------------------------------------
 
 void TColumnSelection::enableCommands() {
+  AlignmentSelection::enableCommands();
   enableCommand(this, MI_Cut, &TColumnSelection::cutColumns);
   enableCommand(this, MI_Copy, &TColumnSelection::copyColumns);
   enableCommand(this, MI_Paste, &TColumnSelection::pasteColumns);
