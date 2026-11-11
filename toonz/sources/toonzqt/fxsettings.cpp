@@ -151,6 +151,7 @@ void ParamsPage::setPageField(TIStream &is, const TFxP &fx, bool isVertical) {
         decimals = QString::fromStdString(decimalsStr).toInt();
       }
 
+      const bool widthCurve = is.getTagAttribute("curve") == "width";
       std::string name;
       is >> name;
       is.matchEndTag();
@@ -164,7 +165,7 @@ void ParamsPage::setPageField(TIStream &is, const TFxP &fx, bool isVertical) {
         std::string paramName = fx->getFxType() + "." + name;
         QString str =
             QString::fromStdWString(TStringTable::translate(paramName));
-        ParamField *field = ParamField::create(this, str, param);
+        ParamField *field = ParamField::create(this, str, param, widthCurve);
         if (paramName == "STD_glbModelFx.modelFile") {
           if (auto stringField = dynamic_cast<StringParamField *>(field))
             stringField->enableGlbFileControls();

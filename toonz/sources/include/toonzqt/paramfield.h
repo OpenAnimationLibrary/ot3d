@@ -92,8 +92,8 @@ public:
   // asset. Ordinary parameter fields need no FX-specific knowledge.
   virtual void setFx(const TFxP &current, const TFxP &actual) {}
 
-  static ParamField *create(QWidget *parent, QString name,
-                            const TParamP &param);
+  static ParamField *create(QWidget *parent, QString name, const TParamP &param,
+                            bool widthCurve = false);
 
   virtual void setPointValue(const TPointD &p){};
 
@@ -716,7 +716,7 @@ class DVAPI ToneCurveParamField final
 
 public:
   ToneCurveParamField(QWidget *parent, QString name,
-                      const TToneCurveParamP &param);
+                      const TToneCurveParamP &param, bool widthCurve = false);
 
   void updateField(const QList<TPointD> value) override;
 

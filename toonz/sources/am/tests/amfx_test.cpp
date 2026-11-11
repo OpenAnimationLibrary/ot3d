@@ -120,6 +120,29 @@ void testInkLine(const QString &path) {
   const double lower = coverage(render(scene, info));
   require(lower > 0 && lower < whole,
           "spline group did not limit the rendered ink");
+  const auto flag = [&](const char *name) {
+    return dynamic_cast<TBoolParam *>(ink.getParams()->getParam(name));
+  };
+  auto *width =
+      dynamic_cast<TToneCurveParam *>(ink.getParams()->getParam("widthCurve"));
+  auto *ramp =
+      dynamic_cast<TSpectrumParam *>(ink.getParams()->getParam("colorRamp"));
+  require(flag("useSplineProfile") && flag("useColorRamp") && width && ramp,
+          "Ink Line spline profile controls are missing");
+  flag("useSplineProfile")->setValue(true);
+  require(coverage(render(scene, info)) == lower,
+          "default spline profile changed ink coverage");
+  auto points = width->getValue(0);
+  for (auto &point : points) point.y = 255;
+  width->setDefaultValue(points);
+  const double wide = coverage(render(scene, info));
+  require(wide > lower * 1.5, "spline profile did not widen rendered ink");
+  flag("useColorRamp")->setValue(true);
+  ramp->setDefaultValue(
+      TSpectrum(TPixel32(0, 0, 0, 64), TPixel32(0, 0, 0, 64)));
+  require(coverage(render(scene, info)) < wide * 0.4,
+          "color ramp did not affect rendered opacity");
+  flag("useSplineProfile")->setValue(false);
   set(ink, "fadeIn", 100);
   require(coverage(render(scene, info)) < lower,
           "ink fade did not affect output opacity");

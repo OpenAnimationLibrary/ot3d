@@ -2,7 +2,19 @@
 
 #include "ammodel.h"
 
+#include <optional>
+#include <utility>
+
 namespace otam {
+using InkColor     = std::array<float, 4>;
+using InkWidthSpan = std::array<std::array<double, 2>, 4>;
+struct InkProfile {
+  std::vector<InkWidthSpan> width;
+  std::vector<std::pair<double, InkColor>> colors;
+  bool linear     = false;
+  bool perSection = false;
+};
+
 struct InkStyle {
   std::array<double, 3> widths{{3, 3, 3}};
   std::array<std::array<float, 4>, 3> colors{
@@ -12,6 +24,7 @@ struct InkStyle {
   double fadeIn = 0, fadeOut = 0;
   bool unfilledOnly = false;
   std::string group;
+  std::optional<InkProfile> profile;
 };
 using InkBindings = std::vector<InkStyle>;
 

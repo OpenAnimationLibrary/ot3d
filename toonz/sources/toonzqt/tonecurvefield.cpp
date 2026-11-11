@@ -13,6 +13,7 @@
 #include <QHBoxLayout>
 #include <QComboBox>
 #include <QLabel>
+#include <algorithm>
 
 using namespace DVGui;
 
@@ -103,7 +104,8 @@ void truncateSpeeds(double aFrame, double bFrame, QVector2D &aSpeedTrunc,
 //=============================================================================
 
 ChennelCurveEditor::ChennelCurveEditor(QWidget *parent,
-                                       HistogramView *histogramView)
+                                       HistogramView *histogramView,
+                                       bool widthCurve)
     : QWidget(parent)
     , m_histogramView(histogramView)
     , m_currentControlPointIndex(-1)
@@ -113,18 +115,22 @@ ChennelCurveEditor::ChennelCurveEditor(QWidget *parent,
     , m_TopMargin(9)
     , m_BottomMargin(48)
     , m_isLinear(false)
-    , m_isEnlarged(false) {
+    , m_isEnlarged(false)
+    , m_widthCurve(widthCurve) {
   setFixedSize(m_curveHeight + 2 * m_LeftRightMargin + 2,
                m_curveHeight + m_TopMargin + m_BottomMargin);
   setAttribute(Qt::WA_KeyCompression);
   setFocusPolicy(Qt::StrongFocus);
   setMouseTracking(true);
 
-  m_histogramView->setDrawnWidget(this);
-  m_histogramView->setGraphHeight(m_curveHeight);
-  m_histogramView->setGraphAlphaMask(120);
-  m_verticalChannelBar =
-      new ChannelBar(0, m_histogramView->getChannelBarColor(), false);
+  m_verticalChannelBar = nullptr;
+  if (m_histogramView) {
+    m_histogramView->setDrawnWidget(this);
+    m_histogramView->setGraphHeight(m_curveHeight);
+    m_histogramView->setGraphAlphaMask(120);
+    m_verticalChannelBar =
+        new ChannelBar(0, m_histogramView->getChannelBarColor(), false);
+  }
 }
 
 //-----------------------------------------------------------------------------
@@ -138,6 +144,14 @@ void ChennelCurveEditor::setPoints(QList<TPointD> points) {
   int lastIndex  = m_points.size() - 4;
   emit firstLastXPostionChanged(m_points.at(firstIndex).x(),
                                 m_points.at(lastIndex).x());
+  if (m_widthCurve) {
+    if (m_currentControlPointIndex >= m_points.size() - 3)
+      m_currentControlPointIndex = -1;
+    const auto position = m_currentControlPointIndex < 0
+                              ? QPointF(-1, -1)
+                              : m_points.at(m_currentControlPointIndex);
+    emit updateCurrentPosition(m_currentControlPointIndex, position);
+  }
   update();
 }
 
@@ -193,16 +207,17 @@ void ChennelCurveEditor::setEnlarged(bool isEnlarged) {
   int widgetHeight = (m_isEnlarged) ? m_curveHeight * 2 : m_curveHeight;
   setFixedSize(widgetHeight + 2 * m_LeftRightMargin + 2,
                widgetHeight + m_TopMargin + m_BottomMargin);
-  m_histogramView->setGraphHeight(widgetHeight);
-  m_verticalChannelBar->setFixedHeight(widgetHeight + 22);
+  if (m_histogramView) m_histogramView->setGraphHeight(widgetHeight);
+  if (m_verticalChannelBar)
+    m_verticalChannelBar->setFixedHeight(widgetHeight + 22);
   update();
 }
 
 //-----------------------------------------------------------------------------
 
 void ChennelCurveEditor::setLabelRange(ChannelBar::Range range) {
-  m_histogramView->channelBar()->setLabelRange(range);
-  m_verticalChannelBar->setLabelRange(range);
+  if (m_histogramView) m_histogramView->channelBar()->setLabelRange(range);
+  if (m_verticalChannelBar) m_verticalChannelBar->setLabelRange(range);
 }
 
 //-----------------------------------------------------------------------------
@@ -403,6 +418,10 @@ void ChennelCurveEditor::moveCentralControlPoint(int index, QPointF delta) {
   // trascinato fuori dal range consentito
   QPointF newPoint = checkPoint(p + delta);
   d                = newPoint - p;
+  if (m_widthCurve) {
+    if (index == 3 || index == pointCount - 4) d.setX(0);
+    d.setY(std::clamp(p.y() + d.y(), 0.0, 255.0) - p.y());
+  }
 
   QPointF nextP       = m_points.at(index + 3);
   QPointF precP       = m_points.at(index - 3);
@@ -608,6 +627,8 @@ QPainterPath ChennelCurveEditor::getPainterPath() {
     p0 = p3;
   }
 
+  if (m_widthCurve) return path;
+
   // Cerco le eventuali intersezioni con il bordo.
   QRectF rect(0, 0, m_curveHeight, m_curveHeight);
   // QRectF rect(m_LeftRightMargin, m_TopMargin, m_curveHeight, m_curveHeight);
@@ -640,17 +661,30 @@ void ChennelCurveEditor::paintEvent(QPaintEvent *e) {
   painter.setRenderHint(QPainter::Antialiasing, false);
   painter.setPen(QColor(250, 250, 250));
 
-  // Disegno l'histogram.
-  m_histogramView->draw(&painter, QPoint(m_LeftRightMargin - 10, 0),
-                        m_curveHeight * scale);
-
-  // Disegno la barra verticale a sinistra.
-  m_verticalChannelBar->draw(
-      &painter,
-      QPoint(0, -2));  //-1 == m_topMargin- il margine della barra(=10+1).
-
   QRectF r = rect().adjusted(m_LeftRightMargin, m_TopMargin, -m_LeftRightMargin,
                              -m_BottomMargin);
+  if (m_widthCurve) {
+    painter.fillRect(r, palette().color(QPalette::Base));
+    for (int i = 0; i <= 4; ++i) {
+      const auto x = r.left() + i * r.width() / 4;
+      const auto y = r.bottom() - i * r.height() / 4;
+      painter.setPen(palette().color(QPalette::Mid));
+      painter.drawLine(QPointF(x, r.top()), QPointF(x, r.bottom()));
+      painter.drawLine(QPointF(r.left(), y), QPointF(r.right(), y));
+      painter.setPen(palette().color(QPalette::Text));
+      painter.drawText(QRectF(x - 20, r.bottom() + 2, 40, 18), Qt::AlignCenter,
+                       QString::number(25 * i));
+      painter.drawText(QRectF(0, y - 9, r.left() - 5, 18),
+                       Qt::AlignRight | Qt::AlignVCenter,
+                       QString::number(50 * i));
+    }
+    painter.drawText(QRectF(r.left(), r.bottom() + 20, r.width(), 20),
+                     Qt::AlignCenter, tr("Distance (%)"));
+  } else {
+    m_histogramView->draw(&painter, QPoint(m_LeftRightMargin - 10, 0),
+                          m_curveHeight * scale);
+    m_verticalChannelBar->draw(&painter, QPoint(0, -2));
+  }
   // Disegno la curva entro i limiti del grafo
   painter.setClipRect(r, Qt::IntersectClip);
 
@@ -660,7 +694,8 @@ void ChennelCurveEditor::paintEvent(QPaintEvent *e) {
   QPainterPath path = getPainterPath();
   if (path.isEmpty()) return;
   painter.setRenderHint(QPainter::Antialiasing, true);
-  QPen blackPen(Qt::black);
+  QPen blackPen(m_widthCurve ? palette().color(QPalette::Text)
+                             : QColor(Qt::black));
   QPen bluePen(Qt::blue);
   blackPen.setWidthF(1.0 / scale);
   bluePen.setWidthF(1.0 / scale);
@@ -785,6 +820,7 @@ void ChennelCurveEditor::keyPressEvent(QKeyEvent *e) {
     moveCurrentControlPoint(QPointF(0.0, delta));
   else if (e->key() == Qt::Key_Down)
     moveCurrentControlPoint(QPointF(0.0, -delta));
+  if (m_widthCurve) emit controlPointChanged(false);
 }
 
 //--------------------------------------------------------
@@ -821,9 +857,13 @@ void ChennelCurveEditor::focusOutEvent(QFocusEvent *fe) {
 //=============================================================================
 
 ToneCurveField::ToneCurveField(QWidget *parent,
-                               FxHistogramRender *fxHistogramRender)
-    : QWidget(parent), m_toneCurveStackedWidget(0), m_currentPointIndex(-1) {
-  setFixedWidth(400);
+                               FxHistogramRender *fxHistogramRender,
+                               bool widthCurve)
+    : QWidget(parent)
+    , m_toneCurveStackedWidget(nullptr)
+    , m_currentPointIndex(-1)
+    , m_widthCurve(widthCurve) {
+  setFixedWidth(m_widthCurve ? 430 : 400);
   // setFixedWidth(368);
 
   QStringList channels;
@@ -833,6 +873,7 @@ ToneCurveField::ToneCurveField(QWidget *parent,
            << "Green"
            << "Blue"
            << "Alpha";
+  if (m_widthCurve) channels = QStringList{tr("Width")};
   int channelCount        = channels.size();
   int currentChannelIndex = 0;
 
@@ -847,12 +888,16 @@ ToneCurveField::ToneCurveField(QWidget *parent,
 
   // stack widget dei grafi
   m_toneCurveStackedWidget = new QStackedWidget(this);
-  Histograms *histograms   = new Histograms(0, true);
-  fxHistogramRender->setHistograms(histograms);
+  Histograms *histograms   = nullptr;
+  if (!m_widthCurve) {
+    histograms = new Histograms(0, true);
+    fxHistogramRender->setHistograms(histograms);
+  }
   int i;
   for (i = 0; i < channelCount; i++) {
-    ChennelCurveEditor *c =
-        new ChennelCurveEditor(this, histograms->getHistogramView(i));
+    ChennelCurveEditor *c = new ChennelCurveEditor(
+        this, histograms ? histograms->getHistogramView(i) : nullptr,
+        m_widthCurve);
     m_toneCurveStackedWidget->addWidget(c);
     connect(c, SIGNAL(firstLastXPostionChanged(double, double)), this,
             SLOT(onFirstLastXPostionChanged(double, double)));
@@ -899,12 +944,17 @@ ToneCurveField::ToneCurveField(QWidget *parent,
     channelListLayout->setAlignment(Qt::AlignCenter);
     {
       // lista canali: label+comboBox
-      channelListLayout->addWidget(new QLabel(tr("Channel:"), this));
-      channelListLayout->addWidget(m_channelListChooser);
-      channelListLayout->addSpacing(20);
-      channelListLayout->addWidget(new QLabel(tr("Range:"), this));
-      channelListLayout->addWidget(m_rangeMode);
-      channelListLayout->addSpacing(20);
+      if (!m_widthCurve) {
+        channelListLayout->addWidget(new QLabel(tr("Channel:"), this));
+        channelListLayout->addWidget(m_channelListChooser);
+        channelListLayout->addSpacing(20);
+        channelListLayout->addWidget(new QLabel(tr("Range:"), this));
+        channelListLayout->addWidget(m_rangeMode);
+        channelListLayout->addSpacing(20);
+      } else {
+        m_channelListChooser->hide();
+        m_rangeMode->hide();
+      }
       channelListLayout->addWidget(m_isEnlargedCheckBox);
     }
     mainLayout->addLayout(channelListLayout, 0);
@@ -920,17 +970,22 @@ ToneCurveField::ToneCurveField(QWidget *parent,
       currentValLayout->setAlignment(Qt::AlignLeft);
       {
         currentValLayout->addStretch(1);
-        currentValLayout->addWidget(new QLabel(tr("Output:"), this));
+        currentValLayout->addWidget(
+            new QLabel(m_widthCurve ? tr("Width (%)") : tr("Output:"), this));
         currentValLayout->addWidget(m_currentOutput);
         currentValLayout->addSpacing(10);
-        currentValLayout->addWidget(new QLabel(tr("Input:"), this));
+        currentValLayout->addWidget(
+            new QLabel(m_widthCurve ? tr("Position (%)") : tr("Input:"), this));
         currentValLayout->addWidget(m_currentInput);
         currentValLayout->addSpacing(10);
       }
       bottomLayout->addLayout(currentValLayout, 0, 0);
 
       bottomLayout->addWidget(m_toneCurveStackedWidget, 0, 1, Qt::AlignHCenter);
-      bottomLayout->addWidget(m_sliderStackedWidget, 1, 1);
+      if (m_widthCurve)
+        m_sliderStackedWidget->hide();
+      else
+        bottomLayout->addWidget(m_sliderStackedWidget, 1, 1);
     }
     bottomLayout->setColumnStretch(1, 1);
     bottomLayout->setRowStretch(0, 1);
@@ -1012,9 +1067,10 @@ void ToneCurveField::onFirstLastXPostionChanged(double x0, double x1) {
 //-----------------------------------------------------------------------------
 // index = -1 when no point is selected
 void ToneCurveField::onUpdateCurrentPosition(int index, QPointF pos) {
-  auto modify = [&](double val) {
-    return (m_rangeMode->currentIndex() == 0) ? val : val / 255.0;
-  };
+  const double xScale = m_widthCurve                       ? 100.0 / 255
+                        : m_rangeMode->currentIndex() == 0 ? 1
+                                                           : 1.0 / 255;
+  const double yScale = m_widthCurve ? 2 * xScale : xScale;
 
   QList<TPointD> points = getCurrentChannelEditor()->getPoints();
   assert(index == -1 || (index >= 3 && index < points.size() - 3));
@@ -1038,8 +1094,8 @@ void ToneCurveField::onUpdateCurrentPosition(int index, QPointF pos) {
       m_currentInput->setText("");
       m_currentOutput->setText("");
     } else {
-      m_currentInput->setValue(modify(pos.x()));
-      m_currentOutput->setValue(modify(pos.y()));
+      m_currentInput->setValue(pos.x() * xScale);
+      m_currentOutput->setValue(pos.y() * yScale);
     }
   } else {  // if any point is selected
     if (m_currentPointIndex != index) {
@@ -1051,38 +1107,44 @@ void ToneCurveField::onUpdateCurrentPosition(int index, QPointF pos) {
         double xmax = (index == points.size() - 4)
                           ? maxChanVal
                           : points.at(index + 3).x - cpMargin;
-        m_currentInput->setRange(modify(xmin), modify(xmax));
-        m_currentOutput->setRange(0.0, modify(maxChanVal));
+        m_currentInput->setRange(xmin * xScale, xmax * xScale);
+        m_currentOutput->setRange(0.0, maxChanVal * yScale);
       } else if (index % 3 == 2) {  // left handle
         TPointD cp = points.at(index + 1);
         m_currentInput->setRange(-(std::numeric_limits<double>::max)(),
-                                 modify(cp.x));
+                                 cp.x * xScale);
         m_currentOutput->setRange(-(std::numeric_limits<double>::max)(),
                                   (std::numeric_limits<double>::max)());
       } else {  // right handle
         TPointD cp = points.at(index - 1);
-        m_currentInput->setRange(modify(cp.x),
+        m_currentInput->setRange(cp.x * xScale,
                                  (std::numeric_limits<double>::max)());
         m_currentOutput->setRange(-(std::numeric_limits<double>::max)(),
                                   (std::numeric_limits<double>::max)());
       }
+      if (m_widthCurve && (index == 3 || index == points.size() - 4))
+        m_currentInput->setDisabled(true);
       m_currentPointIndex = index;
     }
-    m_currentInput->setValue(modify(pos.x()));
-    m_currentOutput->setValue(modify(pos.y()));
+    m_currentInput->setValue(pos.x() * xScale);
+    m_currentOutput->setValue(pos.y() * yScale);
   }
 }
 
 //-----------------------------------------------------------------------------
 
 void ToneCurveField::onCurrentPointEditted() {
-  TPointD oldPos =
-      getCurrentChannelEditor()->getPoints().at(m_currentPointIndex);
+  auto *editor      = getCurrentChannelEditor();
+  const auto points = editor->getPoints();
+  if (m_currentPointIndex < 3 || m_currentPointIndex >= points.size() - 3)
+    return;
+  const auto oldPos = points.at(m_currentPointIndex);
   double factor = (m_rangeMode->currentIndex() == 0) ? 1.0 : 255.0;
-  QPointF newPos(m_currentInput->getValue() * factor,
-                 m_currentOutput->getValue() * factor);
-  getCurrentChannelEditor()->moveCurrentControlPoint(
-      newPos - QPointF(oldPos.x, oldPos.y));
+  QPointF newPos(
+      m_currentInput->getValue() * (m_widthCurve ? 255.0 / 100 : factor),
+      m_currentOutput->getValue() * (m_widthCurve ? 255.0 / 200 : factor));
+  editor->moveCurrentControlPoint(newPos - QPointF(oldPos.x, oldPos.y));
+  if (m_widthCurve) emit editor->controlPointChanged(false);
 }
 
 //-----------------------------------------------------------------------------
@@ -1148,7 +1210,7 @@ void ToneCurveField::setEnlarged(bool isEnlarged) {
   int i;
   for (i = 0; i < m_sliderStackedWidget->count(); i++)
     getChannelEditor(i)->setEnlarged(isEnlarged);
-  setFixedWidth((isEnlarged) ? 400 + 256 : 400);
+  setFixedWidth((m_widthCurve ? 430 : 400) + (isEnlarged ? 256 : 0));
   emit sizeChanged();
 }
 

@@ -9,7 +9,7 @@
     <control>fadeIn</control>
     <control>fadeOut</control>
   </page>
-  <page name="Line Profile">
+  <page name="Quick Profile">
     <label>"Enable Vary Width and Color to blend the base settings with middle and end stops along each spline. Position follows the authored control-point spans. Color alpha controls opacity."</label>
     <control>profile</control>
     <control>middle</control>
@@ -17,5 +17,14 @@
     <control>middleColor</control>
     <control>endWidth</control>
     <control>endColor</control>
+  </page>
+  <page name="Spline Profile">
+    <label>"Enable Spline Profile to shape the stroke with Bézier points. Click the curve to add a point, drag its handles to shape the transition, or press Delete to remove a selected point."</label>
+    <control>useSplineProfile</control>
+    <control>profileRange</control>
+    <control curve="width">widthCurve</control>
+    <label>"Width is a percentage of the base width. Each Inked Section fits the profile to every continuous run selected by the group and spline scope."</label>
+    <control>useColorRamp</control>
+    <control>colorRamp</control>
   </page>
 </fxlayout>

@@ -2046,7 +2046,8 @@ void FontParamField::update(int frame) {
 //-----------------------------------------------------------------------------
 
 ToneCurveParamField::ToneCurveParamField(QWidget *parent, QString name,
-                                         const TToneCurveParamP &param)
+                                         const TToneCurveParamP &param,
+                                         bool widthCurve)
     : AnimatedParamField<const QList<TPointD>, TToneCurveParamP>(parent, name,
                                                                  param, false) {
   QString str;
@@ -2055,7 +2056,7 @@ ToneCurveParamField::ToneCurveParamField(QWidget *parent, QString name,
   ParamsPage *paramsPage = dynamic_cast<ParamsPage *>(parent);
   FxHistogramRender *fxHistogramRender =
       (paramsPage) ? paramsPage->getFxHistogramRender() : 0;
-  m_toneCurveField = new ToneCurveField(this, fxHistogramRender);
+  m_toneCurveField = new ToneCurveField(this, fxHistogramRender, widthCurve);
   m_toneCurveField->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Minimum);
 
   //--- layout
@@ -2122,9 +2123,9 @@ void ToneCurveParamField::setParams() {
 
 QSize ToneCurveParamField::getPreferredSize() {
   if (m_toneCurveField->isEnlarged())
-    return QSize(676, 640);
+    return QSize(m_toneCurveField->width() + 20, 640);
   else
-    return QSize(420, 384);
+    return QSize(m_toneCurveField->width() + 20, 384);
 }
 
 //-----------------------------------------------------------------------------
@@ -2395,7 +2396,7 @@ public:
 }  // namespace
 
 ParamField *ParamField::create(QWidget *parent, QString name,
-                               const TParamP &param) {
+                               const TParamP &param, bool widthCurve) {
   if (TDoubleParamP doubleParam = param)
     return new MeasuredDoubleParamField(parent, name, doubleParam);
   else if (TRangeParamP rangeParam = param)
@@ -2415,7 +2416,7 @@ ParamField *ParamField::create(QWidget *parent, QString name,
   else if (TStringParamP stringParam = param)
     return new StringParamField(parent, name, stringParam);
   else if (TToneCurveParamP toneCurveParam = param)
-    return new ToneCurveParamField(parent, name, toneCurveParam);
+    return new ToneCurveParamField(parent, name, toneCurveParam, widthCurve);
   else if (TFontParamP fontParam = param)
     return new FontParamField(parent, name, fontParam);
   else if (param->getName() == "materialColors" && dynamic_cast<TParamSet *>(param.getPointer()))
