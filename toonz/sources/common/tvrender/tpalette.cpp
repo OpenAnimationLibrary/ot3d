@@ -1043,45 +1043,62 @@ int TPalette::getFrame() const { return m_currentFrame; }
 
 //-------------------------------------------------------------------
 
-void TPalette::setFrame(int frame) {
-  QMutexLocker muLock(&m_mutex);
+namespace {
+void evaluateStyle(TColorStyle &style, const TPalette::StyleAnimation &keys,
+                   int frame) {
+  assert(!keys.empty());
+  auto next = keys.lower_bound(frame);
+  if (next == keys.begin()) {
+    style.copy(*next->second);
+  } else {
+    auto previous = std::prev(next);
+    if (next == keys.end()) {
+      style.copy(*previous->second);
+    } else {
+      style.assignBlend(
+          *previous->second, *next->second,
+          (frame - previous->first) / double(next->first - previous->first));
+    }
+  }
+}
+}  // namespace
 
+void TPalette::setFrame(int frame) {
+  QMutexLocker lock(&m_mutex);
   if (m_currentFrame == frame) return;
 
   m_currentFrame = frame;
+  for (const auto &[styleId, keys] : m_styleAnimationTable)
+    evaluateStyle(*getStyle(styleId), keys, frame);
+}
 
-  StyleAnimationTable::iterator sat, saEnd = m_styleAnimationTable.end();
-  for (sat = m_styleAnimationTable.begin(); sat != saEnd; ++sat) {
-    StyleAnimation &animation = sat->second;
-    assert(!animation.empty());
+//-------------------------------------------------------------------
 
-    // Retrieve the associated style to interpolate
-    int styleId = sat->first;
-    assert(0 <= styleId && styleId < getStyleCount());
+TPalette::StyleAnimation TPalette::getStyleAnimation(int styleId) const {
+  QMutexLocker lock(&m_mutex);
+  auto found = m_styleAnimationTable.find(styleId);
+  return found == m_styleAnimationTable.end() ? StyleAnimation{}
+                                              : found->second;
+}
 
-    TColorStyle *cs = getStyle(styleId);
-    assert(cs);
+TColorStyleP TPalette::sampleStyle(int styleId, int frame) const {
+  QMutexLocker lock(&m_mutex);
+  TColorStyleP style(getStyle(styleId)->clone());
+  auto found = m_styleAnimationTable.find(styleId);
+  if (found != m_styleAnimationTable.end())
+    evaluateStyle(*style, found->second, frame);
+  return style;
+}
 
-    // Build the keyframes interval containing frame
-    StyleAnimation::iterator j0, j1;
-
-    j1 = animation.lower_bound(
-        frame);  // j1 is the first element:  j1->first >= frame
-    if (j1 == animation.begin())
-      cs->copy(*j1->second);
-    else {
-      j0 = j1, --j0;
-      assert(j0->first <= frame);
-
-      if (j1 == animation.end())
-        cs->copy(*j0->second);
-      else {
-        assert(frame <= j1->first);
-
-        cs->assignBlend(*j0->second, *j1->second,
-                        (frame - j0->first) / double(j1->first - j0->first));
-      }
-    }
+void TPalette::replaceStyleAnimation(int styleId, const StyleAnimation &keys,
+                                     const TColorStyle &unkeyedStyle) {
+  QMutexLocker lock(&m_mutex);
+  if (keys.empty()) {
+    m_styleAnimationTable.erase(styleId);
+    getStyle(styleId)->copy(unkeyedStyle);
+  } else {
+    m_styleAnimationTable[styleId] = keys;
+    evaluateStyle(*getStyle(styleId), keys, m_currentFrame);
   }
 }
 

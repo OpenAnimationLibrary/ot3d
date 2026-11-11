@@ -10,6 +10,12 @@
 #include "filebrowserpopup.h"
 #include "filebrowser.h"
 #include "tundo.h"
+#include "tdoublekeyframe.h"
+#include "texpression.h"
+#include "toonz/txsheetexpr.h"
+
+#include <QFileDialog>
+#include <QFileInfo>
 
 //=============================================================================
 
@@ -25,8 +31,13 @@ public:
     m_newCurve = static_cast<TDoubleParam *>(m_curve->clone());
   }
 
-  void undo() const override { m_curve->copy(m_oldCurve.getPointer()); }
-  void redo() const override { m_curve->copy(m_newCurve.getPointer()); }
+  void restore(const TDoubleParam &snapshot) const {
+    m_curve->setDefaultValue(snapshot.getDefaultValue());
+    m_curve->copyCurve(snapshot);
+  }
+
+  void undo() const override { restore(*m_oldCurve); }
+  void redo() const override { restore(*m_newCurve); }
   int getSize() const override {
     return sizeof(*this) + 2 * sizeof(TDoubleParam);  // not very accurate
   }
@@ -73,6 +84,8 @@ public:
 //=============================================================================
 
 class SaveCurvePopup final : public CurvePopup {
+  TFilePath m_savedPath;
+
 public:
   SaveCurvePopup(const TFilePath folderPath, TDoubleParam *curve)
       : CurvePopup(QObject::tr("Save Curve"), folderPath, curve) {
@@ -81,6 +94,7 @@ public:
   }
 
   bool execute() override;
+  const TFilePath &savedPath() const { return m_savedPath; }
 };
 
 //-----------------------------------------------------------------------------
@@ -98,6 +112,7 @@ bool SaveCurvePopup::execute() {
     TSystem::touchParentDir(fp);
     TOStream os(fp);
     getCurve()->saveData(os);
+    m_savedPath = fp;
     return true;
   } catch (...) {
     DVGui::warning(QObject::tr("It is not possible to save the curve."));
@@ -213,11 +228,12 @@ bool ExportCurvePopup::execute() {
 
 //------------------------------------------
 
-void saveCurve(TDoubleParam *curve) {
+TFilePath saveCurve(TDoubleParam *curve) {
   TFilePath folderPath =
       TProjectManager::instance()->getCurrentProject()->getScenesPath();
   SaveCurvePopup popup(folderPath, curve);
   popup.exec();
+  return popup.savedPath();
 }
 
 //------------------------------------------
@@ -236,4 +252,54 @@ void exportCurve(TDoubleParam *curve, const std::string &name) {
       TProjectManager::instance()->getCurrentProject()->getScenesPath();
   ExportCurvePopup popup(folderPath, curve, name);
   popup.exec();
+}
+
+QString chooseCurveFileToOpen(QWidget *parent) {
+  return QFileDialog::getOpenFileName(parent, QObject::tr("Open Curve File"),
+                                      TProjectManager::instance()
+                                          ->getCurrentProject()
+                                          ->getScenesPath()
+                                          .getQString(),
+                                      QObject::tr("Curve Files (*.curve)"));
+}
+
+bool readCurveFile(const QString &path, TDoubleParam *curve) {
+  try {
+    TIStream stream{TFilePath(path)};
+    if (!stream) return false;
+    curve->loadData(stream);
+    curve->setName(QFileInfo(path).fileName().toStdString());
+    return true;
+  } catch (...) {
+    return false;
+  }
+}
+
+bool applyCurveFile(TDoubleParam *target, TDoubleParam *source) {
+  for (int i = 0; i < source->getKeyframeCount(); ++i) {
+    const auto &key = source->getKeyframe(i);
+    if (key.m_type != TDoubleKeyframe::Expression &&
+        key.m_type != TDoubleKeyframe::SimilarShape)
+      continue;
+    TExpression expression;
+    expression.setGrammar(target->getGrammar());
+    expression.setText(key.m_expressionText);
+    if (dependsOn(expression, target)) {
+      DVGui::warning(QObject::tr(
+          "Applying this curve would create a circular reference."));
+      return false;
+    }
+  }
+
+  auto undo = std::make_unique<LoadCurveUndo>(target);
+  target->copyCurve(*source);
+  TUndoManager::manager()->add(undo.release());
+  return true;
+}
+
+void reloadCurveData(TDoubleParam *target, const TDoubleParam &source) {
+  auto undo = std::make_unique<LoadCurveUndo>(target);
+  target->setDefaultValue(source.getDefaultValue());
+  target->copyCurve(source);
+  TUndoManager::manager()->add(undo.release());
 }

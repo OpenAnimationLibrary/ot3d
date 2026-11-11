@@ -5,6 +5,7 @@
 
 // TnzCore includes
 #include "tcommon.h"
+#include "tdoubleparam.h"
 #include "saveloadqsettings.h"
 
 // TnzLib includes
@@ -17,6 +18,8 @@
 // Qt includes
 #include <QSplitter>
 #include <QSettings>
+#include <QStringList>
+#include <memory>
 
 #undef DVAPI
 #undef DVVAR
@@ -33,6 +36,7 @@
 //    Forward declarations
 
 class TParam;
+class FunctionKeyTrack;
 class TDoubleParam;
 class TXsheetHandle;
 class TObjectHandle;
@@ -40,6 +44,7 @@ class TFxHandle;
 class TColumnHandle;
 class TStageObject;
 class TSceneHandle;
+class ToonzScene;
 
 class FrameNavigator;
 class FunctionTreeView;
@@ -71,7 +76,14 @@ class DVAPI FunctionViewer final : public QSplitter, public SaveLoadQSettings {
   Q_OBJECT
 
 public:
-  enum IoType { eSaveCurve, eLoadCurve, eExportCurve };
+  enum IoType {
+    eSaveCurve,
+    eLoadCurve,
+    eExportCurve,
+    eOpenCurve,
+    eApplyCurve,
+    eReloadCurve
+  };
 
 public:
   FunctionViewer(QWidget *parent       = 0,
@@ -112,6 +124,16 @@ public:
   //! the parameter
   //! will be added
   //! to.
+
+  void showKeyTrack(const QString &id, const QString &folder,
+                    const QString &name, const QStringList &components,
+                    std::shared_ptr<FunctionKeyTrack> track);
+  void showCurveFile(TDoubleParam *curve);
+  bool hasCurveFiles() const { return !m_curveFiles.empty(); }
+  bool isCurveFile(TDoubleParam *curve) const;
+  TDoubleParam *chooseCurveFile();
+  void prepareCurveFileReload(TDoubleParam *curve);
+  void refreshKeyTracks();
 
   void setFocusColumnsOrGraph();
   void clearFocusColumnsAndGraph();
@@ -184,6 +206,14 @@ private:
   // Current objects
 
   TDoubleParam *m_curve;
+  struct ExposedTrack {
+    QString id, folder, name;
+    QStringList components;
+    std::shared_ptr<FunctionKeyTrack> source;
+  };
+  ToonzScene *m_trackScene = nullptr;
+  std::vector<ExposedTrack> m_exposedTracks;
+  std::vector<TDoubleParamP> m_curveFiles;
   FunctionSelection *m_selection;
 
 private:

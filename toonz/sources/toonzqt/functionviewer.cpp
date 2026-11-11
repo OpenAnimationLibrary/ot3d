@@ -38,6 +38,7 @@
 #include "tstopwatch.h"
 
 // Qt includes
+#include <QInputDialog>
 #include <QPainter>
 #include <QMouseEvent>
 #include <QWheelEvent>
@@ -47,6 +48,9 @@
 #include <QLabel>
 #include <QToolBar>
 #include <QAction>
+
+#include <algorithm>
+#include <cmath>
 
 using namespace DVGui;
 
@@ -103,6 +107,7 @@ FunctionViewer::FunctionViewer(QWidget *parent, Qt::WindowFlags flags)
 
   FunctionTreeModel *ftModel =
       dynamic_cast<FunctionTreeModel *>(m_treeView->model());
+  getSelection()->setModel(ftModel);
   m_functionGraph->setModel(ftModel);
   m_numericalColumns->setModel(ftModel);
 
@@ -162,6 +167,10 @@ FunctionViewer::FunctionViewer(QWidget *parent, Qt::WindowFlags flags)
   rightLayout->setContentsMargins(0, 0, 0, 0);
   rightLayout->setSpacing(5);
   {
+    auto *openCurve = new QPushButton(tr("Open Curve File…"), rightPanel);
+    connect(openCurve, &QPushButton::clicked, this,
+            [this] { emitIoCurve(eOpenCurve, nullptr, {}); });
+    rightLayout->addWidget(openCurve, 0, Qt::AlignLeft);
     rightLayout->addWidget(m_segmentViewer, 0);
     rightLayout->addWidget(m_treeView, 1);
   }
@@ -194,6 +203,19 @@ FunctionViewer::FunctionViewer(QWidget *parent, Qt::WindowFlags flags)
                        SLOT(onCurveChanged()));
   ret = ret && connect(ftModel, SIGNAL(curveChanged(bool)), this,
                        SLOT(onCurveChanged(bool)));
+  connect(
+      ftModel, &FunctionTreeModel::editorCurveChanged, this,
+      [this] {
+        m_treeView->update();
+        m_functionGraph->update();
+        onXsheetChanged();
+        m_numericalColumns->updateAll();
+      },
+      Qt::QueuedConnection);
+  connect(ftModel, &FunctionTreeModel::activeChannelsChanged, this,
+          &FunctionViewer::onXsheetChanged);
+  connect(ftModel, SIGNAL(editorCurveChanged()), m_segmentViewer,
+          SLOT(onCurveChanged()), Qt::QueuedConnection);
   ret = ret && connect(&m_localFrame, SIGNAL(frameSwitched()), this,
                        SLOT(onFrameSwitched()));
   ret = ret && connect(getSelection(), SIGNAL(selectionChanged()), this,
@@ -250,7 +272,10 @@ FunctionViewer::~FunctionViewer() {
 //-----------------------------------------------------------------------------
 
 void FunctionViewer::showEvent(QShowEvent *) {
-  refreshModel();
+  if (m_sceneHandle && m_sceneHandle->getScene() != m_trackScene)
+    rebuildModel();
+  else
+    refreshModel();
 
   // Connect handles
   bool ret = true;
@@ -349,24 +374,33 @@ void FunctionViewer::openContextMenu(TreeModel::Item *item,
 void FunctionViewer::rebuildModel() {
   getSelection()->selectNone();
   onCurveSelected(0);
-  m_functionGraph->getModel()->resetAll();
+  auto *model = m_functionGraph->getModel();
+  model->resetAll();
   refreshModel();
+  for (const auto &curve : m_curveFiles)
+    model->addEditorCurves(tr("Curve Files"), {}, {curve}, false);
+  for (const auto &track : m_exposedTracks)
+    model->addKeyTrack(track.id, track.folder, track.name, track.components,
+                       track.source, false);
   m_treeView->displayAnimatedChannels();
 }
 
 //-----------------------------------------------------------------------------
 
 void FunctionViewer::refreshModel() {
-  TXsheet *xsh = m_xshHandle ? m_xshHandle->getXsheet() : 0;
-
+  TXsheet *xsh = m_xshHandle ? m_xshHandle->getXsheet() : nullptr;
+  auto *scene  = xsh ? xsh->getScene() : nullptr;
+  if (scene != m_trackScene) {
+    m_trackScene = scene;
+    m_exposedTracks.clear();
+  }
   m_functionGraph->getModel()->refreshData(xsh);
+  refreshKeyTracks();
 
   if (xsh) {
-    int rowCount = xsh->getFrameCount();
-    m_numericalColumns->setRowCount(rowCount);
+    onXsheetChanged();
     m_numericalColumns->updateAll();
 
-    ToonzScene *scene = xsh->getScene();
     if (!scene)  // This seems wrong. It should rather be
       return;    // asserted - though I'm not touching it now...
 
@@ -383,7 +417,8 @@ void FunctionViewer::refreshModel() {
   }
 
   m_treeView->updateAll();
-  m_toolbar->setCurve(0);
+  auto *channel = m_functionGraph->getModel()->getCurrentChannel();
+  m_toolbar->setCurve(channel ? channel->getParam() : nullptr);
 }
 
 void FunctionViewer::refreshMaterialChannels() {
@@ -499,9 +534,11 @@ void FunctionViewer::setColumnHandle(TColumnHandle *columnHandle) {
 
 void FunctionViewer::onFrameSwitched() {
   int frame = m_localFrame.getFrame();
-  m_segmentViewer->setSegmentByFrame(m_curve, frame);
+  if (!getSelection()->keyTrack(m_curve))
+    m_segmentViewer->setSegmentByFrame(m_curve, frame);
 
   if (m_frameHandle) m_frameHandle->setFrame(frame);
+  if (!m_exposedTracks.empty()) m_treeView->viewport()->update();
 }
 
 //-----------------------------------------------------------------------------
@@ -585,6 +622,13 @@ void FunctionViewer::onCurveChanged(bool isDragging) {
 void FunctionViewer::onCurveSelected(TDoubleParam *curve) {
   m_curve = curve;
   m_toolbar->setCurve(curve);
+  const bool native = bool(getSelection()->keyTrack(curve));
+  m_segmentViewer->setEnabled(!native);
+  if (native) {
+    m_segmentViewer->setSegment(nullptr, -1);
+    if (m_functionGraph->isVisible()) m_functionGraph->fitGraphToWindow(true);
+    return;
+  }
 
   QPair<TDoubleParam *, int> selectedSegment =
       getSelection()->getSelectedSegment();
@@ -601,9 +645,23 @@ void FunctionViewer::onValueFieldChanged() {}
 //-----------------------------------------------------------------------------
 
 void FunctionViewer::onXsheetChanged() {
-  TXsheet *xsh = m_xshHandle->getXsheet();
-  int rowCount = xsh->getFrameCount();
-  m_numericalColumns->setRowCount(rowCount);
+  auto *xsheet = m_xshHandle ? m_xshHandle->getXsheet() : nullptr;
+  int rows     = xsheet ? xsheet->getFrameCount() : 0;
+  auto *model  = m_functionGraph->getModel();
+  const int maxRows =
+      QWIDGETSIZE_MAX / std::max(1, m_numericalColumns->getRowHeight());
+  for (int i = 0; i < model->getActiveChannelCount(); ++i) {
+    auto *curve = model->getActiveChannel(i)->getParam();
+    if ((!model->keyTrack(curve) && !isCurveFile(curve)) ||
+        !curve->hasKeyframes())
+      continue;
+    const double end =
+        std::ceil(curve->keyframeIndexToFrame(curve->getKeyframeCount() - 1)) +
+        1;
+    if (std::isfinite(end) && end > rows)
+      rows = std::max(rows, int(std::min(end, double(maxRows))));
+  }
+  m_numericalColumns->setRowCount(rows);
 }
 
 //-----------------------------------------------------------------------------
@@ -660,7 +718,10 @@ void FunctionViewer::onFxSwitched() {
 void FunctionViewer::onSelectionChanged() {
   QPair<TDoubleParam *, int> selectedSegment =
       getSelection()->getSelectedSegment();
-  if (selectedSegment.first) {
+  if (getSelection()->keyTrack(selectedSegment.first ? selectedSegment.first
+                                                     : m_curve)) {
+    m_segmentViewer->setSegment(nullptr, -1);
+  } else if (selectedSegment.first) {
     if (selectedSegment.first != m_curve) {
       m_curve = selectedSegment.first;
       m_toolbar->setCurve(selectedSegment.first);
@@ -779,6 +840,76 @@ void FunctionViewer::addParameter(TParam *parameter, const TFilePath &folder) {
 }
 
 //-----------------------------------------------------------------------------
+
+void FunctionViewer::showKeyTrack(const QString &id, const QString &folder,
+                                  const QString &name,
+                                  const QStringList &components,
+                                  std::shared_ptr<FunctionKeyTrack> track) {
+  refreshModel();
+  getSelection()->selectNone();
+  auto *model = m_functionGraph->getModel();
+  const auto found =
+      std::find_if(m_exposedTracks.begin(), m_exposedTracks.end(),
+                   [&id](const auto &entry) { return entry.id == id; });
+  if (found == m_exposedTracks.end())
+    m_exposedTracks.push_back({id, folder, name, components, track});
+  if (model->addKeyTrack(id, folder, name, components, std::move(track))) {
+    if (!m_functionGraph->isVisible()) toggleMode();
+    m_functionGraph->fitGraphToWindow(true);
+    m_treeView->updateAll();
+  }
+}
+
+void FunctionViewer::showCurveFile(TDoubleParam *curve) {
+  refreshModel();
+  getSelection()->selectNone();
+  auto *model = m_functionGraph->getModel();
+  m_curveFiles.emplace_back(curve);
+  if (model->addEditorCurves(tr("Curve Files"), {}, {m_curveFiles.back()})) {
+    if (!m_functionGraph->isVisible()) toggleMode();
+    m_functionGraph->fitGraphToWindow(true);
+    m_treeView->updateAll();
+  }
+}
+
+bool FunctionViewer::isCurveFile(TDoubleParam *curve) const {
+  return std::any_of(m_curveFiles.begin(), m_curveFiles.end(),
+                     [curve](const TDoubleParamP &file) {
+                       return file.getPointer() == curve;
+                     });
+}
+
+TDoubleParam *FunctionViewer::chooseCurveFile() {
+  QStringList names;
+  for (size_t i = 0; i < m_curveFiles.size(); ++i)
+    names << tr("%1. %2")
+                 .arg(qulonglong(i + 1))
+                 .arg(QString::fromStdString(m_curveFiles[i]->getName()));
+  bool accepted = false;
+  const auto selected =
+      QInputDialog::getItem(this, tr("Apply Open Curve"), tr("Curve File"),
+                            names, 0, false, &accepted);
+  const auto index = names.indexOf(selected);
+  return accepted && index >= 0 ? m_curveFiles[index].getPointer() : nullptr;
+}
+
+void FunctionViewer::prepareCurveFileReload(TDoubleParam *curve) {
+  auto *selection = getSelection();
+  for (int i = 0; i < selection->getSelectedKeyframeCount(); ++i) {
+    if (selection->getSelectedKeyframe(i).first != curve) continue;
+    selection->selectNone();
+    break;
+  }
+  m_treeView->viewport()->update();
+}
+
+void FunctionViewer::refreshKeyTracks() {
+  if (!m_functionGraph->getModel()->refreshKeyTracks()) return;
+  if (getSelection()->hasKeyTracks()) getSelection()->selectNone();
+  m_treeView->updateAll();
+  m_functionGraph->update();
+  m_numericalColumns->updateAll();
+}
 
 void FunctionViewer::setFocusColumnsOrGraph() {
   m_numericalColumns->setFocus();

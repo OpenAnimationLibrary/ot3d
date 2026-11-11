@@ -345,9 +345,23 @@ double canonicalActionTime(double seconds) {
   return double(actionTicks(seconds)) / TicksPerSecond;
 }
 
+bool isActionTimeAt(double canonicalSeconds, double seconds) {
+  const double ticks = seconds * TicksPerSecond;
+  return ticks >= 0 && ticks <= MaxTicks &&
+         canonicalActionTime(seconds) == canonicalSeconds;
+}
+
 void validateAction(const Action &action, const Model &model) {
   checkAction(action);
   actionTargets(action, model);
+}
+
+Vec3 samplePositionOffset(const Action &action, Id point, double seconds) {
+  const auto channel = action.channels.find(point);
+  return channel == action.channels.end()
+             ? Vec3{}
+             : sample(channel->second,
+                      canonicalActionTime(std::max(0.0, seconds)));
 }
 
 void applyAction(const Action &action, Model &model, double seconds) {

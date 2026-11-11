@@ -163,6 +163,9 @@ public:
   // Current Palette (PaletteController) methods
 
   TPaletteHandle *getCurrentPalette() const override;
+  void notifyPaletteKeyframesChanged(TPalette *palette);
+  void showAMActionCurves(int column,
+                          const std::vector<std::int64_t> &pointIds) override;
 
   TColorStyle *getCurrentLevelStyle() const override;
 

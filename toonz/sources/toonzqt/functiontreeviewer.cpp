@@ -12,6 +12,7 @@
 #include "tparamset.h"
 #include "tmacrofx.h"
 #include "tparamchange.h"
+#include "tdoublekeyframe.h"
 #include "tfxmaterial.h"
 
 // TnzExt includes
@@ -41,6 +42,7 @@
 #include <QMouseEvent>
 #include <QMetaObject>
 #include <QColor>
+#include <QPixmap>
 #include <QApplication>  // for drag&drop
 #include <QDrag>
 #include <QMimeData>
@@ -152,8 +154,17 @@ bool FunctionTreeModel::ChannelGroup::isIgnored() const {
 
 QVariant FunctionTreeModel::ChannelGroup::data(int role) const {
   if (role == Qt::DisplayRole)
-    return getLongName();
+    return m_sourceAvailable ? getLongName()
+                             : tr("%1 (source unavailable)").arg(getLongName());
   else if (role == Qt::DecorationRole) {
+    if (m_keyTrack) {
+      const auto color = m_keyTrack->swatch();
+      if (color.isValid()) {
+        QPixmap pixmap(14, 14);
+        pixmap.fill(color);
+        return pixmap;
+      }
+    }
     bool animated = isAnimated();
     bool active   = isActive();
     bool ignored  = (animated) ? isIgnored() : false;
@@ -857,7 +868,10 @@ bool FunctionTreeModel::Channel::isHidden() const {
 //-----------------------------------------------------------------------------
 
 void FunctionTreeModel::Channel::onChange(const TParamChange &ch) {
-  m_model->onChange(ch);
+  if (m_editorCurve)
+    emit m_model->editorCurveChanged();
+  else
+    m_model->onChange(ch);
 }
 
 //=============================================================================
@@ -1217,9 +1231,7 @@ void FunctionTreeModel::addActiveChannels(TreeModel::Item *item) {
 void FunctionTreeModel::refreshActiveChannels() {
   m_activeChannels.clear();
 
-  if (m_stageObjects) addActiveChannels(m_stageObjects);
-
-  if (m_fxs) addActiveChannels(m_fxs);
+  if (getRootItem()) addActiveChannels(getRootItem());
 }
 
 //-----------------------------------------------------------------------------
@@ -1310,6 +1322,7 @@ void FunctionTreeModel::resetAll() {
   TreeModel::Item *root_item = getRootItem();
   setRootItem_NoFree(NULL);
 
+  m_keyTracks.clear();
   m_stageObjects = 0;
   m_fxs          = 0;
 
@@ -1420,6 +1433,125 @@ void FunctionTreeModel::addParameter(TParam *parameter,
 
   // Add the parameter to the last group
   addParameter(group, "", L"", parameter);
+}
+
+FunctionTreeModel::Channel *FunctionTreeModel::addEditorCurves(
+    const QString &folder, const QString &name,
+    const std::vector<TDoubleParamP> &curves, bool activate) {
+  auto *root = getRootItem();
+  if (!root || curves.empty()) return nullptr;
+
+  beginRefresh();
+  ChannelGroup *category = nullptr;
+  for (int i = 2; i < root->getChildCount(); ++i) {
+    auto *group = dynamic_cast<ChannelGroup *>(root->getChild(i));
+    if (group && group->getShortName() == folder) {
+      category = group;
+      break;
+    }
+  }
+  if (!category) {
+    category = new ChannelGroup(folder);
+    root->appendChild(category);
+  }
+  auto *group = category;
+  if (!name.isEmpty()) {
+    group = new ChannelGroup(name);
+    category->appendChild(group);
+  }
+  std::vector<Channel *> channels;
+  for (const auto &curve : curves) {
+    auto *channel = new Channel(this, curve.getPointer());
+    channel->setChannelGroup(group);
+    channel->setEditorCurve();
+    group->appendChild(channel);
+    channels.push_back(channel);
+  }
+  endRefresh();
+
+  setExpandedItem(category->createIndex(), true);
+  setExpandedItem(group->createIndex(), true);
+  // Show a single component initially so overlapping axes can be identified
+  // and switched on individually.
+  if (activate) channels.front()->setIsCurrent(true);
+  return channels.front();
+}
+
+FunctionTreeModel::Channel *FunctionTreeModel::addKeyTrack(
+    const QString &id, const QString &folder, const QString &name,
+    const QStringList &components, std::shared_ptr<FunctionKeyTrack> track,
+    bool activate) {
+  for (auto &entry : m_keyTracks) {
+    if (entry.id != id) continue;
+    auto *channel = entry.firstChannel;
+    auto *group   = channel->getChannelGroup();
+    setExpandedItem(group->getParent()->createIndex(), true);
+    setExpandedItem(group->createIndex(), true);
+    if (activate) channel->setIsCurrent(true);
+    return channel;
+  }
+
+  KeyTrackEntry entry;
+  entry.id     = id;
+  entry.source = std::move(track);
+  for (const auto &component : components) {
+    TDoubleParamP curve(new TDoubleParam());
+    curve->setName(component.toStdString());
+    entry.curves.push_back(curve);
+  }
+  m_keyTracks.push_back(std::move(entry));
+  refreshKeyTracks();
+  auto &inserted = m_keyTracks.back();
+  inserted.firstChannel =
+      addEditorCurves(folder, name, inserted.curves, activate);
+  if (inserted.firstChannel) {
+    auto *group = inserted.firstChannel->getChannelGroup();
+    group->setKeyTrack(inserted.source);
+    group->setSourceAvailable(inserted.displayed.available);
+  }
+  return inserted.firstChannel;
+}
+
+std::shared_ptr<FunctionKeyTrack> FunctionTreeModel::keyTrack(
+    TDoubleParam *curve, int *component) const {
+  for (const auto &entry : m_keyTracks) {
+    for (int i = 0; i < int(entry.curves.size()); ++i) {
+      if (entry.curves[i].getPointer() != curve) continue;
+      if (component) *component = i;
+      return entry.source;
+    }
+  }
+  return {};
+}
+
+bool FunctionTreeModel::refreshKeyTracks() {
+  bool changed = false;
+  for (auto &entry : m_keyTracks) {
+    auto snapshot = entry.source->read();
+    if (entry.initialized && snapshot.keys == entry.displayed.keys &&
+        snapshot.defaults == entry.displayed.defaults &&
+        snapshot.available == entry.displayed.available)
+      continue;
+    entry.initialized = true;
+    entry.displayed   = std::move(snapshot);
+    changed           = true;
+    if (entry.firstChannel)
+      entry.firstChannel->getChannelGroup()->setSourceAvailable(
+          entry.displayed.available);
+
+    for (int i = 0; i < int(entry.curves.size()); ++i) {
+      const auto &curve = entry.curves[i];
+      TDoubleParam display(entry.displayed.defaults[i]);
+      display.setName(curve->getName());
+      for (const auto &[frame, values] : entry.displayed.keys) {
+        TDoubleKeyframe key(frame, values[i]);
+        key.m_type = key.m_prevType = TDoubleKeyframe::Linear;
+        display.setKeyframe(key);
+      }
+      curve->copy(&display);
+    }
+  }
+  return changed;
 }
 
 //=============================================================================
@@ -1655,21 +1787,39 @@ void FunctionTreeView::openContextMenu(FunctionTreeModel::Channel *channel,
   QAction saveCurveAction(tr("Save Curve"), 0);
   QAction loadCurveAction(tr("Load Curve"), 0);
   QAction exportDataAction(tr("Export Data"), 0);
+  QAction applyCurveAction(tr("Apply Open Curve…"), 0);
+  QAction reloadCurveAction(tr("Reload from Source…"), 0);
+  TDoubleParamP curveRef(channel->getParam());
+  auto *curve     = curveRef.getPointer();
+  const auto name = channel->getLongName().toStdString();
   menu.addAction(&saveCurveAction);
-  menu.addAction(&loadCurveAction);
+  auto *model          = static_cast<FunctionTreeModel *>(this->model());
+  auto track           = model->keyTrack(curve);
+  const bool curveFile = m_viewer->isCurveFile(curve);
+  if (!track && !curveFile) {
+    menu.addAction(&loadCurveAction);
+    if (m_viewer->hasCurveFiles()) menu.addAction(&applyCurveAction);
+  }
+  if (curveFile || (track && track->canReload()))
+    menu.addAction(&reloadCurveAction);
   menu.addAction(&exportDataAction);
 
   QAction *action = menu.exec(globalPos);
-
-  TDoubleParam *curve = channel->getParam();
 
   if (action == &saveCurveAction)
     m_viewer->emitIoCurve((int)FunctionViewer::eSaveCurve, curve, "");
   else if (action == &loadCurveAction)
     m_viewer->emitIoCurve((int)FunctionViewer::eLoadCurve, curve, "");
   else if (action == &exportDataAction)
-    m_viewer->emitIoCurve((int)FunctionViewer::eExportCurve, curve,
-                          channel->getLongName().toStdString());
+    m_viewer->emitIoCurve((int)FunctionViewer::eExportCurve, curve, name);
+  else if (action == &applyCurveAction)
+    m_viewer->emitIoCurve((int)FunctionViewer::eApplyCurve, curve, name);
+  else if (action == &reloadCurveAction) {
+    if (track)
+      track->reload(this);
+    else
+      m_viewer->emitIoCurve((int)FunctionViewer::eReloadCurve, curve, name);
+  }
 }
 
 //-----------------------------------------------------------------------------

@@ -1,6 +1,7 @@
 
 
 #include "tapp.h"
+#include "functioneditortracks.h"
 
 // Tnz6 includes
 #include "cleanupsettingspopup.h"
@@ -154,6 +155,9 @@ TApp::TApp()
           &TApp::onSplineChanged);
   connect(m_paletteController->getCurrentLevelPalette(),
           &TPaletteHandle::paletteChanged, this, &TApp::onPaletteChanged);
+  connect(m_paletteController->getCurrentLevelPalette(),
+          &TPaletteHandle::showStyleInFunctionEditor, this,
+          &showPaletteStyleInFunctionEditor);
   connect(m_paletteController->getCurrentLevelPalette(),
           &TPaletteHandle::colorStyleSwitched, this,
           &TApp::onLevelColorStyleSwitched);
@@ -689,6 +693,39 @@ static void notifyPaletteChanged(TXshSimpleLevel *simpleLevel) {
     for (int i = 0; i < (int)fids.size(); i++)
       IconGenerator::instance()->invalidate(simpleLevel, fids[i]);
   }
+}
+
+//-----------------------------------------------------------------------------
+
+void TApp::showAMActionCurves(int column,
+                              const std::vector<std::int64_t> &pointIds) {
+  auto *xsheet = getCurrentXsheet()->getXsheet();
+  auto *xcol   = xsheet && column >= 0 ? xsheet->getColumn(column) : nullptr;
+  if (xcol && xcol->getLevelColumn())
+    showAMActionInFunctionEditor(xcol->getLevelColumn(), pointIds);
+}
+
+//-----------------------------------------------------------------------------
+
+void TApp::notifyPaletteKeyframesChanged(TPalette *palette) {
+  palette->setDirtyFlag(true);
+  auto *levelPaletteHandle = m_paletteController->getCurrentLevelPalette();
+  if (levelPaletteHandle->getPalette() == palette &&
+      getCurrentPalette()->getPalette() == palette) {
+    levelPaletteHandle->notifyColorStyleChanged(false, false);
+  } else {
+    onPaletteChanged();
+    auto *levels = getCurrentScene()->getScene()->getLevelSet();
+    for (int i = 0; i < levels->getLevelCount(); ++i) {
+      auto *simple = levels->getLevel(i)->getSimpleLevel();
+      if (simple && simple->getPalette() == palette)
+        notifyPaletteChanged(simple);
+    }
+  }
+  if (levelPaletteHandle->getPalette() == palette)
+    levelPaletteHandle->notifyPaletteDirtyFlagChanged();
+  getCurrentScene()->notifySceneChanged();
+  getCurrentXsheet()->notifyXsheetChanged();
 }
 
 //-----------------------------------------------------------------------------

@@ -485,6 +485,19 @@ void TDoubleParam::copy(TParam *src) {
 
 //---------------------------------------------------------
 
+void TDoubleParam::copyCurve(const TDoubleParam &src) {
+  m_imp->m_keyframes    = src.m_imp->m_keyframes;
+  m_imp->m_cycleEnabled = src.m_imp->m_cycleEnabled;
+  for (auto &key : m_imp->m_keyframes) {
+    key.updateUnit(m_imp->m_measure);
+    key.m_expression.setGrammar(m_imp->m_grammar);
+    key.m_expression.setOwnerParameter(this);
+  }
+  m_imp->notify(TParamChange(this, 0, 0, true, false, false));
+}
+
+//---------------------------------------------------------
+
 void TDoubleParam::setValueRange(double min, double max, double step) {
   if (min > max) min = max;
 

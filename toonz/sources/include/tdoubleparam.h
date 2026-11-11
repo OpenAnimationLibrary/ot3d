@@ -67,6 +67,9 @@ public:
   TParam *clone() const override { return new TDoubleParam(*this); }
   void copy(TParam *src) override;
 
+  // Copy keys and cycling while retaining this channel's identity and units.
+  void copyCurve(const TDoubleParam &src);
+
   std::string getMeasureName() const;
   void setMeasureName(std::string name);
   TMeasure *getMeasure() const;
