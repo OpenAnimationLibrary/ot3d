@@ -78,7 +78,28 @@ jobs:
               }
             }
           }
-          Remove-Item -LiteralPath $smokeDir -Recurse -Force
+          # The portable launcher can leave a second OpenToonz process.
+          # Only retire processes launched from this smoke test's directory.
+          Get-CimInstance Win32_Process -Filter "Name = 'OpenToonz.exe'" |
+            Where-Object { $_.ExecutablePath -eq $exe } |
+            ForEach-Object {
+              $child = Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue
+              if ($null -ne $child) {
+                if (-not $child.CloseMainWindow() -or -not $child.WaitForExit(10000)) {
+                  Stop-Process -Id $child.Id -Force -ErrorAction SilentlyContinue
+                  $null = $child.WaitForExit(10000)
+                }
+              }
+            }
+          for ($attempt = 0; $attempt -lt 10; $attempt++) {
+            try {
+              Remove-Item -LiteralPath $smokeDir -Recurse -Force
+              break
+            } catch {
+              if ($attempt -eq 9) { throw }
+              Start-Sleep -Seconds 2
+            }
+          }
 
   release:
     needs: smoke
