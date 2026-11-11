@@ -12,7 +12,7 @@ permissions:
 
 concurrency:
   group: ot3d-v0.1.0-alpha.4
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   smoke:
@@ -42,11 +42,11 @@ jobs:
           if ($run.conclusion -ne 'success') { throw "Windows build ended with $($run.conclusion)." }
           $artifacts = gh api "$endpoint/artifacts" | ConvertFrom-Json
           if ($LASTEXITCODE -ne 0) { throw 'Could not list Windows artifacts.' }
-          $matches = @($artifacts.artifacts | Where-Object {
+          $matchingArtifacts = @($artifacts.artifacts | Where-Object {
             -not $_.expired -and $_.name -eq "Opentoonz-Windows-$env:SOURCE_SHA"
           })
-          if ($matches.Count -ne 1) { throw 'Could not identify the exact Windows artifact.' }
-          $artifact = $matches[0]
+          if ($matchingArtifacts.Count -ne 1) { throw 'Could not identify the exact Windows artifact.' }
+          $artifact = $matchingArtifacts[0]
           $smokeDir = Join-Path $env:RUNNER_TEMP 'ot3d-portable-smoke'
           gh run download $env:WINDOWS_RUN --name $artifact.name --dir $smokeDir
           if ($LASTEXITCODE -ne 0) { throw 'Could not extract the Windows artifact.' }
@@ -177,7 +177,7 @@ jobs:
               'opentoonz.exe': (b'Create A:M Action', b'Align Left'),
               'tnztools.dll': (b'Show Action Curves in Function Editor',),
               'toonzqt.dll': (b'Open Curve File',),
-              'stdfx.dll': (b'Invalid Ink Line width curve',),
+              'tnzstdfx.dll': (b'Invalid Ink Line width curve',),
           }.items():
               binary = files[filename].read_bytes()
               if not binary.startswith(b'MZ') or not all(command in binary for command in commands):
