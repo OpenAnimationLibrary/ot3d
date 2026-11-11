@@ -1,0 +1,257 @@
+name: Publish OT3D 0.1.0-alpha.4
+
+on:
+  push:
+    branches: [release/0.1.0-alpha.4]
+    paths: [.github/workflows/release_alpha.yml]
+
+permissions:
+  actions: read
+  contents: write
+  pull-requests: read
+
+concurrency:
+  group: ot3d-v0.1.0-alpha.4
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    runs-on: windows-2025
+    timeout-minutes: 105
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      SOURCE_SHA: 9c24afbcad1afd4816683830cea501059675c91c
+      WINDOWS_RUN: 43017057015
+    steps:
+      - name: Launch portable OT3D from the exact Windows build
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $endpoint = "repos/$env:GH_REPO/actions/runs/$env:WINDOWS_RUN"
+          $deadline = (Get-Date).AddMinutes(90)
+          do {
+            $run = gh api $endpoint | ConvertFrom-Json
+            if ($LASTEXITCODE -ne 0 -or $run.head_sha -ne $env:SOURCE_SHA) {
+              throw 'Could not verify the Windows build source.'
+            }
+            if ($run.status -eq 'completed') { break }
+            if ((Get-Date) -ge $deadline) { throw 'Windows build timed out.' }
+            Start-Sleep -Seconds 30
+          } while ($true)
+          if ($run.conclusion -ne 'success') { throw "Windows build ended with $($run.conclusion)." }
+          $artifacts = gh api "$endpoint/artifacts" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'Could not list Windows artifacts.' }
+          $matches = @($artifacts.artifacts | Where-Object {
+            -not $_.expired -and $_.name -eq "Opentoonz-Windows-$env:SOURCE_SHA"
+          })
+          if ($matches.Count -ne 1) { throw 'Could not identify the exact Windows artifact.' }
+          $artifact = $matches[0]
+          $smokeDir = Join-Path $env:RUNNER_TEMP 'ot3d-portable-smoke'
+          gh run download $env:WINDOWS_RUN --name $artifact.name --dir $smokeDir
+          if ($LASTEXITCODE -ne 0) { throw 'Could not extract the Windows artifact.' }
+          if (-not (Test-Path (Join-Path $smokeDir 'portablestuff') -PathType Container)) {
+            throw 'Portable resources are missing.'
+          }
+          $exe = Join-Path $smokeDir 'Opentoonz.exe'
+          $process = Start-Process -FilePath $exe -WorkingDirectory $smokeDir -PassThru
+          try {
+            $deadline = (Get-Date).AddSeconds(90)
+            do {
+              Start-Sleep -Seconds 2
+              $process.Refresh()
+              if ($process.HasExited) { throw "OT3D exited during startup with $($process.ExitCode)." }
+              if ($process.MainWindowHandle -ne 0) { break }
+            } while ((Get-Date) -lt $deadline)
+            if ($process.MainWindowHandle -eq 0) { throw 'OT3D did not open a window.' }
+            Start-Sleep -Seconds 5
+            $process.Refresh()
+            if ($process.HasExited -or $process.MainWindowTitle -match '(?i)crash|fatal error') {
+              throw 'OT3D failed its startup smoke test.'
+            }
+            Write-Host "Launched portable OT3D: $($process.MainWindowTitle)"
+          } finally {
+            if (-not $process.HasExited) {
+              if (-not $process.CloseMainWindow() -or -not $process.WaitForExit(10000)) {
+                Stop-Process -Id $process.Id -Force
+                $process.WaitForExit()
+              }
+            }
+          }
+          Remove-Item -LiteralPath $smokeDir -Recurse -Force
+
+  release:
+    needs: smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 110
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      SOURCE_SHA: 9c24afbcad1afd4816683830cea501059675c91c
+      SOURCE_TREE: d4f4acde7dba5b1fb3d56511903d6024fa26c56c
+      WINDOWS_RUN: 43017057015
+      RELEASE_TAG: ot3d-v0.1.0-alpha.4
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: 9c24afbcad1afd4816683830cea501059675c91c
+          persist-credentials: false
+
+      - name: Verify and package the Windows build
+        shell: python
+        run: |
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import shutil
+          import subprocess
+          import zipfile
+
+          repo = os.environ['GH_REPO']
+          sha = os.environ['SOURCE_SHA']
+          tree = os.environ['SOURCE_TREE']
+          run_id = os.environ['WINDOWS_RUN']
+          tag = os.environ['RELEASE_TAG']
+          version = '0.1.0-alpha.4'
+          package_name = f'OT3D-{version}-windows-x64-portable'
+          if repo != 'OpenAnimationLibrary/ot3d':
+              raise RuntimeError('This release workflow is for OpenAnimationLibrary/ot3d')
+
+          def api(path):
+              return json.loads(subprocess.check_output(['gh', 'api', f'repos/{repo}/{path}']))
+
+          def sha256(path):
+              with path.open('rb') as file:
+                  return hashlib.file_digest(file, 'sha256').hexdigest()
+
+          if subprocess.check_output(['git', 'rev-parse', 'HEAD', 'HEAD^{tree}'],
+                                     text=True).splitlines() != [sha, tree]:
+              raise RuntimeError('Checked out source does not match the release source')
+          import time
+
+          for number in (34, 35, 36, 37):
+              pull = api(f'pulls/{number}')
+              if not pull['merged'] or pull['base']['ref'] != 'main':
+                  raise RuntimeError(f'PR #{number} has not landed on main')
+              ancestor = api(f"compare/{pull['merge_commit_sha']}...{sha}")
+              if ancestor['status'] not in ('ahead', 'identical'):
+                  raise RuntimeError(f'PR #{number} is absent from the release commit')
+
+          deadline = time.monotonic() + 90 * 60
+          while True:
+              run = api(f'actions/runs/{run_id}')
+              if (run['head_repository']['full_name'], run['head_sha'], run['head_branch'],
+                  run['path'], run['event']) != (
+                  repo, sha, 'main', '.github/workflows/workflow_windows.yml', 'push'):
+                  raise RuntimeError('Windows build does not match the release source')
+              if run['status'] == 'completed':
+                  if run['conclusion'] != 'success':
+                      raise RuntimeError(f"Windows build {run_id} ended with {run['conclusion']}")
+                  break
+              if time.monotonic() >= deadline:
+                  raise RuntimeError(f'Windows build {run_id} did not complete in time')
+              time.sleep(30)
+
+          artifacts = api(f'actions/runs/{run_id}/artifacts')['artifacts']
+          [artifact] = [item for item in artifacts if not item['expired'] and
+                        item['name'] == f'Opentoonz-Windows-{sha}']
+
+          archive = Path('windows-build.zip')
+          with archive.open('wb') as file:
+              subprocess.run(['gh', 'api', f"repos/{repo}/actions/artifacts/{artifact['id']}/zip"],
+                             stdout=file, check=True)
+          digest = 'sha256:' + sha256(archive)
+          if digest != artifact['digest']:
+              raise RuntimeError('Windows artifact digest mismatch')
+
+          root = Path('staging') / package_name
+          root.mkdir(parents=True)
+          with zipfile.ZipFile(archive) as source:
+              for member in source.infolist():
+                  if not (root / member.filename).resolve().is_relative_to(root.resolve()):
+                      raise RuntimeError(f'Unsafe ZIP path {member.filename}')
+              source.extractall(root)
+          files = {path.name.lower(): path for path in root.iterdir() if path.is_file()}
+          for filename, commands in {
+              'opentoonz.exe': (b'Create A:M Action', b'Align Left'),
+              'tnztools.dll': (b'Show Action Curves in Function Editor',),
+              'toonzqt.dll': (b'Open Curve File',),
+              'stdfx.dll': (b'Invalid Ink Line width curve',),
+          }.items():
+              binary = files[filename].read_bytes()
+              if not binary.startswith(b'MZ') or not all(command in binary for command in commands):
+                  raise RuntimeError(f'Missing expected feature text in {filename}')
+          if not (root / 'portablestuff').is_dir():
+              raise RuntimeError('Portable resource folder is missing')
+
+          out = Path('release-assets')
+          out.mkdir()
+          notes = out / 'RELEASE_NOTES.md'
+          notes.write_text(f"""## What's new since alpha.3
+
+          - Ink Line FX renders authored Animation:Master splines, including models without patches. Apply ink to the model or selected groups. [#34](https://github.com/{repo}/pull/34)
+          - Edit Ink Line width with a Bézier profile and control color and opacity separately. Fit the profile across a whole spline or each continuous inked section. [#35](https://github.com/{repo}/pull/35)
+          - Align and distribute Xsheet or Timeline columns by their current-frame content bounds. Align selected A:M control points in model-local X/Y while preserving depth and spline bias. With an attached Action, the operation writes position keys. [#36](https://github.com/{repo}/pull/36)
+          - Open palette keys, A:M Action tracks, and standalone `.curve` files in the Function Editor. Clean open curve files reload from disk, and Action tracks can reload from source on request. [#37](https://github.com/{repo}/pull/37)
+
+          ## Compatibility and limitations
+
+          This experimental Windows x64 alpha uses OT3D's OpenToonz baseline recorded in `BUILD_INFO.json`. Action curve editing covers control-point position channels. Palette curve editing covers solid RGBA styles. Save a copy of scenes and assets before using the new Ink Line profile, Action, or curve-file features. For supported formats and viewer and render limitations, see `OT3D-docs/COMPATIBILITY.md`.
+
+          ## Installation and rollback
+
+          Extract the full ZIP to a new writable folder and run OpenToonz with `portablestuff` beside it. Keep alpha.3 and your pre-upgrade scene and asset copies for rollback. Remove the extracted folder to uninstall the portable copy.
+
+          ## Verification
+
+          Windows CI passed its native A:M, GLB, and OpenEXR tests on the release commit. A Windows smoke test verified that the portable application opened from the extracted build. Packaging verified the source artifact checksum and feature markers in the shipped binaries. Download `SHA256SUMS` to verify the portable archive.
+
+          [Source commit](https://github.com/{repo}/commit/{sha}) · [Windows build]({run['html_url']}) · [Changes since alpha.3](https://github.com/{repo}/compare/ot3d-v0.1.0-alpha.3...{tag})
+          """, encoding='utf-8')
+          shutil.copy('LICENSE.txt', root)
+          shutil.copytree('stuff/doc/LICENSE', root / 'LICENSES')
+          shutil.copy('thirdparty/cgltf/LICENSE', root / 'LICENSES' / 'LICENSE_cgltf.txt')
+          shutil.copytree('thirdparty/libmypaint/license', root / 'LICENSES' / 'libmypaint-dependencies')
+          shutil.copytree('doc/ot3d', root / 'OT3D-docs')
+          shutil.copy(notes, root / 'README-OT3D.md')
+          info = dict(version=version, tag=tag, source_sha=sha, source_tree=tree,
+                      build_sha=sha, platform='windows-x64-portable',
+                      toolchain='windows-2025, Visual Studio 18 2026, MSVC x64',
+                      artifact_created_at=artifact['created_at'],
+                      upstream_baseline='9001fd493e4ec27bf3efc368252eccb7da703928',
+                      migration_record='OT3D-docs/THREE_D_MIGRATION.md',
+                      support_matrix='OT3D-docs/COMPATIBILITY.md',
+                      build_configuration='RelWithDebInfo',
+                      build_flags=['WITH_WINTAB', 'BUILD_EXR_TESTS', 'BUILD_EXR_AOV_FX_TESTS',
+                                   'BUILD_GLB_FX_TESTS', 'BUILD_AM_LEVEL_TESTS'],
+                      support_matrix_revision=subprocess.check_output(
+                          ['git', 'rev-parse', 'HEAD:doc/ot3d/COMPATIBILITY.md'],
+                          text=True).strip(),
+                      workflow_run=run['html_url'], source_artifact_id=artifact['id'],
+                      source_artifact_digest=digest,
+                      packaging_run=f"https://github.com/{repo}/actions/runs/{os.environ['GITHUB_RUN_ID']}")
+          (root / 'BUILD_INFO.json').write_text(json.dumps(info, indent=2) + '\n', encoding='utf-8')
+          package = Path(shutil.make_archive(str(out / package_name), 'zip', root.parent, root.name))
+          (out / 'SHA256SUMS').write_text(f'{sha256(package)}  {package.name}\n', encoding='utf-8')
+
+      - name: Publish the Windows alpha prerelease
+        shell: bash
+        run: |
+          set -euo pipefail
+          existing_tag="$(git ls-remote --tags origin "refs/tags/$RELEASE_TAG" | cut -f1)"
+          if [[ -n "$existing_tag" && "$existing_tag" != "$SOURCE_SHA" ]]; then
+            echo "The existing release tag points to a different commit."
+            exit 1
+          fi
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" \
+              release-assets/OT3D-0.1.0-alpha.4-windows-x64-portable.zip release-assets/SHA256SUMS \
+              --target "$SOURCE_SHA" --title "OT3D 0.1.0-alpha.4" --prerelease --latest=false \
+              --notes-file release-assets/RELEASE_NOTES.md
+          fi
+          test "$(git ls-remote --tags origin "refs/tags/$RELEASE_TAG" | cut -f1)" = "$SOURCE_SHA"
+          mkdir verified
+          gh release download "$RELEASE_TAG" --dir verified --pattern 'OT3D-*-windows-x64-portable.zip' --pattern SHA256SUMS
+          cd verified
+          sha256sum --check SHA256SUMS
