@@ -2329,10 +2329,7 @@ void SceneViewer::drawScene() {
 
     // gather animated guide strokes' bounding boxes
     // it is used for updating viewer next time
-    std::vector<TStroke *> guidedStrokes = painter.getGuidedStrokes();
-    for (auto stroke : guidedStrokes) {
-      m_guidedDrawingBBox += stroke->getBBox();
-    }
+    m_guidedDrawingBBox += painter.getGuidedStrokeBBox();
   }
 }
 
