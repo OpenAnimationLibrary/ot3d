@@ -78,8 +78,8 @@
   <item>"STD_amMaterialFx.unsupportedAttributes" "Unsupported Attributes" </item>
   <item>"STD_threePointLightFx" "Three-Point Light" </item>
   <item>"STD_inkLineFx" "Ink Line" </item>
-  <item>"STD_inkLineFx.group" "Group (empty = whole model)" </item>
-  <item>"STD_inkLineFx.scope" "Spline Scope" </item>
+  <item>"STD_inkLineFx.group" "Group (A:M models)" </item>
+  <item>"STD_inkLineFx.scope" "Ink Scope" </item>
   <item>"STD_inkLineFx.profile" "Vary Width and Color" </item>
   <item>"STD_inkLineFx.startWidth" "Width / Start Width" </item>
   <item>"STD_inkLineFx.middleWidth" "Middle Width" </item>

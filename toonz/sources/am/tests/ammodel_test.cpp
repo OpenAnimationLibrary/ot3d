@@ -137,6 +137,13 @@ void testSplineProfile() {
   checkPoint(whole, 2.5, 3.5, 0.3125, 0.625);
   checkPoint(whole, 10, 0, 0, 0);
 
+  auto vectorStyle = ink;
+  vectorStyle.profile.reset();
+  vectorStyle.colors[1]   = {{0, 1, 0, 1}};
+  const auto vectorStroke = otam::strokeSplines(mesh, {vectorStyle}, nullptr,
+                                                identity, nullptr, true);
+  checkPoint(vectorStroke, 5, 2, 1, 1);
+
   ink.group = "Middle";
   const auto sectionOfWhole =
       otam::strokeSplines(mesh, {ink}, nullptr, identity);

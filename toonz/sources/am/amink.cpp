@@ -179,7 +179,8 @@ std::vector<InkTriangle> strokeSplines(const Mesh &mesh,
                                        const InkBindings &bindings,
                                        const Matrix *view,
                                        const Matrix &imageToStage,
-                                       const int *canceled) {
+                                       const int *canceled, bool useArcLength,
+                                       std::size_t firstSplineIndex) {
   std::vector<InkTriangle> result;
   if (bindings.empty()) return result;
   const auto project = [&](StrokePoint p) {
@@ -212,7 +213,8 @@ std::vector<InkTriangle> strokeSplines(const Mesh &mesh,
 
     std::vector<ArcSamples> arc;
     std::vector<double> lengths;
-    if (std::any_of(styles.begin(), styles.end(), [](const InkStyle *style) {
+    if (useArcLength ||
+        std::any_of(styles.begin(), styles.end(), [](const InkStyle *style) {
           return style && style->profile.has_value();
         })) {
       arc.reserve(count);
@@ -255,11 +257,13 @@ std::vector<InkTriangle> strokeSplines(const Mesh &mesh,
       const bool perSection = advanced && style->profile->perSection;
       const double origin   = perSection ? cumulative(begin) : 0;
       const double span =
-          advanced ? (perSection ? cumulative(end) - origin : lengths.back())
-                   : 0;
+          (advanced || useArcLength)
+              ? (perSection ? cumulative(end) - origin : lengths.back())
+              : 0;
       bool wholeSpline = spline.closed && end - begin == count;
       const auto flush = [&]() {
-        emitStroke(run, *style, s, wholeSpline, imageToStage, result);
+        emitStroke(run, *style, firstSplineIndex + s, wholeSpline, imageToStage,
+                   result);
         run.clear();
         wholeSpline = false;
       };

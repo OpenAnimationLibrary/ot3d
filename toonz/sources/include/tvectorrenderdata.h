@@ -7,6 +7,8 @@
 #include "tgeometry.h"
 #include "tpixel.h"
 
+#include <functional>
+
 #undef DVAPI
 #undef DVVAR
 #ifdef TVRENDER_EXPORTS
@@ -23,6 +25,7 @@
 
 class TPalette;
 class TColorFunction;
+class TVectorImage;
 
 //========================================================================
 
@@ -92,6 +95,8 @@ public:
                             // drawing
       m_highLightNow;       // Show highlight on active stroke
   bool m_animatedGuidedDrawing = false;
+  // Optional replacement for a stroke at its normal position in the draw order.
+  std::function<bool(const TVectorImage &, UINT)> m_drawStroke;
   //!  \deprecated  Use the above individual options instead.
   //!  \todo  Remove it ASAP.
 public:

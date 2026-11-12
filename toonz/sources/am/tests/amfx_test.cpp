@@ -14,6 +14,8 @@
 #include "toonz/txshcell.h"
 #include "toonz/txshsimplelevel.h"
 #include "toonz/txshleveltypes.h"
+#include "toonz/txshlevelcolumn.h"
+#include "toonz/vectoraction.h"
 #include "toonz/txsheethandle.h"
 #include "toonz/scenefx.h"
 #include "toonz/fxcommand.h"
@@ -28,6 +30,9 @@
 #include "tthread.h"
 #include "tstream.h"
 #include "tparamcontainer.h"
+#include "tpalette.h"
+#include "tstroke.h"
+#include "tvectorimage.h"
 #include <QGuiApplication>
 #include <QTemporaryDir>
 #include <QFile>
@@ -58,10 +63,11 @@ double brightness(const TRaster32P &raster) {
     }
   return result;
 }
-TRaster32P render(ToonzScene &scene, const TRenderSettings &settings) {
+TRaster32P render(ToonzScene &scene, const TRenderSettings &settings,
+                  double frame = 0) {
   const TFxP tree =
-      buildSceneFx(&scene, scene.getXsheet(), 0, TOutputProperties::AllLevels,
-                   1, false, settings);
+      buildSceneFx(&scene, scene.getXsheet(), frame,
+                   TOutputProperties::AllLevels, 1, false, settings);
   auto *fx = dynamic_cast<TRasterFx *>(tree.getPointer());
   require(fx, "missing scene render tree");
   TRaster32P raster(128, 128);
@@ -71,12 +77,131 @@ TRaster32P render(ToonzScene &scene, const TRenderSettings &settings) {
   const auto id = TRenderer::buildRenderId();
   renderer.install(id);
   renderer.declareRenderStart(id);
-  renderer.declareFrameStart(0);
-  fx->compute(tile, 0, settings);
-  renderer.declareFrameEnd(0);
+  renderer.declareFrameStart(frame);
+  fx->compute(tile, frame, settings);
+  renderer.declareFrameEnd(frame);
   renderer.declareRenderEnd(id);
   renderer.uninstall();
   return raster;
+}
+void testVectorInkLine(const QTemporaryDir &temp) {
+  ToonzScene scene;
+  scene.setScenePath(TFilePath(temp.filePath("vector-ink.tnz")));
+  scene.getProperties()->getOutputProperties()->setFrameRate(24);
+  TXshSimpleLevelP level = new TXshSimpleLevel(L"Vector Ink");
+  level->setScene(&scene);
+  level->setType(PLI_XSHLEVEL);
+  level->setPath(TFilePath(temp.filePath("vector-ink.pli")));
+  level->setPalette(new TPalette);
+  auto *palette  = level->getPalette();
+  const int red  = palette->addStyle(TPixel32::Red);
+  const int blue = palette->addStyle(TPixel32::Blue);
+
+  TVectorImageP drawing(new TVectorImage);
+  drawing->setPalette(palette);
+  auto *loop = new TStroke({{-30, -12, 2},
+                            {-20, -12, 2},
+                            {-10, -12, 2},
+                            {-10, 0, 2},
+                            {-10, 12, 2},
+                            {-20, 12, 2},
+                            {-30, 12, 2},
+                            {-30, 0, 2},
+                            {-30, -12, 2}});
+  loop->setSelfLoop();
+  loop->setStyle(red);
+  drawing->addStroke(loop, false);
+  auto *line = new TStroke({{0, 0, 3}, {15, 0, 3}, {30, 0, 3}});
+  line->setStyle(red);
+  drawing->addStroke(line, false);
+  drawing->findRegions();
+  drawing->fill(TPointD(-20, 0), blue);
+  const TFrameId fid(1);
+  level->setFrame(fid, drawing);
+
+  auto *xsheet = scene.getXsheet();
+  require(xsheet->setCell(0, 0, TXshCell(level.getPointer(), fid)) &&
+              xsheet->setCell(24, 0, TXshCell(level.getPointer(), fid)),
+          "expose vector ink drawing");
+  auto *column = xsheet->getColumn(0)->getLevelColumn();
+  TFxP owner   = new InkLineFx;
+  auto &ink    = *static_cast<InkLineFx *>(owner.getPointer());
+  require(canConnectFxPort(ink.getInputPort(0), column->getFx()),
+          "Ink Line rejected a vector column");
+  ink.getInputPort(0)->setFx(column->getFx());
+
+  TRenderSettings info;
+  TRectD originalBounds, inkBounds;
+  require(ink.doGetBBox(0, originalBounds, info), "vector ink bounds missing");
+  set(ink, "startWidth", 12);
+  require(ink.doGetBBox(0, inkBounds, info) &&
+              inkBounds.getLx() > originalBounds.getLx(),
+          "vector ink bounds did not grow with the profile width");
+
+  auto action = VectorAction::forDrawing(drawing);
+  VectorAction::Offsets offsets;
+  for (int i = 0; i < line->getControlPointCount(); ++i)
+    offsets[{1, i}] = TPointD(0, 24);
+  action.setKeys(1, offsets);
+  column->setVectorAction(
+      {level.getPointer(), fid, TFilePath(temp.filePath("vector-ink.vact")), 0,
+       std::make_shared<const VectorAction>(std::move(action))});
+  TRectD posedBounds;
+  require(
+      ink.doGetBBox(24, posedBounds, info) && posedBounds.y1 > inkBounds.y1 + 5,
+      "vector ink bounds ignored the current Action pose");
+
+#if defined(LINUX) || defined(FREEBSD)
+  // The native vector rasterizer uses an X11 OpenGL context on these platforms.
+  if (qEnvironmentVariableIsEmpty("DISPLAY")) return;
+#endif
+  auto *dag = xsheet->getFxDag();
+  dag->getInternalFxs()->addFx(owner.getPointer());
+  dag->getTerminalFxs()->removeFx(column->getFx());
+  dag->getTerminalFxs()->addFx(owner.getPointer());
+
+  auto *color =
+      dynamic_cast<TPixelParam *>(ink.getParams()->getParam("startColor"));
+  auto *scope =
+      dynamic_cast<TIntEnumParam *>(ink.getParams()->getParam("scope"));
+  require(color && scope, "vector Ink Line controls missing");
+  color->setValue(0, TPixel32::Green);
+  set(ink, "startWidth", 3);
+  const auto countColor = [](const TRaster32P &raster, const TPixel32 &color) {
+    int count = 0;
+    for (int y = 0; y < raster->getLy(); ++y)
+      for (int x = 0; x < raster->getLx(); ++x)
+        if (raster->pixels(y)[x] == color) ++count;
+    return count;
+  };
+  const auto all = render(scene, info);
+  require(
+      countColor(all, TPixel32::Green) > 0 &&
+          countColor(all, TPixel32::Blue) > 0 &&
+          countColor(all, TPixel32::Red) == 0,
+      "vector Ink Line did not replace the original ink and preserve paint");
+  scope->setValue(1);
+  const auto unfilled = render(scene, info);
+  require(
+      countColor(unfilled, TPixel32::Red) > 0 &&
+          countColor(unfilled, TPixel32::Green) > 0 &&
+          countColor(unfilled, TPixel32::Green) <
+              countColor(all, TPixel32::Green),
+      "unfilled ink did not preserve the painted region's original outline");
+  const auto firstGreenRow = [](const TRaster32P &raster) {
+    for (int y = 0; y < raster->getLy(); ++y)
+      for (int x = 0; x < raster->getLx(); ++x)
+        if (raster->pixels(y)[x] == TPixel32::Green) return y;
+    return -1;
+  };
+  require(firstGreenRow(render(scene, info, 24)) > firstGreenRow(unfilled) + 5,
+          "rendered ink did not follow the Vector Action");
+  set(ink, "fadeIn", 100);
+  require(countColor(render(scene, info), TPixel32::Green) <
+              countColor(unfilled, TPixel32::Green),
+          "vector ink fade did not change the rendered stroke");
+  require(line->getStyle() == red && loop->getStyle() == red,
+          "rendering Ink Line changed the source drawing");
 }
 void testInkLine(const QString &path) {
   {
@@ -527,6 +652,7 @@ int main(int argc, char **argv) {
     require(isAMModelColumn(column), "native column classification");
     testMaterials(scene, level, column, temp.filePath("surface.mat"));
     testInkLine(temp.filePath("ink-lines.mdl"));
+    testVectorInkLine(temp);
     testShine(scene, temp.filePath("shine.mat"));
     const auto original = level->getAMLevel()->mesh();
     TFxP transformOwner = new Transform3DFx;
