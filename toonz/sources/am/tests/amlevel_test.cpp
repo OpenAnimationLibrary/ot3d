@@ -2,6 +2,7 @@
 // context.
 #include "amfixture.h"
 #include "amaction.h"
+#include "ext/plasticskeletondeformation.h"
 #include "../../glb/tests/glbfixture.h"
 #include "toonz/txshglblevel.h"
 #include "toonz/txshamlevel.h"
@@ -437,6 +438,46 @@ int main(int argc, char **argv) {
           "incompatible action did not safely restore the base pose");
     animatedColumn->setAMAction(binding);
 
+    // The A:M column hosts an ordinary Plastic skeleton. Its Action offsets
+    // are evaluated first and the resulting native splines and patches are
+    // posed.
+    auto *rigObject =
+        xsheet->getStageObject(TStageObjectId::ColumnId(actionColumn));
+    const auto beforeRig =
+        prepareNativeModelGeometry(xsheet, actionColumn, sample, false);
+    const PlasticSkeletonP skeleton(new PlasticSkeleton);
+    const int root = skeleton->addVertex(PlasticSkeletonVertex(TPointD()), -1);
+    const int bone =
+        skeleton->addVertex(PlasticSkeletonVertex(TPointD(100, 0)), root);
+    const PlasticSkeletonDeformationP rig(new PlasticSkeletonDeformation);
+    rig->attach(1, skeleton.getPointer());
+    rig->skeletonIdsParam()->setDefaultValue(1);
+    const auto angle = rig->vertexDeformation(1, bone)->m_params[SkVD::ANGLE];
+    angle->setKeyframe(TDoubleKeyframe(0, 0));
+    angle->setKeyframe(TDoubleKeyframe(sample, 60));
+    rigObject->setPlasticSkeletonDeformation(rig);
+    const auto rigged =
+        prepareNativeModelGeometry(xsheet, actionColumn, sample, false);
+    const auto rigRest =
+        prepareNativeModelGeometry(xsheet, actionColumn, sample, false, false);
+    check(rigged && rigRest &&
+              rigged->triangles.front().vertices !=
+                  beforeRig->triangles.front().vertices &&
+              rigged->triangles.front().color ==
+                  beforeRig->triangles.front().color &&
+              rigged->splines.front().curves.front().points !=
+                  beforeRig->splines.front().curves.front().points &&
+              rigRest->triangles.front().vertices ==
+                  beforeRig->triangles.front().vertices &&
+              amModelAt(xsheet, actionColumn, sample)->points[1].position ==
+                  actionPose->points[1].position,
+          "Plastic did not pose native geometry without altering the Action");
+    TRasterFxP riggedFx(
+        makeNativeModelRenderFx(xsheet, actionColumn, sample, false));
+    check(riggedFx->getAlias(sample, TRenderSettings()) !=
+              sampleFx->getAlias(sample, TRenderSettings()),
+          "Plastic pose shared the unrigged render cache identity");
+
     // Serialization includes new native resource and ordinary stage channel
     // keys.
     const TFilePath serialized(temp.path() + "/sheet.xml");
@@ -476,6 +517,12 @@ int main(int argc, char **argv) {
             reopenedPose &&
             reopenedPose->points[1].position == actionPose->points[1].position,
         "action attachment or working copy was lost on scene reopen");
+    const auto reopenedRig =
+        prepareNativeModelGeometry(restored, actionColumn, sample, false);
+    check(reopenedRig && reopenedRig->triangles.front().vertices ==
+                             rigged->triangles.front().vertices,
+          "native Plastic pose was lost on reopen");
+    rigObject->setPlasticSkeletonDeformation(PlasticSkeletonDeformationP());
     check(
         prepareAMLevelGeometry(restored, 0, 0, false)->triangles[0].vertices ==
             prepareAMLevelGeometry(xsheet, 0, 0, false)->triangles[0].vertices,

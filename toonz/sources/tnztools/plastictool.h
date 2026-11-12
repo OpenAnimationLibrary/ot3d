@@ -26,6 +26,7 @@
 
 // STD includes
 #include <memory>
+#include <optional>
 
 // tcg includes
 #include "tcg/tcg_base.h"
@@ -33,6 +34,7 @@
 
 // Qt includes
 #include <QObject>
+#include <QTransform>
 
 //****************************************************************************************
 //    Metric defines
@@ -98,6 +100,13 @@ private:
                            //! skeleton
 
   TMeshImageP m_mi;  //!< Current mesh image
+  std::optional<QTransform> m_amRigPlane;
+  const TToolViewer *m_amRigViewer = nullptr;
+
+  bool isAMTarget() const;
+  std::optional<TPointD> rigPosition(const TPointD &pos,
+                                     const TMouseEvent &event) const;
+  double getPixelSize() const;
 
   // Property-related vars  (ie, tool options)
 
@@ -184,6 +193,8 @@ public:
   ~PlasticTool();
 
   ToolType getToolType() const override;
+  QString updateEnabled(int row, int column) override;
+  void updateMatrix() override;
   int getCursorId() const override { return ToolCursor::SplineEditorCursor; }
 
   ToolOptionsBox *createOptionsBox() override;
@@ -413,7 +424,10 @@ private:
   GenericToolOptionsBox **m_subToolbars;
 
   SkelIdsComboBox *m_skelIdComboBox;
-  QPushButton *m_addSkelButton, *m_removeSkelButton;
+  QPushButton *m_addSkelButton, *m_removeSkelButton, *m_meshifyButton;
+  QWidget *m_soField, *m_soLabel;
+
+  void updateTargetControls();
 
 private:
   void showEvent(QShowEvent *se) override;

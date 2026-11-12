@@ -30,6 +30,44 @@ std::string replace(std::string s, const std::string &a, const std::string &b) {
   s.replace(pos, a.size(), b);
   return s;
 }
+void testPlasticBones() {
+  otam::Model rest;
+  rest.points.resize(3);
+  rest.points[0].position = {1, 0.5, 7};
+  rest.points[1].position = {9, 1, -3};
+  rest.points[1].head     = 1;
+  // The last occurrence shares point 0's position, even across splines.
+  rest.points[2].position = {100, 100, 0};
+  auto pose               = rest;
+  pose.points[0].position = {1.5, 0.75, 9};
+  pose.points[1].position = {1, 1, -3};
+
+  const std::vector<otam::PlasticBone> bones{
+      {{0, 0, 0}, {2, 0, 0}, {1, 1, 0}, {1, 5, 0}},
+      {{8, 0, 0}, {10, 0, 0}, {8, 0, 0}, {10, 0, 0}}};
+  check(otam::applyPlasticBones(rest, pose, bones),
+        "Plastic pose did not move CPs");
+  near(pose.points[0].position[0], 0.25);
+  near(pose.points[0].position[1], 4);
+  near(pose.points[0].position[2], 9);
+  check(pose.points[1].position == otam::Vec3{1, 1, -3},
+        "an Action offset changed the chosen rest bone");
+  check(pose.points[2].position == rest.points[2].position,
+        "Plastic posed the welded occurrence independently");
+  check(rest.points[0].position == otam::Vec3{1, 0.5, 7},
+        "Plastic changed the base drawing");
+
+  auto collapsed = rest;
+  check(otam::applyPlasticBones(rest, collapsed,
+                                {{{0, 0, 0}, {2, 0, 0}, {1, 1, 0}, {1, 1, 0}}}),
+        "a collapsed bone skipped deformation");
+  near(collapsed.points[0].position[0], 1);
+  near(collapsed.points[0].position[1], 1.5);
+  near(collapsed.points[0].position[2], 7);
+  check(!otam::applyPlasticBones(rest, collapsed, {}),
+        "an absent rig reported deformation");
+}
+
 void testInk(const otam::Mesh &filled) {
   const auto mesh = otam::previewMesh(otam::parse(amtest::splineSource));
   check(mesh.triangles.empty() && mesh.splines.size() == 2,
@@ -197,6 +235,7 @@ int main() {
     auto mesh = otam::previewMesh(d, 0, 2);
     check(mesh.triangles.size() == 8, "quad tessellation");
     testInk(mesh);
+    testPlasticBones();
     testSplineProfile();
     near(mesh.triangles[0].color[0], 1);
     near(mesh.triangles[0].color[1], 0);

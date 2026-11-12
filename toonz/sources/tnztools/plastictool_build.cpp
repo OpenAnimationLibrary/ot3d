@@ -1,4 +1,4 @@
-
+#include "toonz/txshamlevel.h"
 
 // TnzCore includes
 #include "tundo.h"
@@ -17,6 +17,9 @@
 
 #include "plastictool.h"
 
+#include <cmath>
+#include <limits>
+
 using namespace PlasticToolLocals;
 
 //****************************************************************************************
@@ -25,14 +28,36 @@ using namespace PlasticToolLocals;
 
 namespace {
 
-TPointD closestMeshVertexPos(const TPointD &pos, double *distance = 0) {
+TPointD closestRigVertexPos(const TPointD &pos, double *distance = 0) {
   const TXshCell &imageCell = TTool::getImageCell();
 
-  TXshSimpleLevel *sl = imageCell.getSimpleLevel();
-  assert(sl);
+  if (auto *level =
+          imageCell.m_level ? imageCell.m_level->getAMLevel() : nullptr) {
+    const auto model   = level->editableModel();
+    const double units = Stage::inch / 2.54;
+    double best        = std::numeric_limits<double>::infinity();
+    TPointD nearest    = pos;
+    if (model)
+      for (std::size_t i = 0; i < model->points.size(); ++i) {
+        const auto &point = model->points[i];
+        if (point.head != i) continue;
+        const TPointD p(point.position[0] * units, point.position[1] * units);
+        const double d = norm2(p - pos);
+        if (d < best) {
+          best    = d;
+          nearest = p;
+        }
+      }
+    if (distance) *distance = std::sqrt(best);
+    return nearest;
+  }
 
-  TMeshImageP mi(TTool::getImage(false));
-  assert(mi);
+  TXshSimpleLevel *sl = imageCell.getSimpleLevel();
+  const TMeshImageP mi(TTool::getImage(false));
+  if (!sl || !mi) {
+    if (distance) *distance = std::numeric_limits<double>::infinity();
+    return pos;
+  }
 
   // Retrieve *level* dpi
   // NOTE: This is different than current IMAGE's dpi. An image is actually
@@ -497,7 +522,7 @@ void PlasticTool::mouseMove_build(const TPointD &pos, const TMouseEvent &me) {
     // No highlighted skeleton primitive. Mouse position may be
     // a candidate for vertex addition - snap to mesh if required
     if (m_snapToMesh.getValue()) {
-      const TPointD &mvPos = ::closestMeshVertexPos(
+      const TPointD &mvPos = ::closestRigVertexPos(
           pos, &d);  // No need to check against closest skeleton vertex,
                      // since vertex highlighting kicks in at the same time
       if (d < highlightRadius)  // the snapping would take place.
@@ -541,9 +566,9 @@ void PlasticTool::leftButtonDown_build(const TPointD &pos,
       if (m_snapToMesh.getValue()) {
         double d, highlightRadius = getPixelSize() * HIGHLIGHT_DISTANCE;
 
-        const TPointD &mvPos = ::closestMeshVertexPos(
-            pos, &d);  // Again, no need to check against closest
-                       // skeleton vertex.
+        const TPointD &mvPos =
+            ::closestRigVertexPos(pos, &d);  // Again, no need to check against
+                                             // closest skeleton vertex.
         if (d < highlightRadius) m_pos = mvPos;
       }
 
@@ -583,7 +608,7 @@ void PlasticTool::leftButtonDrag_build(const TPointD &pos,
                                        const TMouseEvent &me) {
   // Track mouse position
   if (m_snapToMesh.getValue()) {
-    const TPointD &mvPos = ::closestMeshVertexPos(pos),
+    const TPointD &mvPos = ::closestRigVertexPos(pos),
                   &svPos = ::closestSkeletonVertexPos(mvPos);
 
     if (tcg::point_ops::dist(mvPos, svPos) >
@@ -603,7 +628,7 @@ void PlasticTool::leftButtonUp_build(const TPointD &pos,
                                      const TMouseEvent &me) {
   // Track mouse position
   if (m_snapToMesh.getValue()) {
-    const TPointD &mvPos = ::closestMeshVertexPos(pos),
+    const TPointD &mvPos = ::closestRigVertexPos(pos),
                   &svPos = ::closestSkeletonVertexPos(mvPos);
 
     if (tcg::point_ops::dist(mvPos, svPos) > getPixelSize())  // Same as above

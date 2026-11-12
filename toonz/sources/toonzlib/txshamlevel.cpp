@@ -71,6 +71,7 @@ void TXshAMLevel::setPath(const TFilePath &path, bool keepCached) {
   m_renderPalette.reset();
   m_colorOverrides.clear();
   m_actionSample = {};
+  m_plasticSample = {};
   m_revision.clear();
   m_error.clear();
 }
@@ -238,6 +239,7 @@ void TXshAMLevel::load() {
     m_renderMesh = m_mesh;
     m_colorOverrides.clear();
     m_actionSample = {};
+    m_plasticSample = {};
     updatePaletteColorsLocked();
     m_revision = revision;
     m_error.clear();
@@ -251,6 +253,7 @@ void TXshAMLevel::load() {
     m_renderPalette.reset();
     m_colorOverrides.clear();
     m_actionSample = {};
+    m_plasticSample = {};
     m_revision.clear();
     m_error = "A:M model " + path.getQString().toStdString() + ": " + e.what();
     throw TException(m_error);
@@ -331,6 +334,7 @@ bool TXshAMLevel::setControlPoints(const PointValues &values,
   m_renderMesh     = std::move(renderMesh);
   m_colorOverrides = std::move(overrides);
   m_actionSample   = {};
+  m_plasticSample  = {};
   return true;
 }
 
@@ -526,16 +530,38 @@ std::shared_ptr<const otam::Mesh> TXshAMLevel::renderMesh(int frame) const {
 
 std::shared_ptr<const otam::Mesh> TXshAMLevel::renderMesh(
     int frame, const std::shared_ptr<const otam::Action> &action,
-    double seconds) const {
+    double seconds, const std::vector<otam::PlasticBone> &bones) const {
   std::lock_guard<std::mutex> lock(m_mutex);
   if (m_renderPalette && m_renderPalette->getFrame() != frame) {
     m_renderPalette->setFrame(frame);
     updateRenderMeshLocked(*m_renderPalette);
   }
-  if (!m_editableModel || !action || action->channels.empty() || seconds < 0)
-    return m_renderMesh;
+  if (!m_editableModel) return m_renderMesh;
 
-  sampleActionLocked(action, seconds);
+  const bool sampleAction = action && !action->channels.empty() && seconds >= 0;
+  if (sampleAction) sampleActionLocked(action, seconds);
+  if (!bones.empty()) {
+    const auto pose = sampleAction && m_actionSample.model
+                          ? m_actionSample.model
+                          : m_editableModel;
+    if (m_plasticSample.pose.lock() != pose || m_plasticSample.bones != bones) {
+      PlasticSample sample{pose, bones, {}};
+      auto posed = *pose;
+      if (otam::applyPlasticBones(*m_editableModel, posed, bones))
+        sample.mesh = std::make_shared<otam::Mesh>(
+            otam::previewMesh(posed, m_document->warnings));
+      m_plasticSample = std::move(sample);
+    }
+    if (m_plasticSample.mesh) {
+      auto mesh = meshWithColorsLocked(m_plasticSample.mesh, m_colorOverrides);
+      if (!sampleAction || m_actionSample.warning.empty()) return mesh;
+      auto fallback = std::make_shared<otam::Mesh>(*mesh);
+      fallback->warnings.push_back(m_actionSample.warning);
+      return fallback;
+    }
+  }
+
+  if (!sampleAction) return m_renderMesh;
   if (!m_actionSample.mesh) {
     auto fallback = std::make_shared<otam::Mesh>(*m_renderMesh);
     fallback->warnings.push_back(m_actionSample.warning);

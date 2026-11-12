@@ -14,6 +14,7 @@
 #include "toonzqt/selectioncommandids.h"
 
 // TnzLib includes
+#include "toonz/amlevelrender.h"
 #include "toonz/tframehandle.h"
 #include "toonz/tcolumnhandle.h"
 #include "toonz/txsheethandle.h"
@@ -22,6 +23,7 @@
 #include "toonz/tstageobject.h"
 #include "toonz/doubleparamcmd.h"
 #include "toonz/palettecontroller.h"
+#include "toonz/txshamlevel.h"
 #include "toonz/txshsimplelevel.h"
 
 // TnzExt includes
@@ -40,6 +42,10 @@
 #include <QPushButton>
 #include <QLabel>
 #include <QClipboard>
+#include <QStandardItemModel>
+
+#include <cmath>
+#include <stdexcept>
 
 // tcg includes
 #include "tcg/tcg_macros.h"
@@ -54,6 +60,45 @@
 namespace {
 
 static const double l_dmax = (std::numeric_limits<double>::max)();
+
+// The skeleton lives on the model's local XY plane. Draw and hit-test it
+// with the same model and camera matrices as the native geometry.
+std::optional<QTransform> amRigPlane(TXsheet *sheet, int column, double frame,
+                                     bool view3D) {
+  double glView[16];
+  glGetDoublev(GL_MODELVIEW_MATRIX, glView);
+  otam::Matrix viewer;
+  for (int row = 0; row < 4; ++row)
+    for (int col = 0; col < 4; ++col)
+      viewer[4 * row + col] = glView[4 * col + row];
+
+  const auto placement = amPlasticPlacement(sheet, column, frame);
+  QTransform transform;
+  if (view3D) {
+    const auto a = otam::multiply(viewer, placement);
+    transform    = QTransform(a[0], a[4], a[1], a[5], a[3], a[7]);
+  } else {
+    const auto camera  = amModelCamera(sheet, frame);
+    const auto eye     = otam::multiply(otam::inverse(camera.pose), placement);
+    const auto screen  = otam::multiply(viewer, camera.imageToStage);
+    const double depth = -eye[11];
+    if (!std::isfinite(depth) || depth <= 1.0) return {};
+    const auto x = [&](int i) {
+      return (1000 * (screen[0] * eye[i] + screen[1] * eye[4 + i]) -
+              screen[3] * eye[8 + i]) /
+             depth;
+    };
+    const auto y = [&](int i) {
+      return (1000 * (screen[4] * eye[i] + screen[5] * eye[4 + i]) -
+              screen[7] * eye[8 + i]) /
+             depth;
+    };
+    transform = QTransform(x(0), y(0), -eye[8] / depth, x(1), y(1),
+                           -eye[9] / depth, x(3), y(3), 1);
+  }
+  if (!transform.isInvertible()) return {};
+  return transform;
+}
 
 }  // namespace
 
@@ -403,7 +448,7 @@ PlasticToolOptionsBox::PlasticToolOptionsBox(QWidget *parent, TTool *tool,
   };
   setObjectName("toolOptionsPanel");
   // Create Mesh button
-  QPushButton *meshifyButton = new QPushButton(tr("Create Mesh"));
+  m_meshifyButton = new QPushButton(tr("Create Mesh"));
 
   // Add skeleton id-related widgets
   QLabel *skelIdLabel = new QLabel(tr("Skeleton:"));
@@ -415,12 +460,13 @@ PlasticToolOptionsBox::PlasticToolOptionsBox(QWidget *parent, TTool *tool,
     m_subToolbars[m] =
         new GenericToolOptionsBox(0, tool, pltHandle, m, 0, false);
 
-  meshifyButton->setFixedHeight(20);
-  int buttonWidth = fontMetrics().horizontalAdvance(meshifyButton->text()) + 20;
-  meshifyButton->setFixedWidth(buttonWidth);
+  m_meshifyButton->setFixedHeight(20);
+  int buttonWidth =
+      fontMetrics().horizontalAdvance(m_meshifyButton->text()) + 20;
+  m_meshifyButton->setFixedWidth(buttonWidth);
   QAction *meshifyAction =
       CommandManager::instance()->getAction("A_ToolOption_Meshify");
-  meshifyButton->addAction(meshifyAction);
+  m_meshifyButton->addAction(meshifyAction);
 
   skelIdLabel->setFixedHeight(20);
   m_skelIdComboBox->setFixedWidth(50);
@@ -437,15 +483,15 @@ PlasticToolOptionsBox::PlasticToolOptionsBox(QWidget *parent, TTool *tool,
   m_layout->insertWidget(0, m_skelIdComboBox);
   m_layout->insertWidget(0, skelIdLabel);
   m_layout->insertWidget(0, locals::newSpace(this));
-  m_layout->insertWidget(0, meshifyButton);
+  m_layout->insertWidget(0, m_meshifyButton);
   m_layout->insertWidget(0, locals::newSpace(this));
 
   for (int m = 0; m != PlasticTool::MODES_COUNT; ++m)
     m_layout->insertWidget(m_layout->count() - 1, m_subToolbars[m], 1);
 
   bool ret = true;
-  ret      = ret && connect(meshifyButton, SIGNAL(clicked()), meshifyAction,
-                       SLOT(trigger()));
+  ret      = ret && connect(m_meshifyButton, SIGNAL(clicked()), meshifyAction,
+                            SLOT(trigger()));
   assert(ret);
 
   // Add Animation mode fields corresponding to vertex properties
@@ -493,6 +539,8 @@ PlasticToolOptionsBox::PlasticToolOptionsBox(QWidget *parent, TTool *tool,
 
   ClickableLabel *soLabel = new ClickableLabel(tr("SO"));
   soLabel->setFixedHeight(20);
+  m_soField = soField;
+  m_soLabel = soLabel;
 
   QHBoxLayout *animateLayout = animateOptionsBox->hLayout();
   animateLayout->insertWidget(0, soField);
@@ -544,6 +592,7 @@ void PlasticToolOptionsBox::showEvent(QShowEvent *se) {
   assert(ret);
 
   m_skelIdComboBox->updateSkeletonsList();
+  updateTargetControls();
 }
 
 //------------------------------------------------------------------------
@@ -575,8 +624,29 @@ void PlasticToolOptionsBox::onPropertyChanged() {
 
 //------------------------------------------------------------------------
 
+void PlasticToolOptionsBox::updateTargetControls() {
+  const bool native = l_plasticTool.isAMTarget();
+  m_meshifyButton->setVisible(!native);
+  m_soField->setVisible(!native);
+  m_soLabel->setVisible(!native);
+  if (auto *combo = dynamic_cast<ToolOptionCombo *>(control("mode"))) {
+    if (auto *model = qobject_cast<QStandardItemModel *>(combo->model())) {
+      for (int index : {PlasticTool::MESH_IDX, PlasticTool::RIGIDITY_IDX})
+        if (auto *item = model->item(index)) item->setEnabled(!native);
+    }
+  }
+  if (auto *snap = dynamic_cast<ToolOptionCheckbox *>(
+          m_subToolbars[PlasticTool::BUILD_IDX]->control("snapToMesh"))) {
+    snap->setText(native ? tr("Snap To Control Points") : tr("Snap To Mesh"));
+  }
+  if (auto *interpolate = dynamic_cast<ToolOptionCheckbox *>(
+          m_subToolbars[PlasticTool::BUILD_IDX]->control("interpolate")))
+    interpolate->setVisible(!native);
+}
+
 void PlasticToolOptionsBox::onSkelIdsListChanged() {
   m_skelIdComboBox->updateSkeletonsList();
+  updateTargetControls();
 }
 
 //------------------------------------------------------------------------
@@ -643,7 +713,7 @@ PlasticTool::PlasticTool()
     , m_recompileOnMouseRelease(false) {
   // And now, a little trick about tool binding
   bind(TTool::AllImages | TTool::EmptyTarget);   // Attach the tool to all types :)
-  bind(TTool::MeshLevels);  // But disable it for all but meshes :0
+  bind(TTool::MeshLevels | TTool::AMModel);
 
   // This little trick is needed to associate the tool to common levels (the
   // toolbar must appear), in
@@ -696,6 +766,63 @@ PlasticTool::~PlasticTool() {
 }
 
 //------------------------------------------------------------------------
+
+bool PlasticTool::isAMTarget() const {
+  const auto cell = getImageCell();
+  return cell.m_level && cell.m_level->getAMLevel();
+}
+
+QString PlasticTool::updateEnabled(int row, int column) {
+  auto *app   = getApplication();
+  auto *sheet = app->getCurrentXsheet()->getXsheet();
+  if (sheet && column >= 0 && row >= 0 &&
+      !app->getCurrentFrame()->isEditingLevel()) {
+    const auto cell = sheet->getCell(row, column);
+    if (auto *model = cell.m_level ? cell.m_level->getAMLevel() : nullptr) {
+      const auto *target = sheet->getColumn(column);
+      const bool editable =
+          target && !target->isLocked() && target->isCamstandVisible() &&
+          !app->getCurrentFrame()->isPlaying() &&
+          !app->getCurrentObject()->isSpline() && model->editableModel();
+      enable(editable);
+      return editable ? QString() : tr("Select an editable A:M model cell.");
+    }
+  }
+  return TTool::updateEnabled(row, column);
+}
+
+void PlasticTool::updateMatrix() {
+  if (isAMTarget())
+    setMatrix(TAffine());
+  else
+    TTool::updateMatrix();
+}
+
+std::optional<TPointD> PlasticTool::rigPosition(
+    const TPointD &pos, const TMouseEvent &event) const {
+  if (!isAMTarget()) return pos;
+  if (!m_amRigPlane || m_amRigViewer != getViewer()) return {};
+  const auto local =
+      m_amRigPlane->inverted().map(QPointF(event.m_pos.x, event.m_pos.y));
+  const double w = m_amRigPlane->m13() * local.x() +
+                   m_amRigPlane->m23() * local.y() + m_amRigPlane->m33();
+  if (!std::isfinite(local.x()) || !std::isfinite(local.y()) || w <= 0)
+    return {};
+  return TPointD(local.x(), local.y());
+}
+
+double PlasticTool::getPixelSize() const {
+  if (!isAMTarget() || !m_amRigPlane) return TTool::getPixelSize();
+  const QPointF origin(m_pos.x, m_pos.y);
+  const auto center = m_amRigPlane->map(origin);
+  const auto x      = m_amRigPlane->map(origin + QPointF(1, 0)) - center;
+  const auto y      = m_amRigPlane->map(origin + QPointF(0, 1)) - center;
+  const double scale =
+      std::max(std::hypot(x.x(), x.y()), std::hypot(y.x(), y.y()));
+  return std::isfinite(scale) && scale > 1e-8
+             ? getViewer()->getDevPixRatio() / scale
+             : TTool::getPixelSize();
+}
 
 TTool::ToolType PlasticTool::getToolType() const {
   switch (m_mode.getIndex()) {
@@ -846,6 +973,7 @@ void PlasticTool::updateDeformedSkeleton(PlasticSkeleton &deformedSkeleton) {
 //------------------------------------------------------------------------
 
 void PlasticTool::onFrameSwitched() {
+  m_amRigPlane.reset();
   storeSkeletonId();
   storeMeshImage();
 
@@ -871,15 +999,25 @@ void PlasticTool::onFrameSwitched() {
 //------------------------------------------------------------------------
 
 void PlasticTool::onColumnSwitched() {
+  m_amRigPlane.reset();
+  if (isAMTarget() && m_mode.getIndex() < BUILD_IDX) {
+    m_mode.setIndex(BUILD_IDX);
+    m_mode.notifyListeners();
+  }
   switch (m_mode.getIndex()) {
   case MESH_IDX:
   case BUILD_IDX:
   case RIGIDITY_IDX:
     m_pvs.m_showOriginalColumn = xshColumn();
+    break;
+  case ANIMATE_IDX:
+    m_pvs.m_showOriginalColumn = nullptr;
+    break;
   }
 
   storeDeformation();
   storeMeshImage();
+  onSetViewer();
 }
 
 //------------------------------------------------------------------------
@@ -981,6 +1119,8 @@ void PlasticTool::onActivate() {
 
 void PlasticTool::onDeactivate() {
   setActive(false);
+  m_amRigPlane.reset();
+  m_amRigViewer = nullptr;
 
   bool ret;
   ret = disconnect(TTool::m_application->getCurrentFrame(),
@@ -1366,19 +1506,23 @@ void PlasticTool::setVertexName(QString &name) {
 //------------------------------------------------------------------------
 
 void PlasticTool::mouseMove(const TPointD &pos, const TMouseEvent &me) {
+  const auto local = rigPosition(pos, me);
+  if (!local) return;
+  const TPointD rigPos = *local;
+
   // Discriminate mode
   switch (m_mode.getIndex()) {
   case MESH_IDX:
-    mouseMove_mesh(pos, me);
+    mouseMove_mesh(rigPos, me);
     break;
   case BUILD_IDX:
-    mouseMove_build(pos, me);
+    mouseMove_build(rigPos, me);
     break;
   case RIGIDITY_IDX:
-    mouseMove_rigidity(pos, me);
+    mouseMove_rigidity(rigPos, me);
     break;
   case ANIMATE_IDX:
-    mouseMove_animate(pos, me);
+    mouseMove_animate(rigPos, me);
     break;
   }
 }
@@ -1386,18 +1530,22 @@ void PlasticTool::mouseMove(const TPointD &pos, const TMouseEvent &me) {
 //------------------------------------------------------------------------
 
 void PlasticTool::leftButtonDown(const TPointD &pos, const TMouseEvent &me) {
+  const auto local = rigPosition(pos, me);
+  if (!local) return;
+  const TPointD rigPos = *local;
+
   switch (m_mode.getIndex()) {
   case MESH_IDX:
-    leftButtonDown_mesh(pos, me);
+    leftButtonDown_mesh(rigPos, me);
     break;
   case BUILD_IDX:
-    leftButtonDown_build(pos, me);
+    leftButtonDown_build(rigPos, me);
     break;
   case RIGIDITY_IDX:
-    leftButtonDown_rigidity(pos, me);
+    leftButtonDown_rigidity(rigPos, me);
     break;
   case ANIMATE_IDX:
-    leftButtonDown_animate(pos, me);
+    leftButtonDown_animate(rigPos, me);
     break;
   }
 }
@@ -1405,21 +1553,25 @@ void PlasticTool::leftButtonDown(const TPointD &pos, const TMouseEvent &me) {
 //------------------------------------------------------------------------
 
 void PlasticTool::leftButtonDrag(const TPointD &pos, const TMouseEvent &me) {
+  const auto local = rigPosition(pos, me);
+  if (!local) return;
+  const TPointD rigPos = *local;
+
   // Track dragging status
   m_dragged = true;
 
   switch (m_mode.getIndex()) {
   case MESH_IDX:
-    leftButtonDrag_mesh(pos, me);
+    leftButtonDrag_mesh(rigPos, me);
     break;
   case BUILD_IDX:
-    leftButtonDrag_build(pos, me);
+    leftButtonDrag_build(rigPos, me);
     break;
   case RIGIDITY_IDX:
-    leftButtonDrag_rigidity(pos, me);
+    leftButtonDrag_rigidity(rigPos, me);
     break;
   case ANIMATE_IDX:
-    leftButtonDrag_animate(pos, me);
+    leftButtonDrag_animate(rigPos, me);
     break;
   }
 }
@@ -1427,18 +1579,21 @@ void PlasticTool::leftButtonDrag(const TPointD &pos, const TMouseEvent &me) {
 //------------------------------------------------------------------------
 
 void PlasticTool::leftButtonUp(const TPointD &pos, const TMouseEvent &me) {
+  const auto local     = rigPosition(pos, me);
+  const TPointD rigPos = local.value_or(m_pos);
+
   switch (m_mode.getIndex()) {
   case MESH_IDX:
-    leftButtonUp_mesh(pos, me);
+    leftButtonUp_mesh(rigPos, me);
     break;
   case BUILD_IDX:
-    leftButtonUp_build(pos, me);
+    leftButtonUp_build(rigPos, me);
     break;
   case RIGIDITY_IDX:
-    leftButtonUp_rigidity(pos, me);
+    leftButtonUp_rigidity(rigPos, me);
     break;
   case ANIMATE_IDX:
-    leftButtonUp_animate(pos, me);
+    leftButtonUp_animate(rigPos, me);
     break;
   }
 
@@ -1546,6 +1701,8 @@ bool PlasticTool::onPropertyChanged(std::string propertyName) {
   };  // locals
 
   if (propertyName == "mode") {
+    if (isAMTarget() && m_mode.getIndex() < BUILD_IDX)
+      m_mode.setIndex(BUILD_IDX);
     switch (m_mode.getIndex()) {
     case MESH_IDX:
     case BUILD_IDX:
@@ -1945,7 +2102,7 @@ void PlasticTool::drawOnionSkinSkeletons_build(double pixelSize) {
   std::map<int, UCHAR>::iterator st, sEnd(skelAlphas.end());
   for (st = skelAlphas.begin(); st != sEnd; ++st) {
     const PlasticSkeletonP &skel = m_sd->skeleton(st->first);
-    drawSkeleton(*skel, pixelSize, st->second);
+    if (skel) drawSkeleton(*skel, pixelSize, st->second);
   }
 }
 
@@ -2110,6 +2267,26 @@ void PlasticTool::drawAngleLimits(const SkDP &sd, int skelId, int v,
 //------------------------------------------------------------------------
 
 void PlasticTool::draw() {
+  const bool native = isAMTarget();
+  if (native) {
+    m_amRigViewer = getViewer();
+    m_amRigPlane.reset();
+    if (!m_amRigViewer) return;
+    try {
+      m_amRigPlane = amRigPlane(getXsheet(), ::column(), ::frame(),
+                                m_amRigViewer->is3DView());
+    } catch (const std::runtime_error &) {
+      return;  // The camera or plane can be singular.
+    }
+    if (!m_amRigPlane) return;
+    const auto &t         = *m_amRigPlane;
+    const double matrix[] = {t.m11(), t.m12(), 0, t.m13(), t.m21(), t.m22(),
+                             0,       t.m23(), 0, 0,       1,       0,
+                             t.m31(), t.m32(), 0, t.m33()};
+    glPushMatrix();
+    glLoadIdentity();
+    glMultMatrixd(matrix);
+  }
   glPushAttrib(GL_LINE_BIT | GL_COLOR_BUFFER_BIT | GL_ENABLE_BIT);
 
   glEnable(GL_BLEND);
@@ -2132,4 +2309,5 @@ void PlasticTool::draw() {
   };
 
   glPopAttrib();
+  if (native) glPopMatrix();
 }
