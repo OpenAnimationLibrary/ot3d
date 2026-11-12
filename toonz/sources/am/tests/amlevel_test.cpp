@@ -478,27 +478,16 @@ int main(int argc, char **argv) {
               sampleFx->getAlias(sample, TRenderSettings()),
           "Plastic pose shared the unrigged render cache identity");
 
-    // Serialization includes new native resource and ordinary stage channel
-    // keys.
-    const TFilePath serialized(temp.path() + "/sheet.xml");
-    {
-      TOStream out(serialized);
-      out << xsheet;
-    }
-    TPersist *persist = nullptr;
-    {
-      TIStream in(serialized);
-      in >> persist;
-    }
-    std::unique_ptr<TPersist> owner(persist);
-    auto *restored = dynamic_cast<TXsheet *>(persist);
-    check(restored, "xsheet persistence failed");
-    restored->setScene(&scene);
+    // The scene header supplies the version used by the Plastic rig reader.
+    const TFilePath serialized = scene.getScenePath();
+    scene.save(serialized, nullptr, false);
+    ToonzScene restoredScene;
+    restoredScene.loadTnzFile(serialized);
+    auto *restored      = restoredScene.getXsheet();
     auto *restoredLevel = restored->getCell(0, 0).m_level->getAMLevel();
     check(restoredLevel, "native level persistence registration failed");
     check(restored->getCell(0, 1).m_level.getPointer() == restoredLevel,
           "shared level identity lost");
-    restoredLevel->setScene(&scene);
     restoredLevel->load();
     check(restoredLevel->getPalette()->getStyle(2)->getName() == L"Red" &&
               restoredLevel->renderMesh()->triangles[0].color ==
@@ -569,7 +558,6 @@ int main(int argc, char **argv) {
           "2D level changed on reopen");
     auto *restoredGlb = restored->getCell(0, 3).m_level->getGlbLevel();
     check(restoredGlb && !restoredGlb->getAMLevel(), "GLB type lost on reopen");
-    restoredGlb->setScene(&scene);
     restoredGlb->load();
     check(bool(restoredGlb->asset()), "GLB source did not reload");
     nearlyEqual(restored->getStageObject(TStageObjectId::ColumnId(3))
