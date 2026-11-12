@@ -41,8 +41,9 @@ namespace {
 void check(bool result, const char *message) {
   if (!result) throw std::runtime_error(message);
 }
-void nearlyEqual(double a, double b) {
-  check(std::abs(a - b) < 1e-7, "coordinate/parameter mismatch");
+void nearlyEqual(double a, double b,
+                 const char *message = "coordinate/parameter mismatch") {
+  check(std::abs(a - b) < 1e-7, message);
 }
 void checkCurveTransfer() {
   TDoubleParam source(10.0), target(3.0);
@@ -538,6 +539,8 @@ int main(int argc, char **argv) {
     set(rootDeform, SkVD::ROOT_X, 10);
     set(rootDeform, SkVD::ROOT_Z, 30);
     set(jointDeform, SkVD::ANGLE, 0);
+    // Preserve the earlier length when the stretch edit adds a later key.
+    set(jointDeform, SkVD::DISTANCE, 0);
     set(jointDeform, SkVD::ELEVATION, 90);
     set(jointDeform, SkVD::TWIST, 90);
 
@@ -576,12 +579,23 @@ int main(int argc, char **argv) {
               reloaded->skeleton(1)->vertex(child).m_depth == 50,
           "spatial rig or rest depth was lost on scene reopen");
     reloaded->storeSpatialSkeleton(1, sample, pose);
-    check(pose.vertex(child).position3D() == childPosition,
-          "spatial animation keys were lost on scene reopen");
-    check(prepareNativeModelGeometry(spatialSheet, actionColumn, sample, false)
-                  ->triangles.front()
-                  .vertices == spatial->triangles.front().vertices,
-          "reopened spatial rig produced different rendered geometry");
+    const auto reopenedChild = pose.vertex(child).position3D();
+    nearlyEqual(reopenedChild.x, childPosition.x, "reopened child X changed");
+    nearlyEqual(reopenedChild.y, childPosition.y, "reopened child Y changed");
+    nearlyEqual(reopenedChild.z, childPosition.z, "reopened child Z changed");
+    reloaded->storeSpatialSkeleton(1, sample + 2, pose);
+    // The scene stream rounds non-integral keys to six significant digits.
+    check(tdistance2(pose.vertex(bone).position3D(), T3DPointD(30, 40, 80)) <
+              1e-7,
+          "the later stretch pose changed on scene reopen");
+    const auto reopenedSpatial =
+        prepareNativeModelGeometry(spatialSheet, actionColumn, sample, false);
+    check(bool(reopenedSpatial), "reopened spatial rig has no render geometry");
+    for (int corner = 0; corner < 3; ++corner)
+      for (int axis = 0; axis < 3; ++axis)
+        nearlyEqual(reopenedSpatial->triangles.front().vertices[corner][axis],
+                    spatial->triangles.front().vertices[corner][axis],
+                    "reopened spatial rig changed rendered geometry");
 
     rigObject->setPlasticSkeletonDeformation(PlasticSkeletonDeformationP());
     check(
