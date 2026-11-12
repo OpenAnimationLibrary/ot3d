@@ -511,6 +511,78 @@ int main(int argc, char **argv) {
     check(reopenedRig && reopenedRig->triangles.front().vertices ==
                              rigged->triangles.front().vertices,
           "native Plastic pose was lost on reopen");
+    check(!restored->getStageObject(TStageObjectId::ColumnId(actionColumn))
+               ->getPlasticSkeletonDeformation()
+               ->isSpatial(),
+          "a saved planar rig was unexpectedly upgraded on load");
+
+    // Upgrade the same rig and verify that its existing planar pose survives
+    // before adding depth or twist.
+    rig->enableSpatial();
+    const auto upgraded =
+        prepareNativeModelGeometry(xsheet, actionColumn, sample, false);
+    for (int corner = 0; corner < 3; ++corner)
+      for (int axis = 0; axis < 3; ++axis)
+        nearlyEqual(upgraded->triangles.front().vertices[corner][axis],
+                    rigged->triangles.front().vertices[corner][axis]);
+
+    PlasticSkeletonVertex tip(TPointD(200, 0));
+    tip.m_depth            = 50;
+    const int child        = skeleton->addVertex(tip, bone);
+    const auto rootDeform  = rig->vertexDeformation(1, root);
+    const auto jointDeform = rig->vertexDeformation(1, bone);
+    const auto set = [&](SkVD *vertex, SkVD::Params channel, double value) {
+      vertex->m_params[channel]->setKeyframe(TDoubleKeyframe(0, 0));
+      vertex->m_params[channel]->setKeyframe(TDoubleKeyframe(sample, value));
+    };
+    set(rootDeform, SkVD::ROOT_X, 10);
+    set(rootDeform, SkVD::ROOT_Z, 30);
+    set(jointDeform, SkVD::ANGLE, 0);
+    set(jointDeform, SkVD::ELEVATION, 90);
+    set(jointDeform, SkVD::TWIST, 90);
+
+    PlasticSkeleton pose;
+    rig->storeSpatialSkeleton(1, sample, pose);
+    const auto childPosition = pose.vertex(child).position3D();
+    nearlyEqual(childPosition.x, 10);
+    nearlyEqual(childPosition.y, -50);
+    nearlyEqual(childPosition.z, 230);
+    rig->storeSpatialSkeleton(1, sample / 2, pose);
+    nearlyEqual(pose.vertex(root).m_depth, 15);
+    rig->updateSpatialPosition(1, sample + 1, bone, {10, 150, 30}, true);
+    rig->storeSpatialSkeleton(1, sample + 1, pose);
+    nearlyEqual(pose.vertex(bone).P().y, 100);
+    nearlyEqual(pose.vertex(bone).m_depth, 30);
+    rig->updateSpatialPosition(1, sample + 2, bone, {30, 40, 80}, false);
+    rig->storeSpatialSkeleton(1, sample + 2, pose);
+    nearlyEqual(pose.vertex(bone).P().x, 30);
+    nearlyEqual(pose.vertex(bone).P().y, 40);
+    nearlyEqual(pose.vertex(bone).m_depth, 80);
+
+    const auto spatial =
+        prepareNativeModelGeometry(xsheet, actionColumn, sample, false);
+    check(spatial->splines.front().curves.front().points !=
+              beforeRig->splines.front().curves.front().points,
+          "spatial Plastic failed to pose the native spline render path");
+    scene.save(serialized, nullptr, false);
+    ToonzScene spatialScene;
+    spatialScene.loadTnzFile(serialized);
+    auto *spatialSheet = spatialScene.getXsheet();
+    spatialSheet->getCell(0, actionColumn).m_level->getAMLevel()->load();
+    const auto reloaded =
+        spatialSheet->getStageObject(TStageObjectId::ColumnId(actionColumn))
+            ->getPlasticSkeletonDeformation();
+    check(reloaded->isSpatial() &&
+              reloaded->skeleton(1)->vertex(child).m_depth == 50,
+          "spatial rig or rest depth was lost on scene reopen");
+    reloaded->storeSpatialSkeleton(1, sample, pose);
+    check(pose.vertex(child).position3D() == childPosition,
+          "spatial animation keys were lost on scene reopen");
+    check(prepareNativeModelGeometry(spatialSheet, actionColumn, sample, false)
+                  ->triangles.front()
+                  .vertices == spatial->triangles.front().vertices,
+          "reopened spatial rig produced different rendered geometry");
+
     rigObject->setPlasticSkeletonDeformation(PlasticSkeletonDeformationP());
     check(
         prepareAMLevelGeometry(restored, 0, 0, false)->triangles[0].vertices ==

@@ -23,6 +23,7 @@
 #include "tools/tool.h"
 #include "tools/cursors.h"
 #include "tools/tooloptions.h"
+#include "amtoolprojection.h"
 
 // STD includes
 #include <memory>
@@ -34,7 +35,6 @@
 
 // Qt includes
 #include <QObject>
-#include <QTransform>
 
 //****************************************************************************************
 //    Metric defines
@@ -100,12 +100,21 @@ private:
                            //! skeleton
 
   TMeshImageP m_mi;  //!< Current mesh image
-  std::optional<QTransform> m_amRigPlane;
+  std::optional<AMToolProjection> m_amProjection;
+  std::optional<T3DPointD> m_amBuildPoint;
+  std::optional<T3DPointD> m_amDragAnchor;
+  TPointD m_amMouseStart;
+  T3DPointD m_amBuildShift;
   const TToolViewer *m_amRigViewer = nullptr;
 
   bool isAMTarget() const;
   std::optional<TPointD> rigPosition(const TPointD &pos,
                                      const TMouseEvent &event) const;
+  std::optional<TPointD> drawPosition(const T3DPointD &point) const;
+  std::optional<T3DPointD> amDragTarget(const TMouseEvent &event) const;
+  std::optional<T3DPointD> amPointAt(const TPointD &pixel, double depth) const;
+  std::optional<T3DPointD> amSnapPoint(const TPointD &pixel) const;
+  int closestRigJoint(const PlasticSkeleton &skel, const TPointD &pos) const;
   double getPixelSize() const;
 
   // Property-related vars  (ie, tool options)
@@ -113,6 +122,7 @@ private:
   TPropertyGroup
       *m_propGroup;  //!< Tool properties groups (needed for toolbar-building)
 
+  TEnumProperty m_amDragAxis;
   TEnumProperty m_mode;          //!< Editing mode (BUILD, ANIMATE, etc..)
   TStringProperty m_vertexName;  //!< Vertex name property
 
@@ -137,6 +147,7 @@ private:
   TDoubleParamRelayProperty
       m_distanceRelay;  //!< Relay property for vertex distance
   TDoubleParamRelayProperty m_angleRelay;  //!< Relay property for vertex angle
+  TDoubleParamRelayProperty m_elevationRelay, m_twistRelay;
   TDoubleParamRelayProperty m_soRelay;     //!< Relay property for vertex so
 
   TDoubleParamRelayProperty
@@ -150,6 +161,7 @@ private:
 
   std::vector<TPointD>
       m_pressedVxsPos;   //!< Position of selected vertices at mouse press
+  std::vector<T3DPointD> m_pressedRestPositions;
   SkDKey m_pressedSkDF;  //!< Skeleton deformation keyframes at mouse press
 
   // Selection/Highlighting-related vars
@@ -238,8 +250,8 @@ public:
   }
   PlasticVertexSelection branchSelection(int vIdx) const;
 
-  void moveVertex_build(const std::vector<TPointD> &originalVxsPos,
-                        const TPointD &posShift);
+  void moveVertex_build(const std::vector<T3DPointD> &originalVxsPos,
+                        const T3DPointD &posShift);
   void addVertex(const PlasticSkeletonVertex &vx);
   void insertVertex(const PlasticSkeletonVertex &vx, int e);
   void insertVertex(const PlasticSkeletonVertex &vx, int parent,
@@ -426,6 +438,7 @@ private:
   SkelIdsComboBox *m_skelIdComboBox;
   QPushButton *m_addSkelButton, *m_removeSkelButton, *m_meshifyButton;
   QWidget *m_soField, *m_soLabel;
+  QWidget *m_elevationField, *m_elevationLabel, *m_twistField, *m_twistLabel;
 
   void updateTargetControls();
 

@@ -1121,27 +1121,36 @@ void FunctionTreeModel::refreshPlasticDeformations() {
       // implementation)
       plasticGroup->setChildren(plasticItems);
 
-      int pi,
-          piCount =
-              plasticItems.size();  // NOTE: plasticItems now stores only PART
-      for (pi = 0; pi != piCount;
-           ++pi)  // of the specified items - those considered
-      {           // 'new' by internal pointer comparison...
-        SkVDChannelGroup *vxGroup =
-            dynamic_cast<SkVDChannelGroup *>(plasticItems[pi]);
+      for (int child = 0; child < plasticGroup->getChildCount(); ++child) {
+        auto *vxGroup =
+            dynamic_cast<SkVDChannelGroup *>(plasticGroup->getChild(child));
         if (!vxGroup) continue;
 
-        SkVD *skvd =
-            sd->vertexDeformation(vxGroup->ChannelGroup::getShortName());
-
-        for (int k = 0; k < SkVD::PARAMS_COUNT; ++k) {
-          // Add channel in the vertex deformation
-          Channel *channel = new Channel(this, skvd->m_params[k].getPointer());
-          channel->setChannelGroup(vxGroup);
-
-          vxGroup->appendChild(channel);
+        const auto &name = vxGroup->getLongName();
+        auto *skvd       = sd->vertexDeformation(name);
+        bool root = false, bone = false;
+        if (sd->isSpatial()) {
+          SkD::vx_iterator vertex, end;
+          sd->vdSkeletonVertices(name, vertex, end);
+          for (; vertex != end; ++vertex) {
+            const auto &entry = *vertex;
+            const bool isRoot =
+                sd->skeleton(entry.first)->vertex(entry.second).parent() < 0;
+            root |= isRoot;
+            bone |= !isRoot;
+          }
         }
 
+        QList<TreeModel::Item *> channels;
+        for (int k = 0; k < skvd->paramCount(); ++k) {
+          if (sd->isSpatial() &&
+              (k == SkVD::SO || (k >= SkVD::ROOT_X ? !root : !bone)))
+            continue;
+          auto *channel = new Channel(this, skvd->m_params[k].getPointer());
+          channel->setChannelGroup(vxGroup);
+          channels.push_back(channel);
+        }
+        vxGroup->setChildren(channels);
         vxGroup->applyShowFilter();
       }
 
