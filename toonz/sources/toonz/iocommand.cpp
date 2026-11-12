@@ -4,6 +4,9 @@
 
 #include "iocommand.h"
 
+#include "amactionmenu.h"
+#include "vectoractionmenu.h"
+
 // Toonz includes
 #include "menubarcommandids.h"
 #include "filebrowserpopup.h"
@@ -55,6 +58,7 @@
 #include "toonz/txshexrlevel.h"
 #include "toonz/txshsimplelevel.h"
 #include "toonz/txshchildlevel.h"
+#include "toonz/txshlevelcolumn.h"
 #include "toonz/sceneproperties.h"
 #include "toonz/levelproperties.h"
 #include "toonz/stage2.h"
@@ -94,6 +98,8 @@
 
 // Qt includes
 #include <QLabel>
+#include <QMessageBox>
+#include <QPushButton>
 #include <QApplication>
 #include <QClipboard>
 #include <QDirIterator>
@@ -1994,6 +2000,69 @@ bool IoCmd::saveLevel(TXshSimpleLevel *sl) {
   return saveLevel(sl->getPath(), sl, true);
 }
 
+namespace {
+
+void listDifferentActionFiles(const ToonzScene &scene, const TXsheet &xsheet,
+                              const QString &sheetName, QStringList &files) {
+  for (int i = 0; i < xsheet.getColumnCount(); ++i) {
+    auto *column      = xsheet.getColumn(i);
+    auto *levelColumn = column ? column->getLevelColumn() : nullptr;
+    if (!levelColumn) continue;
+
+    const auto describe = [&](const TFilePath &path) {
+      const QString file = path.isEmpty()
+                               ? QObject::tr("(No Action file selected)")
+                               : scene.decodeFilePath(path).getQString();
+      files << QObject::tr("%1, column %2 — %3")
+                   .arg(sheetName)
+                   .arg(i + 1)
+                   .arg(file);
+    };
+    const auto am = levelColumn->getAMAction();
+    if (amActionFileDiffers(scene, am)) describe(am.path);
+    const auto vector = levelColumn->getVectorAction();
+    if (vectorActionFileDiffers(scene, vector)) describe(vector.path);
+  }
+}
+
+bool confirmSaveAllWithDifferentActionFiles(ToonzScene *scene,
+                                            QWidget *parent) {
+  if (!scene) return true;
+  // Hold off autosave while the user is deciding whether to save.
+  SaveInProgressGuard guard;
+  if (!guard.acquired()) return false;
+
+  QStringList files;
+  listDifferentActionFiles(*scene, *scene->getTopXsheet(),
+                           QObject::tr("Top Xsheet"), files);
+  auto *levels = scene->getLevelSet();
+  for (int i = 0; i < levels->getLevelCount(); ++i) {
+    auto *child = levels->getLevel(i)->getChildLevel();
+    if (child && child->getXsheet())
+      listDifferentActionFiles(*scene, *child->getXsheet(),
+                               QString::fromStdWString(child->getName()),
+                               files);
+  }
+  if (files.isEmpty()) return true;
+
+  QMessageBox notice(QMessageBox::Warning, QObject::tr("Save All"),
+                     QObject::tr("Some external Action files differ from the "
+                                 "Actions attached to this scene."),
+                     QMessageBox::Cancel, parent);
+  notice.setTextFormat(Qt::PlainText);
+  notice.setInformativeText(
+      QObject::tr("Save All keeps the current Action keys in the scene. "
+                  "Use Action → Save Action… to update a reusable file."));
+  notice.setDetailedText(files.join('\n'));
+  auto *save = notice.addButton(QObject::tr("Save Scene and Levels"),
+                                QMessageBox::AcceptRole);
+  notice.setDefaultButton(save);
+  notice.exec();
+  return notice.clickedButton() == save;
+}
+
+}  // namespace
+
 //===========================================================================
 // IoCmd::saveAll()
 //---------------------------------------------------------------------------
@@ -2003,7 +2072,12 @@ bool IoCmd::saveAll(int flags) {
   // if anything is wrong, return false
 
   bool isAutosave     = (flags & AUTO_SAVE) != 0;
-  QMainWindow *parent = TApp::instance()->getMainWindow();
+  auto *app           = TApp::instance();
+  QMainWindow *parent = app->getMainWindow();
+  if (!isAutosave && !confirmSaveAllWithDifferentActionFiles(
+                         app->getCurrentScene()->getScene(), parent))
+    return false;
+
   QLabel *Label       = nullptr;
   if (!isAutosave) {
     Label = new QLabel("Saving...", parent);

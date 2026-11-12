@@ -1,5 +1,6 @@
 #pragma once
 
+#include "actionpointselection.h"
 #include "toonz/txshlevelcolumn.h"
 #include "toonz/vectoraction.h"
 
@@ -17,14 +18,20 @@ class VectorActionEditor {
   TXshLevelColumnP m_column;
   VectorActionBinding m_binding;
   TVectorImageP m_pose, m_dragPose;
-  std::set<Point> m_selected, m_boxSelection;
+  std::set<Point> m_selected;
+  std::optional<ActionPointSelectionRegion> m_selectionRegion;
+  std::optional<ActionPointTransform> m_transform;
+  bool m_addToSelection = false;
   int m_row = -1, m_hoveredStroke = -1;
-  bool m_dragging = false, m_boxSelecting = false;
-  TPointD m_press, m_cursor;
+  bool m_dragging = false;
+  TPointD m_press;
 
   std::optional<Point> hit(const TPointD &pos) const;
   bool canKey() const;
-  VectorAction::Offsets movement(const TPointD &delta) const;
+  std::optional<ActionPointSelectionBox> selectionBox(
+      const TVectorImageP &pose) const;
+  VectorAction::Offsets movement(const TAffine &transform) const;
+  VectorAction::Offsets dragOffsets(const TPointD &pos, bool uniform) const;
   void commit(const VectorAction::Offsets &deltas);
   void clearGesture();
 
@@ -34,9 +41,9 @@ public:
   void reset();
   void draw();
   void mouseMove(const TPointD &pos);
-  void press(const TPointD &pos, const TMouseEvent &event);
-  void drag(const TPointD &pos);
-  void release(const TPointD &pos);
+  void press(const TPointD &pos, const TMouseEvent &event, bool freehand);
+  void drag(const TPointD &pos, bool uniform);
+  void release(const TPointD &pos, bool uniform);
   bool acceptsKey(const QKeyEvent &event) const;
   bool keyDown(const QKeyEvent &event);
 };

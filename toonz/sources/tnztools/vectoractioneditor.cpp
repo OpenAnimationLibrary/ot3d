@@ -1,7 +1,6 @@
 #include "vectoractioneditor.h"
 
 #include "tools/tool.h"
-#include "tools/toolutils.h"
 #include "drawutil.h"
 #include "texception.h"
 #include "tstroke.h"
@@ -20,11 +19,6 @@ namespace {
 
 int editablePointCount(const TStroke &stroke) {
   return stroke.getControlPointCount() - (stroke.isSelfLoop() ? 1 : 0);
-}
-
-TRectD selectionRect(const TPointD &a, const TPointD &b) {
-  return TRectD(std::min(a.x, b.x), std::min(a.y, b.y), std::max(a.x, b.x),
-                std::max(a.y, b.y));
 }
 
 TPointD arrowDelta(int key) {
@@ -94,8 +88,9 @@ bool VectorActionEditor::refresh(bool sourceChanged) {
 void VectorActionEditor::clearGesture() {
   if (m_dragPose && m_column) m_column->setVectorActionPreview(0, 0, TImageP());
   m_dragPose = TVectorImageP();
-  m_dragging = m_boxSelecting = false;
-  m_boxSelection.clear();
+  m_dragging = false;
+  m_selectionRegion.reset();
+  m_transform.reset();
 }
 
 void VectorActionEditor::reset() {
@@ -165,9 +160,22 @@ void VectorActionEditor::draw() {
                   point.y + radius);
     }
   }
-  if (m_boxSelecting)
-    ToolUtils::drawRect(selectionRect(m_press, m_cursor), TPixel32::Black,
-                        0x3F33, true);
+  if (m_selectionRegion) {
+    tglColor(TPixel32(123, 232, 229));
+    m_selectionRegion->draw();
+  } else if (canKey()) {
+    if (const auto box = selectionBox(pose)) box->draw();
+  }
+}
+
+std::optional<ActionPointSelectionBox> VectorActionEditor::selectionBox(
+    const TVectorImageP &pose) const {
+  if (m_selected.size() < 2) return {};
+  std::vector<TPointD> points;
+  points.reserve(m_selected.size());
+  for (const auto &[stroke, index] : m_selected)
+    points.push_back(pose->getStroke(stroke)->getControlPoint(index));
+  return ActionPointSelectionBox(points, m_tool.getPixelSize());
 }
 
 bool VectorActionEditor::canKey() const {
@@ -175,19 +183,25 @@ bool VectorActionEditor::canKey() const {
          !TTool::getApplication()->getCurrentFrame()->isPlaying();
 }
 
-void VectorActionEditor::press(const TPointD &pos, const TMouseEvent &event) {
+void VectorActionEditor::press(const TPointD &pos, const TMouseEvent &event,
+                               bool freehand) {
   if (!m_pose) return;
   clearGesture();
-  m_press = m_cursor = pos;
-  const auto point   = hit(pos);
-  if (!point) {
-    if (!event.isCtrlPressed()) m_selected.clear();
-    m_boxSelection = m_selected;
-    m_boxSelecting = true;
-  } else if (event.isCtrlPressed() && m_selected.erase(*point)) {
+  m_press          = pos;
+  m_addToSelection = event.isCtrlPressed() || event.isShiftPressed();
+  const auto point = hit(pos);
+  const auto box =
+      canKey() && !event.isCtrlPressed() ? selectionBox(m_pose) : std::nullopt;
+  if (box) m_transform = box->hit(pos);
+  if (m_transform ||
+      (!point && !m_addToSelection && box && box->contains(pos))) {
+    m_dragging = true;
+  } else if (!point) {
+    m_selectionRegion.emplace(pos, freehand);
+  } else if (m_addToSelection && m_selected.erase(*point)) {
     m_hoveredStroke = point->first;
   } else {
-    if (!event.isCtrlPressed() && !m_selected.count(*point)) m_selected.clear();
+    if (!m_addToSelection && !m_selected.count(*point)) m_selected.clear();
     m_selected.insert(*point);
     m_hoveredStroke = point->first;
     m_dragging      = canKey();
@@ -195,37 +209,51 @@ void VectorActionEditor::press(const TPointD &pos, const TMouseEvent &event) {
   m_tool.invalidate();
 }
 
-VectorAction::Offsets VectorActionEditor::movement(const TPointD &delta) const {
+VectorAction::Offsets VectorActionEditor::movement(
+    const TAffine &transform) const {
   VectorAction::Offsets offsets;
-  if (delta == TPointD()) return offsets;
+  if (transform.isIdentity()) return offsets;
   for (const auto &[stroke, index] : m_selected) {
+    const auto &curve        = *m_pose->getStroke(stroke);
+    const TPointD position   = curve.getControlPoint(index);
+    const TPointD delta      = transform * position - position;
     offsets[{stroke, index}] = delta;
     if (index % 2) continue;
 
-    const auto &curve = *m_pose->getStroke(stroke);
-    const int count   = editablePointCount(curve);
+    const int count  = editablePointCount(curve);
     const int before = index == 0 && curve.isSelfLoop() ? count - 1 : index - 1;
-    // Moving both anchors translates their shared handle by the full delta.
-    for (int handle : {before, index + 1})
-      if (handle >= 0 && handle < count && !m_selected.count({stroke, handle}))
-        offsets[{stroke, handle}] += delta * 0.5;
+    for (int handle : {before, index + 1}) {
+      const Point handleId(stroke, handle);
+      if (handle < 0 || handle >= count || m_selected.count(handleId)) continue;
+
+      const int otherAnchor =
+          handle == before ? handle - 1 : (handle + 1) % count;
+      const TPointD handlePosition = curve.getControlPoint(handle);
+      // Transform a shared handle with both selected anchors. At the boundary
+      // of the selection, carry it half the distance of its moving anchor.
+      const TPointD handleDelta =
+          m_selected.count({stroke, otherAnchor})
+              ? transform * handlePosition - handlePosition
+              : delta * 0.5;
+      if (handleDelta != TPointD()) offsets[handleId] = handleDelta;
+    }
   }
   return offsets;
 }
 
-void VectorActionEditor::drag(const TPointD &pos) {
-  m_cursor = pos;
+VectorAction::Offsets VectorActionEditor::dragOffsets(const TPointD &pos,
+                                                      bool uniform) const {
+  const TPointD delta = pos - m_press;
+  return movement(m_transform ? m_transform->matrix(delta, uniform)
+                              : TTranslation(delta));
+}
+
+void VectorActionEditor::drag(const TPointD &pos, bool uniform) {
   if (m_dragging) {
-    m_dragPose = offsetVectorDrawing(m_pose, movement(pos - m_press));
+    m_dragPose = offsetVectorDrawing(m_pose, dragOffsets(pos, uniform));
     m_column->setVectorActionPreview(m_binding.revision, m_row, m_dragPose);
-  } else if (m_boxSelecting) {
-    m_selected      = m_boxSelection;
-    const auto rect = selectionRect(m_press, pos);
-    for (UINT s = 0; s < m_pose->getStrokeCount(); ++s) {
-      const auto &stroke = *m_pose->getStroke(s);
-      for (int i = 0; i < editablePointCount(stroke); i += 2)
-        if (rect.contains(stroke.getControlPoint(i))) m_selected.emplace(s, i);
-    }
+  } else if (m_selectionRegion) {
+    m_selectionRegion->update(pos);
   }
   m_tool.invalidate();
 }
@@ -251,15 +279,27 @@ void VectorActionEditor::commit(const VectorAction::Offsets &deltas) {
   refresh();
 }
 
-void VectorActionEditor::release(const TPointD &pos) {
+void VectorActionEditor::release(const TPointD &pos, bool uniform) {
+  if (m_selectionRegion) {
+    m_selectionRegion->update(pos);
+    if (!m_addToSelection) m_selected.clear();
+    for (UINT s = 0; s < m_pose->getStrokeCount(); ++s) {
+      const auto &stroke = *m_pose->getStroke(s);
+      for (int i = 0; i < editablePointCount(stroke); i += 2)
+        if (m_selectionRegion->contains(stroke.getControlPoint(i)))
+          m_selected.emplace(s, i);
+    }
+  }
   const auto offsets =
-      m_dragging ? movement(pos - m_press) : VectorAction::Offsets();
+      m_dragging ? dragOffsets(pos, uniform) : VectorAction::Offsets();
   clearGesture();
   commit(offsets);
   m_tool.invalidate();
 }
 
 bool VectorActionEditor::acceptsKey(const QKeyEvent &event) const {
+  if (event.key() == Qt::Key_Escape)
+    return m_dragging || bool(m_selectionRegion);
   return !m_selected.empty() && canKey() &&
          event.modifiers() == Qt::NoModifier &&
          arrowDelta(event.key()) != TPointD();
@@ -267,7 +307,10 @@ bool VectorActionEditor::acceptsKey(const QKeyEvent &event) const {
 
 bool VectorActionEditor::keyDown(const QKeyEvent &event) {
   if (!acceptsKey(event)) return false;
-  commit(movement(arrowDelta(event.key())));
+  if (event.key() == Qt::Key_Escape)
+    clearGesture();
+  else
+    commit(movement(TTranslation(arrowDelta(event.key()))));
   m_tool.invalidate();
   return true;
 }

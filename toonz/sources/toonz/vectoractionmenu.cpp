@@ -84,8 +84,7 @@ void writeFile(const QString &path, const VectorAction &action) {
                          .toStdWString());
 }
 
-std::shared_ptr<const VectorAction> readFile(const QString &path,
-                                             const TVectorImageP &image) {
+VectorAction readFile(const QString &path) {
   QFile file(path);
   if (!isActionPath(path) || !QFileInfo(path).isFile() ||
       !file.open(QIODevice::ReadOnly))
@@ -94,7 +93,12 @@ std::shared_ptr<const VectorAction> readFile(const QString &path,
   const auto bytes = file.read(VectorAction::MaxBytes + 1);
   if (file.error() != QFileDevice::NoError)
     throw TException(file.errorString().toStdWString());
-  auto action = std::make_shared<const VectorAction>(VectorAction::read(bytes));
+  return VectorAction::read(bytes);
+}
+
+std::shared_ptr<const VectorAction> readFile(const QString &path,
+                                             const TVectorImageP &image) {
+  auto action = std::make_shared<const VectorAction>(readFile(path));
   if (!action->matches(image))
     throw TException(QObject::tr("The vector Action requires the same stroke "
                                  "order and control point layout as its source "
@@ -123,6 +127,20 @@ void runCommand(const Target &target, Command command) {
 }
 
 }  // namespace
+
+bool vectorActionFileDiffers(const ToonzScene &scene,
+                             const VectorActionBinding &binding) {
+  if (!binding.action) return false;
+  if (binding.path.isEmpty()) return true;
+  try {
+    const auto saved =
+        readFile(scene.decodeFilePath(binding.path).getQString());
+    return saved.topology != binding.action->topology ||
+           saved.channels != binding.action->channels;
+  } catch (const TException &) {
+    return true;
+  }
+}
 
 void reloadVectorActionFromFile(TXshLevelColumn *column, QWidget *parent) {
   auto *app          = TApp::instance();
@@ -164,7 +182,8 @@ void reloadVectorActionFromFile(TXshLevelColumn *column, QWidget *parent) {
 
 void addVectorActionMenu(QMenu &menu, TXsheet *xsheet, int row, int index) {
   auto *app = TApp::instance();
-  if (!xsheet || row < 0 || index < 0 || app->getCurrentFrame()->isPlaying())
+  if (!xsheet || !xsheet->getScene() || row < 0 || index < 0 ||
+      app->getCurrentFrame()->isPlaying())
     return;
 
   const auto cell = xsheet->getCell(row, index);
@@ -230,7 +249,10 @@ void addVectorActionMenu(QMenu &menu, TXsheet *xsheet, int row, int index) {
   const auto current = column->getVectorAction();
   if (!current.matches(cell)) return;
   actions->addSeparator();
-  actions->addAction(QObject::tr("Save Action…"), actions, [target, parent] {
+  const auto saveLabel = vectorActionFileDiffers(*xsheet->getScene(), current)
+                             ? QObject::tr("Save Action… (File Differs)")
+                             : QObject::tr("Save Action…");
+  actions->addAction(saveLabel, actions, [target, parent] {
     runCommand(target, [&] {
       auto binding = target.column->getVectorAction();
       if (!binding.matches(target.cell)) return;

@@ -458,7 +458,8 @@ void ControlPointEditorTool::leftButtonDown(const TPointD &pos,
   }
 
   if (useVectorActionEditor()) {
-    m_vectorActionEditor.press(pos, e);
+    m_vectorActionEditor.press(pos, e,
+                               m_selectType.getValue() == FREEHAND_WSTR);
     return;
   }
 
@@ -700,7 +701,7 @@ void ControlPointEditorTool::moveSegment(const TPointD &delta, bool dragging,
 void ControlPointEditorTool::leftButtonDrag(const TPointD &pos,
                                             const TMouseEvent &e) {
   if (useVectorActionEditor()) {
-    m_vectorActionEditor.drag(pos);
+    m_vectorActionEditor.drag(pos, e.isShiftPressed());
     return;
   }
   TVectorImageP vi(getImage(true));
@@ -807,7 +808,7 @@ void ControlPointEditorTool::selectRegion(TStroke *stroke) {
 void ControlPointEditorTool::leftButtonUp(const TPointD &realPos,
                                           const TMouseEvent &e) {
   if (useVectorActionEditor()) {
-    m_vectorActionEditor.release(realPos);
+    m_vectorActionEditor.release(realPos, e.isShiftPressed());
     return;
   }
   TVectorImageP vi(getImage(true));
