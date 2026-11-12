@@ -4,6 +4,7 @@
 #include "sceneviewercontextmenu.h"
 
 #include "amactionmenu.h"
+#include "vectoractionmenu.h"
 
 // Toonz includes
 #include "tapp.h"
@@ -60,10 +61,13 @@ SceneViewerContextMenu::SceneViewerContextMenu(SceneViewer *parent)
   TTool *tool = app->getCurrentTool()->getTool();
   if (tool && tool->isEnabled()) tool->addContextMenuItems(this);
 
-  if (!isEditingLevel && !app->getCurrentObject()->isSpline())
-    addAMActionMenu(*this, app->getCurrentXsheet()->getXsheet(),
-                    app->getCurrentFrame()->getFrame(),
-                    app->getCurrentColumn()->getColumnIndex());
+  if (!isEditingLevel && !app->getCurrentObject()->isSpline()) {
+    auto *xsheet     = app->getCurrentXsheet()->getXsheet();
+    const int row    = app->getCurrentFrame()->getFrame();
+    const int column = app->getCurrentColumn()->getColumnIndex();
+    addAMActionMenu(*this, xsheet, row, column);
+    addVectorActionMenu(*this, xsheet, row, column);
+  }
 
   // fullscreen
   if (ImageUtils::FullScreenWidget *fsWidget =

@@ -81,6 +81,7 @@ set(SOURCES
     alignmentselection.cpp
     amcontrolpointeditortool.cpp
     controlpointeditortool.cpp
+    vectoractioneditor.cpp
     cuttertool.cpp
     edittool.cpp
     edittoolgadgets.cpp

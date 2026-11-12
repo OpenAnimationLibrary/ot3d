@@ -5,6 +5,9 @@
 
 #include "toonz/txshcolumn.h"
 #include "toonz/txshlevel.h"
+#include "timage.h"
+
+#include <cstdint>
 
 #include <memory>
 
@@ -21,6 +24,10 @@
 // Forward declarations
 class TLevelColumnFx;
 class TXshCell;
+class TSceneHandle;
+class TXsheetHandle;
+struct VectorAction;
+struct VectorActionPreview;
 
 namespace otam {
 struct Action;
@@ -32,6 +39,23 @@ struct AMActionBinding {
   int startRow = 0;
   std::shared_ptr<const otam::Action> action;
 };
+
+struct VectorActionBinding {
+  TXshLevelP level;
+  TFrameId fid;
+  TFilePath path{};
+  int startRow = 0;
+  std::shared_ptr<const VectorAction> action;
+  std::uint64_t revision = 0;
+
+  DVAPI bool matches(const TXshCell &cell) const;
+};
+
+DVAPI void changeVectorActionBinding(TXshLevelColumn *column,
+                                     const VectorActionBinding &binding,
+                                     TSceneHandle *sceneHandle,
+                                     TXsheetHandle *xsheetHandle,
+                                     const QString &label);
 
 //=============================================================================
 //! The TXshLevelColumn class provides a column of levels in xsheet and allows
@@ -53,6 +77,8 @@ class DVAPI TXshLevelColumn final : public TXshCellColumn {
   TLevelColumnFx *m_fx;
   bool m_iconVisible;
   std::shared_ptr<const AMActionBinding> m_amAction;
+  std::shared_ptr<const VectorActionBinding> m_vectorAction;
+  std::shared_ptr<const VectorActionPreview> m_vectorActionPreview;
 
 public:
   // Icon visibility management
@@ -74,6 +100,15 @@ public:
 
   AMActionBinding getAMAction() const;
   void setAMAction(const AMActionBinding &binding);
+
+  VectorActionBinding getVectorAction() const;
+  void setVectorAction(const VectorActionBinding &binding);
+  TImageP vectorActionPose(const TXshCell &cell, const TImageP &image,
+                           double frame) const;
+  void setVectorActionPreview(std::uint64_t revision, int row,
+                              const TImageP &image);
+  TImageP vectorActionPreview(const VectorActionBinding &binding,
+                              int row) const;
 
   // Cloning
   TXshColumn *clone() const override;

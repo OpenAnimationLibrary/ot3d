@@ -16,6 +16,11 @@
 #include "toonz/txshleveltypes.h"
 #include "toonz/tstageobject.h"
 #include "toonz/stage.h"
+#include "toonz/stageplayer.h"
+#include "toonz/tcolumnfx.h"
+#include "toonz/vectoraction.h"
+#include "tregion.h"
+#include "tstroke.h"
 #include "tfiletype.h"
 #include "toutputproperties.h"
 #include "toonz/sceneproperties.h"
@@ -43,6 +48,121 @@ void check(bool result, const char *message) {
 void nearlyEqual(double a, double b) {
   check(std::abs(a - b) < 1e-7, "coordinate/parameter mismatch");
 }
+void checkVectorAction(const QTemporaryDir &temp) {
+  ToonzScene scene;
+  auto *sheet = scene.getTopXsheet();
+  scene.getProperties()->getOutputProperties()->setFrameRate(24);
+  TXshSimpleLevelP level = new TXshSimpleLevel(L"Vector Action Drawing");
+  level->setScene(&scene);
+  level->setType(PLI_XSHLEVEL);
+  level->setPath(TFilePath(temp.filePath("drawing.pli")));
+  level->setPalette(new TPalette);
+
+  TVectorImageP source(new TVectorImage);
+  source->setPalette(level->getPalette());
+  auto *stroke = new TStroke({{0, 0, 1},
+                              {5, 0, 1},
+                              {10, 0, 1},
+                              {10, 5, 1},
+                              {10, 10, 1},
+                              {5, 10, 1},
+                              {0, 10, 1},
+                              {0, 5, 1},
+                              {0, 0, 1}});
+  stroke->setSelfLoop();
+  source->addStroke(stroke, false);
+  source->findRegions();
+  source->fill(TPointD(5, 5), 1);
+  const TFrameId fid(1), otherFid(2);
+  level->setFrame(fid, source);
+  level->setFrame(otherFid, source->clone());
+
+  const TXshCell cell(level.getPointer(), fid);
+  for (int row : {0, 1, 13, 25})
+    check(sheet->setCell(row, 0, cell), "expose Action drawing");
+  check(sheet->setCell(13, 1, cell), "expose shared source in another column");
+  check(sheet->setCell(26, 0, TXshCell(level.getPointer(), otherFid)),
+        "expose another drawing in the same column");
+
+  auto action = VectorAction::forDrawing(source);
+  VectorAction::Offsets offsets;
+  for (int i = 0; i < 8; ++i) offsets[{0, i}] = TPointD(40, 20);
+  action.setKeys(1, offsets);
+  auto decoded =
+      std::make_shared<const VectorAction>(VectorAction::read(action.write()));
+  check(decoded->matches(source) && decoded->channels == action.channels,
+        "vector Action file round-trip lost topology or keys");
+  bool rejected = false;
+  try {
+    VectorAction::read(QByteArray("<ACTIONFILE>"));
+  } catch (const TException &) {
+    rejected = true;
+  }
+  check(rejected, "the vector Action reader accepted an A:M Action");
+
+  auto *column = sheet->getColumn(0)->getLevelColumn();
+  const TFilePath file(temp.filePath("drawing.vact"));
+  column->setVectorAction({level.getPointer(), fid, file, 1, decoded});
+  check(column->vectorActionPose(cell, source, 0) == TImageP(source),
+        "vector Action changed the pose before its start");
+  const TVectorImageP halfway(column->vectorActionPose(cell, source, 13));
+  const auto *posedStroke = halfway->getStroke(0);
+  check(halfway != source && posedStroke->isSelfLoop() &&
+            posedStroke->getControlPoint(0) == TThickPoint(20, 10, 1) &&
+            posedStroke->getControlPoint(8) == TThickPoint(20, 10, 1) &&
+            source->getStroke(0)->getControlPoint(0) == TThickPoint(0, 0, 1),
+        "vector interpolation modified the source, opened the loop or lost "
+        "thickness");
+  const auto *region = halfway->getRegion(TPointD(25, 15));
+  check(region && region->getStyle() == 1, "vector Action lost the fill");
+  check(!column->getVectorAction().matches(sheet->getCell(26, 0)),
+        "vector Action applied to another drawing of the same level");
+
+  Stage::Player player;
+  player.m_sl     = level.getPointer();
+  player.m_xsh    = sheet;
+  player.m_fid    = fid;
+  player.m_column = 0;
+  player.m_frame  = 13;
+  check(player.image()->getBBox() == halfway->getBBox(),
+        "Viewer and vector Action pose disagreed");
+  player.m_column = 1;
+  check(player.image() == TImageP(source),
+        "vector Action leaked to another column");
+
+  auto *fx = column->getLevelColumnFx();
+  TRectD bbox;
+  check(fx->doGetBBox(13, bbox, TRenderSettings()) &&
+            bbox == halfway->getBBox() &&
+            fx->getAlias(13, TRenderSettings()) !=
+                fx->getAlias(25, TRenderSettings()),
+        "vector Action pose was clipped or shared a render cache entry");
+  TXshColumnP cloned(column->clone());
+  check(cloned->getLevelColumn()->getVectorAction().action == decoded,
+        "cloned vector column lost its Action");
+
+  const TFilePath scenePath(temp.filePath("vector-action-sheet.xml"));
+  {
+    TOStream out(scenePath);
+    out << sheet;
+  }
+  TPersist *persist = nullptr;
+  {
+    TIStream in(scenePath);
+    in >> persist;
+  }
+  const std::unique_ptr<TPersist> owner(persist);
+  auto *restored = dynamic_cast<TXsheet *>(persist);
+  check(restored, "vector Action sheet failed to reopen");
+  const auto reopened =
+      restored->getColumn(0)->getLevelColumn()->getVectorAction();
+  check(reopened.matches(restored->getCell(1, 0)) && reopened.path == file &&
+            reopened.startRow == 1 &&
+            reopened.action->channels == action.channels,
+        "vector Action scene snapshot did not restore its drawing, keys or "
+        "timing");
+}
+
 void checkCurveTransfer() {
   TDoubleParam source(10.0), target(3.0);
   source.enableCycle(true);
@@ -653,6 +773,7 @@ int main(int argc, char **argv) {
     }
     check(!level->mesh() && !level->error().empty(),
           "missing model appears successfully loaded");
+    checkVectorAction(temp);
     std::cout << "A:M native level, exposure, per-instance transforms, keys, "
                  "persistence, 2D isolation, raster and Save As passed\n";
     return 0;

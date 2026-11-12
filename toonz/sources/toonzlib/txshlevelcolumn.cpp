@@ -2,6 +2,12 @@
 
 #include "toonz/txshlevelcolumn.h"
 #include "amaction.h"
+#include "historytypes.h"
+#include "tundo.h"
+#include "toonz/tscenehandle.h"
+#include "toonz/txsheet.h"
+#include "toonz/txsheethandle.h"
+#include "toonz/vectoraction.h"
 
 // TnzLib includes
 #include "toonz/txshsimplelevel.h"
@@ -17,6 +23,7 @@
 #include <QByteArray>
 #include <QRegularExpression>
 
+#include <atomic>
 #include <stdexcept>
 #include <utility>
 
@@ -121,6 +128,126 @@ void TXshLevelColumn::setAMAction(const AMActionBinding &binding) {
 
 //-----------------------------------------------------------------------------
 
+struct VectorActionPreview {
+  std::uint64_t revision;
+  int row;
+  TImageP image;
+};
+
+bool VectorActionBinding::matches(const TXshCell &cell) const {
+  return action && level == cell.m_level && fid == cell.m_frameId;
+}
+
+VectorActionBinding TXshLevelColumn::getVectorAction() const {
+  const auto binding = std::atomic_load(&m_vectorAction);
+  return binding ? *binding : VectorActionBinding{};
+}
+
+void TXshLevelColumn::setVectorAction(const VectorActionBinding &binding) {
+  static std::atomic<std::uint64_t> nextRevision{1};
+  std::shared_ptr<const VectorActionBinding> replacement;
+  if (binding.action) {
+    if (!binding.level || binding.level->getType() != PLI_XSHLEVEL ||
+        binding.startRow < 0)
+      throw TException("Invalid vector Action attachment.");
+    auto revised     = binding;
+    revised.revision = nextRevision++;
+    replacement =
+        std::make_shared<const VectorActionBinding>(std::move(revised));
+  }
+  std::atomic_store(&m_vectorAction, std::move(replacement));
+}
+
+TImageP TXshLevelColumn::vectorActionPose(const TXshCell &cell,
+                                          const TImageP &image,
+                                          double frame) const {
+  const auto binding = getVectorAction();
+  if (!binding.matches(cell) || frame < binding.startRow) return image;
+  const double time = vectorActionTime(getXsheet(), binding.startRow, frame);
+  return binding.action->pose(TVectorImageP(image), time);
+}
+
+void TXshLevelColumn::setVectorActionPreview(std::uint64_t revision, int row,
+                                             const TImageP &image) {
+  std::shared_ptr<const VectorActionPreview> preview;
+  if (image)
+    preview = std::make_shared<const VectorActionPreview>(
+        VectorActionPreview{revision, row, image});
+  std::atomic_store(&m_vectorActionPreview, std::move(preview));
+}
+
+TImageP TXshLevelColumn::vectorActionPreview(const VectorActionBinding &binding,
+                                             int row) const {
+  const auto preview = std::atomic_load(&m_vectorActionPreview);
+  return preview && preview->revision == binding.revision && preview->row == row
+             ? preview->image
+             : TImageP();
+}
+
+namespace {
+class VectorActionUndo final : public TUndo {
+  TXshLevelColumnP m_column;
+  TSceneHandle *m_sceneHandle;
+  TXsheetHandle *m_xsheetHandle;
+  ToonzScene *m_scene;
+  VectorActionBinding m_before, m_after;
+  QString m_label;
+
+  void apply(const VectorActionBinding &binding) const {
+    const int index = m_column->getIndex();
+    auto *sheet     = m_column->getXsheet();
+    if (m_sceneHandle->getScene() != m_scene || !sheet || index < 0 ||
+        sheet->getColumn(index) != m_column.getPointer())
+      return;
+    m_column->setVectorAction(binding);
+    m_sceneHandle->notifySceneChanged();
+    m_xsheetHandle->notifyXsheetChanged();
+  }
+
+public:
+  VectorActionUndo(TXshLevelColumn *column, const VectorActionBinding &binding,
+                   TSceneHandle *sceneHandle, TXsheetHandle *xsheetHandle,
+                   const QString &label)
+      : m_column(column)
+      , m_sceneHandle(sceneHandle)
+      , m_xsheetHandle(xsheetHandle)
+      , m_scene(sceneHandle->getScene())
+      , m_before(column->getVectorAction())
+      , m_after(binding)
+      , m_label(label) {}
+
+  void undo() const override { apply(m_before); }
+  void redo() const override { apply(m_after); }
+  int getSize() const override {
+    std::size_t bytes = sizeof(*this);
+    for (const auto &binding : {m_before, m_after}) {
+      if (!binding.action) continue;
+      bytes += binding.action->topology.size() * sizeof(int);
+      for (const auto &track : binding.action->channels)
+        bytes += sizeof(track) + 4 * sizeof(void *) +
+                 track.second.size() * (sizeof(VectorAction::Keys::value_type) +
+                                        4 * sizeof(void *));
+    }
+    return int(bytes);
+  }
+  QString getHistoryString() override { return m_label; }
+  int getHistoryType() override { return HistoryType::Xsheet; }
+};
+}  // namespace
+
+void changeVectorActionBinding(TXshLevelColumn *column,
+                               const VectorActionBinding &binding,
+                               TSceneHandle *sceneHandle,
+                               TXsheetHandle *xsheetHandle,
+                               const QString &label) {
+  auto undo = std::make_unique<VectorActionUndo>(column, binding, sceneHandle,
+                                                 xsheetHandle, label);
+  undo->redo();
+  TUndoManager::manager()->add(undo.release());
+}
+
+//-----------------------------------------------------------------------------
+
 TXshColumn *TXshLevelColumn::clone() const {
   TXshLevelColumn *column = new TXshLevelColumn;
   column->setStatusWord(getStatusWord());
@@ -130,6 +257,7 @@ TXshColumn *TXshLevelColumn::clone() const {
   column->setColorTag(getColorTag());
   column->setColorFilterId(getColorFilterId());
   column->setAMAction(getAMAction());
+  column->setVectorAction(getVectorAction());
 
   return column;
 }
@@ -184,6 +312,23 @@ void TXshLevelColumn::loadData(TIStream &is) {
         }
         is.closeChild();
       }
+    } else if (tagName == "vectorAction") {
+      if (getVectorAction().action)
+        throw TException("Duplicate vector Action attachment.");
+      TPersist *persist = nullptr;
+      VectorActionBinding binding;
+      std::string fid, encoded;
+      is >> persist >> fid >> binding.path >> binding.startRow >> encoded;
+      if (encoded.size() > (VectorAction::MaxBytes + 2) / 3 * 4)
+        throw TException("Vector Action exceeds the file size limit.");
+      binding.level = dynamic_cast<TXshLevel *>(persist);
+      binding.fid   = qstringToFrameId(QString::fromStdString(fid));
+      const auto bytes =
+          QByteArray::fromBase64(QByteArray::fromStdString(encoded),
+                                 QByteArray::AbortOnBase64DecodingErrors);
+      binding.action =
+          std::make_shared<const VectorAction>(VectorAction::read(bytes));
+      setVectorAction(binding);
     } else if (tagName == "amAction") {
       if (getAMAction().action)
         throw TException("A:M action: duplicate column attachment");
@@ -296,6 +441,14 @@ void TXshLevelColumn::saveData(TOStream &os) {
     // Keep the native ACTIONFILE payload separate from the scene's tags.
     os.child("amAction") << binding.level.getPointer() << binding.path
                          << binding.startRow << bytes.toBase64().toStdString();
+  }
+
+  const auto vectorBinding = getVectorAction();
+  if (vectorBinding.action) {
+    os.child("vectorAction")
+        << vectorBinding.level.getPointer() << vectorBinding.fid.expand()
+        << vectorBinding.path << vectorBinding.startRow
+        << vectorBinding.action->write().toBase64().toStdString();
   }
 
   os.child("fx") << m_fx;

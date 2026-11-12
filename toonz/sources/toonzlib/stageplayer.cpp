@@ -7,6 +7,7 @@
 #include "toonz/txshleveltypes.h"
 #include "toonz/txsheet.h"
 #include "toonz/txshcell.h"
+#include "toonz/txshlevelcolumn.h"
 #include "toonz/textureutils.h"
 #include "toonz/imagemanager.h"
 #include "imagebuilders.h"
@@ -56,6 +57,25 @@ TImageP Stage::Player::image() const {
   std::string id = m_sl->getImageId(m_fid);
   int slType     = m_sl->getType();
   ImageLoader::BuildExtData extData(m_sl, m_fid);
+
+  if (slType == PLI_XSHLEVEL && m_xsh && !m_isEditingLevel && m_column >= 0) {
+    auto *column      = m_xsh->getColumn(m_column);
+    auto *levelColumn = column ? column->getLevelColumn() : nullptr;
+    const TXshCell cell(TXshLevelP(m_sl), m_fid);
+    if (levelColumn) {
+      const auto binding = levelColumn->getVectorAction();
+      if (binding.matches(cell) && m_frame >= binding.startRow) {
+        if (m_isCurrentColumn && m_onionSkinDistance == c_noOnionSkin) {
+          if (auto preview = levelColumn->vectorActionPreview(binding, m_frame))
+            return preview;
+        }
+        const auto source = ImageManager::instance()->getImage(
+            id, ImageManager::none, &extData);
+        const auto pose = levelColumn->vectorActionPose(cell, source, m_frame);
+        if (pose != source || !TXshSimpleLevel::m_rasterizePli) return pose;
+      }
+    }
+  }
 
   if (slType == PLI_XSHLEVEL && TXshSimpleLevel::m_rasterizePli) {
     if (!(m_isCurrentColumn && m_isCurrentXsheetLevel)) id = id + "_rasterized";
