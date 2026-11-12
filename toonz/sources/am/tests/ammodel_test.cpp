@@ -144,6 +144,16 @@ void testSplineProfile() {
                                                 identity, nullptr, true);
   checkPoint(vectorStroke, 5, 2, 1, 1);
 
+  otam::Mesh pointMesh;
+  auto &point = pointMesh.splines.emplace_back().curves.emplace_back();
+  point.points.fill({{10.1, 20.2, 0}});
+  const auto dot = otam::strokeSplines(pointMesh, {vectorStyle}, nullptr,
+                                       identity, nullptr, true);
+  check(!dot.empty(), "point-sized vector stroke lost its ink");
+  near(dot.front().vertices[1][0], 12.1);
+  near(dot.front().vertices[1][1], 20.2);
+  near(dot.front().colors[1][1], 1);
+
   ink.group = "Middle";
   const auto sectionOfWhole =
       otam::strokeSplines(mesh, {ink}, nullptr, identity);
