@@ -286,6 +286,7 @@ set(SOURCES
     txsheetexpr.cpp
     txshlevel.cpp
     txshlevelcolumn.cpp
+    vectoraction.cpp
     txshnoteset.cpp
     txshpalettecolumn.cpp
     txshpalettelevel.cpp

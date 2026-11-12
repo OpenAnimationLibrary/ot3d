@@ -180,6 +180,7 @@ void ControlPointEditorTool::resetSnap() { m_foundSnap = false; }
 
 ControlPointEditorTool::ControlPointEditorTool()
     : TTool("T_ControlPointEditor")
+    , m_vectorActionEditor(*this)
     , m_draw(false)
     , m_lastPointSelected(-1)
     , m_isImageChanged(false)
@@ -353,7 +354,20 @@ void ControlPointEditorTool::drawControlPoint() {
 
 //---------------------------------------------------------------------------
 
+bool ControlPointEditorTool::useVectorActionEditor(bool sourceChanged) {
+  if (!m_vectorActionEditor.refresh(sourceChanged)) return false;
+  if (m_controlPointEditorStroke.getStrokeIndex() != -1) {
+    m_selection.selectNone();
+    m_controlPointEditorStroke.setStroke(TVectorImageP(), -1);
+  }
+  return true;
+}
+
 void ControlPointEditorTool::draw() {
+  if (m_draw && useVectorActionEditor()) {
+    m_vectorActionEditor.draw();
+    return;
+  }
   TVectorImageP vi(getImage(false));
   if (!m_draw) return;
 
@@ -398,6 +412,11 @@ void ControlPointEditorTool::draw() {
 
 void ControlPointEditorTool::mouseMove(const TPointD &pos,
                                        const TMouseEvent &e) {
+  if (useVectorActionEditor()) {
+    m_cursorType = NORMAL;
+    m_vectorActionEditor.mouseMove(pos);
+    return;
+  }
   // Scelgo il cursore in base alla distanza del mouse dalla curva e dai punti
   // di controllo
   TVectorImageP vi(getImage(false));
@@ -435,6 +454,12 @@ void ControlPointEditorTool::leftButtonDown(const TPointD &pos,
                                             const TMouseEvent &e) {
   if (getViewer() && getViewer()->getGuidedStrokePickerMode()) {
     getViewer()->doPickGuideStroke(pos);
+    return;
+  }
+
+  if (useVectorActionEditor()) {
+    m_vectorActionEditor.press(pos, e,
+                               m_selectType.getValue() == FREEHAND_WSTR);
     return;
   }
 
@@ -609,6 +634,7 @@ void ControlPointEditorTool::leftButtonDown(const TPointD &pos,
 
 void ControlPointEditorTool::rightButtonDown(const TPointD &pos,
                                              const TMouseEvent &) {
+  if (useVectorActionEditor()) return;
   TVectorImageP vi = getImage(true);
   if (!vi) return;
   double maxDist  = 5 * getPixelSize();
@@ -674,6 +700,10 @@ void ControlPointEditorTool::moveSegment(const TPointD &delta, bool dragging,
 
 void ControlPointEditorTool::leftButtonDrag(const TPointD &pos,
                                             const TMouseEvent &e) {
+  if (useVectorActionEditor()) {
+    m_vectorActionEditor.drag(pos, e.isShiftPressed());
+    return;
+  }
   TVectorImageP vi(getImage(true));
   int currentStroke = m_controlPointEditorStroke.getStrokeIndex();
   if (!vi || currentStroke == -1 || m_action == NONE) return;
@@ -777,6 +807,10 @@ void ControlPointEditorTool::selectRegion(TStroke *stroke) {
 
 void ControlPointEditorTool::leftButtonUp(const TPointD &realPos,
                                           const TMouseEvent &e) {
+  if (useVectorActionEditor()) {
+    m_vectorActionEditor.release(realPos, e.isShiftPressed());
+    return;
+  }
   TVectorImageP vi(getImage(true));
   int currentStroke = m_controlPointEditorStroke.getStrokeIndex();
   if (!vi || currentStroke == -1) return;
@@ -834,7 +868,7 @@ void ControlPointEditorTool::leftButtonUp(const TPointD &realPos,
 
 void ControlPointEditorTool::addContextMenuItems(QMenu *menu) {
   m_isMenuViewed = true;
-  m_selection.addMenuItems(menu);
+  if (!useVectorActionEditor()) m_selection.addMenuItems(menu);
 }
 
 //---------------------------------------------------------------------------
@@ -860,6 +894,7 @@ void ControlPointEditorTool::unlinkSpeedInOut(int pointIndex) {
 //---------------------------------------------------------------------------
 
 bool ControlPointEditorTool::keyDown(QKeyEvent *event) {
+  if (useVectorActionEditor()) return m_vectorActionEditor.keyDown(*event);
   TVectorImageP vi(getImage(true));
   if (!vi || (vi && m_selection.isEmpty())) return false;
 
@@ -969,6 +1004,7 @@ void ControlPointEditorTool::onActivate() {
 //---------------------------------------------------------------------------
 
 void ControlPointEditorTool::onDeactivate() {
+  m_vectorActionEditor.reset();
   m_draw = false;
   if (TTool::getApplication()->getCurrentSelection()->getSelection() ==
       &m_selection)
@@ -978,6 +1014,7 @@ void ControlPointEditorTool::onDeactivate() {
 //---------------------------------------------------------------------------
 
 void ControlPointEditorTool::onImageChanged() {
+  if (useVectorActionEditor(true)) return;
   TVectorImageP vi(getImage(false));
   if (!vi) return;
 
@@ -1021,6 +1058,8 @@ int ControlPointEditorTool::getCursorId() const {
 // instead of triggering the shortcut command.
 bool ControlPointEditorTool::isEventAcceptable(QEvent *e) {
   if (!isEnabled()) return false;
+  if (useVectorActionEditor())
+    return m_vectorActionEditor.acceptsKey(*static_cast<QKeyEvent *>(e));
   TVectorImageP vi(getImage(false));
   if (!vi || (vi && m_selection.isEmpty())) return false;
   // arrow keys will be used for moving the selected points

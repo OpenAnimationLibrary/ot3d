@@ -9,6 +9,7 @@
 #include "tcurves.h"
 #include "tproperty.h"
 #include "controlpointselection.h"
+#include "vectoractioneditor.h"
 #include "toonz/strokegenerator.h"
 
 // For Qt translation support
@@ -22,6 +23,9 @@ class TUndo;
 
 class ControlPointEditorTool final : public TTool {
   Q_DECLARE_TR_FUNCTIONS(ControlPointEditorTool)
+
+  VectorActionEditor m_vectorActionEditor;
+  bool useVectorActionEditor(bool sourceChanged = false);
 
   bool m_draw;
   bool m_isMenuViewed;

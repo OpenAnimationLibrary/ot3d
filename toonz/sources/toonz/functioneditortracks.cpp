@@ -2,6 +2,8 @@
 
 #include "amaction.h"
 #include "amactionmenu.h"
+#include "vectoractionmenu.h"
+#include "texception.h"
 #include "floatingpanelcommand.h"
 #include "pane.h"
 #include "tapp.h"
@@ -14,6 +16,8 @@
 #include "toonz/toonzscene.h"
 #include "toonz/tscenehandle.h"
 #include "toonz/txshamlevel.h"
+#include "toonz/txshcell.h"
+#include "toonz/vectoraction.h"
 #include "toonz/txsheet.h"
 #include "toonz/txsheethandle.h"
 #include "toonz/txshlevelcolumn.h"
@@ -330,6 +334,105 @@ public:
   }
 };
 
+class VectorActionKeyTrack final : public FunctionKeyTrack {
+  TXshLevelColumnP m_column;
+  TXshCell m_cell;
+  VectorAction::Point m_point;
+  std::vector<int> m_topology;
+
+  VectorActionBinding binding() const {
+    auto *xsheet    = TApp::instance()->getCurrentXsheet()->getXsheet();
+    const int index = m_column->getIndex();
+    if (!xsheet || m_column->getXsheet() != xsheet || index < 0 ||
+        xsheet->getColumn(index) != m_column.getPointer())
+      return {};
+    auto current = m_column->getVectorAction();
+    return current.matches(m_cell) && current.action->topology == m_topology
+               ? current
+               : VectorActionBinding{};
+  }
+
+public:
+  VectorActionKeyTrack(TXshLevelColumn *column,
+                       const VectorActionBinding &binding,
+                       VectorAction::Point point)
+      : m_column(column)
+      , m_cell(binding.level, binding.fid)
+      , m_point(point)
+      , m_topology(binding.action->topology) {}
+
+  Snapshot read() const override {
+    Snapshot result;
+    const auto current = binding();
+    result.available   = bool(current.action);
+    if (!current.action) return result;
+    const auto channel = current.action->channels.find(m_point);
+    if (channel == current.action->channels.end()) return result;
+    auto *xsheet = m_column->getXsheet();
+    for (const auto &[seconds, point] : channel->second) {
+      double frame = vectorActionFrame(xsheet, current.startRow, seconds);
+      if (!validFrame(frame)) continue;
+      const double integer = std::round(frame);
+      if (vectorActionTime(xsheet, current.startRow, integer) == seconds)
+        frame = integer;
+      result.keys.emplace(frame, Value{point.x, point.y, 0, 0});
+    }
+    return result;
+  }
+
+  bool canEdit() const override {
+    return !TApp::instance()->getCurrentFrame()->isPlaying() &&
+           !m_column->isLocked() && bool(binding().action);
+  }
+
+  bool canReload() const override {
+    return canEdit() && !binding().path.isEmpty();
+  }
+
+  void reload(QWidget *parent) override {
+    if (canReload()) reloadVectorActionFromFile(m_column.getPointer(), parent);
+  }
+
+  bool edit(int component, const std::vector<Edit> &edits) override {
+    if (!canEdit() || edits.empty() || component < 0 || component > 1)
+      return false;
+    auto current       = binding();
+    auto action        = std::make_shared<VectorAction>(*current.action);
+    const auto channel = action->channels.find(m_point);
+    const auto before = channel == action->channels.end() ? VectorAction::Keys()
+                                                          : channel->second;
+    auto after        = before;
+    for (const auto &edit : edits)
+      if ((edit.to && *edit.to < current.startRow) ||
+          (edit.from && *edit.from < current.startRow))
+        return false;
+    const auto time = [&](double frame) {
+      return vectorActionTime(m_column->getXsheet(), current.startRow, frame);
+    };
+    const auto sample = [&](double seconds) {
+      return action->sample(m_point, seconds);
+    };
+    const auto setValue = [component](TPointD &value, double coordinate) {
+      (component == 0 ? value.x : value.y) = coordinate;
+    };
+    if (!editGroupedKeys(before, after, edits, time, sample, setValue) ||
+        after == before)
+      return false;
+    try {
+      action->replaceKeys(m_point, std::move(after));
+    } catch (const TException &error) {
+      DVGui::warning(QString::fromStdWString(error.getMessage()));
+      return false;
+    }
+    current.action = std::move(action);
+    auto *app      = TApp::instance();
+    changeVectorActionBinding(m_column.getPointer(), current,
+                              app->getCurrentScene(), app->getCurrentXsheet(),
+                              QObject::tr("Edit Vector Action Keys"));
+    return true;
+  }
+};
+
 }  // namespace
 
 void showPaletteStyleInFunctionEditor(TPalette *palette, int styleId) {
@@ -374,4 +477,26 @@ void showAMActionInFunctionEditor(TXshLevelColumn *column,
         std::make_shared<ActionKeyTrack>(column, binding.level.getPointer(),
                                          id));
   }
+}
+
+void showVectorActionInFunctionEditor(TXshLevelColumn *column,
+                                      std::pair<int, int> point) {
+  const auto binding = column->getVectorAction();
+  if (!binding.action || !binding.action->channels.count(point)) return;
+  auto *editor = openEditor();
+  if (!editor) return;
+  const QString label =
+      QObject::tr("%1 · Column %2 · Stroke %3, Point %4")
+          .arg(QString::fromStdWString(binding.level->getName()))
+          .arg(column->getIndex() + 1)
+          .arg(point.first + 1)
+          .arg(point.second + 1);
+  const auto id =
+      sourceId(column, point.first) + ':' + QString::number(point.second) +
+      ':' + sourceId(binding.level.getPointer(), binding.fid.getNumber()) +
+      ':' + binding.fid.getLetter();
+  editor->showKeyTrack(
+      "vectorAction:" + id, QObject::tr("Actions"), label,
+      {QObject::tr("X Offset"), QObject::tr("Y Offset")},
+      std::make_shared<VectorActionKeyTrack>(column, binding, point));
 }

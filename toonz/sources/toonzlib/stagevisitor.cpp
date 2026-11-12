@@ -1064,7 +1064,7 @@ void RasterPainter::onVectorImage(TVectorImage *vi,
   delete cf;
   delete guidedCf;
 
-  if (guidedStroke) m_guidedStrokes.push_back(guidedStroke);
+  if (guidedStroke) m_guidedStrokeBBox += guidedStroke->getBBox();
 }
 
 //-----------------------------------------------------

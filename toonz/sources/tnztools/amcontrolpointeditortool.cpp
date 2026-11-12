@@ -1,3 +1,4 @@
+#include "actionpointselection.h"
 #include "amaction.h"
 #include "tools/alignmentselection.h"
 #include "tools/tool.h"
@@ -14,6 +15,7 @@
 #include "toonz/txsheethandle.h"
 #include "toonzqt/tselectionhandle.h"
 #include "historytypes.h"
+#include "tproperty.h"
 #include "tgl.h"
 #include "tundo.h"
 
@@ -287,17 +289,13 @@ class AMControlPointEditor final : public TTool {
     std::optional<Handle> handle;
     std::optional<ActionEdit> action;
     std::vector<Vec3> restPositions;
+    std::optional<ActionPointTransform> transform;
   };
 
-  struct SelectionBox {
+  struct SelectionGesture {
     Target target;
-    TPointD start, end;
+    ActionPointSelectionRegion region;
     bool add;
-
-    TRectD rect() const {
-      return TRectD(std::min(start.x, end.x), std::min(start.y, end.y),
-                    std::max(start.x, end.x), std::max(start.y, end.y));
-    }
   };
 
   Target m_drawTarget;
@@ -306,7 +304,10 @@ class AMControlPointEditor final : public TTool {
   std::optional<Projection> m_projection;
   HeadSelection m_selectedHeads;
   std::optional<std::size_t> m_occurrence;
-  std::optional<SelectionBox> m_selectionBox;
+  std::optional<SelectionGesture> m_selectionGesture;
+  std::optional<ActionPointSelectionBox> m_transformBox;
+  TPropertyGroup m_properties;
+  TEnumProperty m_selectionType{"Type:"};
   std::vector<Handle> m_handles;
   std::optional<Drag> m_drag;
   QElapsedTimer m_updateTimer;
@@ -504,6 +505,7 @@ class AMControlPointEditor final : public TTool {
       if (!m_selectedHeads.count(head)) m_selectionOrder.push_back(head);
     m_selectedHeads = std::move(heads);
     m_occurrence.reset();
+    m_transformBox.reset();
     if (m_selectedHeads.size() == 1) m_occurrence = *m_selectedHeads.begin();
     m_handles.clear();
     invalidate();
@@ -511,23 +513,23 @@ class AMControlPointEditor final : public TTool {
       TSelectionHandle::getCurrent()->notifySelectionChanged();
   }
 
-  void finishBox(const TPointD &pos) {
-    auto box = std::move(*m_selectionBox);
-    m_selectionBox.reset();
+  void finishSelection(const TPointD &pos) {
+    auto gesture = std::move(*m_selectionGesture);
+    m_selectionGesture.reset();
     const auto active = currentTarget();
-    if (m_projection && box.target == active && m_drawTarget == active &&
+    if (m_projection && gesture.target == active && m_drawTarget == active &&
         m_drawViewer == getViewer() && !getViewer()->isPreviewEnabled() &&
         active.level->revision() == m_revision) {
       const auto model = amModelAt(active.xsheet, active.column, active.row);
       if (model) {
-        box.end         = pos;
-        const auto rect = box.rect();
-        auto selected   = box.add ? m_selectedHeads : HeadSelection{};
+        gesture.region.update(pos);
+        auto selected = gesture.add ? m_selectedHeads : HeadSelection{};
         for (std::size_t i = 0; i < model->points.size(); ++i) {
           const auto &point = model->points[i];
           if (point.head != i) continue;
           const auto screen = m_projection->project(point.position);
-          if (screen && rect.contains(xy(*screen))) selected.insert(i);
+          if (screen && gesture.region.contains(xy(*screen)))
+            selected.insert(i);
         }
         setSelection(std::move(selected));
       }
@@ -615,7 +617,17 @@ class AMControlPointEditor final : public TTool {
     auto &drag       = *m_drag;
     auto values      = drag.before;
     const auto delta = event.m_pos - drag.mouseStart;
-    if (norm2(delta) > 0) {
+    if (drag.transform && norm2(delta) > 0) {
+      const auto matrix = drag.transform->matrix(delta, event.isShiftPressed());
+      if (!matrix.isIdentity()) {
+        for (auto &[id, value] : values) {
+          const auto projected = drag.projection.project(value.position);
+          if (projected)
+            value.position = drag.projection.unproject(matrix * xy(*projected),
+                                                       (*projected)[2]);
+        }
+      }
+    } else if (norm2(delta) > 0) {
       const auto point = drag.projection.unproject(xy(drag.screenStart) + delta,
                                                    drag.screenStart[2]);
       if (drag.handle) {
@@ -656,7 +668,8 @@ class AMControlPointEditor final : public TTool {
 
   void beginDrag(const Target &active, const otam::Model &model,
                  std::size_t hit, const Vec3 &screen, const TMouseEvent &event,
-                 std::optional<Handle> handle, bool actionMode) {
+                 std::optional<Handle> handle, bool actionMode,
+                 std::optional<ActionPointTransform> transform = {}) {
     auto action = actionMode ? beginActionEdit(active) : std::nullopt;
     if (actionMode && !action) return;
 
@@ -674,18 +687,33 @@ class AMControlPointEditor final : public TTool {
       for (auto head : m_selectedHeads) addPoint(head);
 
     m_drag = Drag{
-        active, *m_projection,     m_revision,     values,
-        values, event.m_pos,       screen,         model.points[hit].position,
-        handle, std::move(action), std::move(rest)};
+        active, *m_projection,     m_revision,      values,
+        values, event.m_pos,       screen,          model.points[hit].position,
+        handle, std::move(action), std::move(rest), std::move(transform)};
     m_updateTimer.invalidate();
   }
 
 public:
-  AMControlPointEditor() : TTool(T_ControlPointEditor) { bind(AMModel); }
+  AMControlPointEditor() : TTool(T_ControlPointEditor) {
+    bind(AMModel);
+    m_selectionType.addValue(L"Rectangular");
+    m_selectionType.addValue(L"Freehand");
+    m_selectionType.setId("Type");
+    m_selectionType.setValue(L"Rectangular");
+    m_properties.bind(m_selectionType);
+  }
+
+  TPropertyGroup *getProperties(int) override { return &m_properties; }
+
+  void updateTranslation() override {
+    m_selectionType.setQStringName(QObject::tr("Type:"));
+    m_selectionType.setItemUIName(L"Rectangular", QObject::tr("Rectangular"));
+    m_selectionType.setItemUIName(L"Freehand", QObject::tr("Freehand"));
+  }
 
   ToolType getToolType() const override { return ColumnTool; }
   unsigned int getToolHints() const override { return HintNone; }
-  bool isDragging() const override { return m_drag || m_selectionBox; }
+  bool isDragging() const override { return m_drag || m_selectionGesture; }
   int getCursorId() const override { return ToolCursor::SplineEditorCursor; }
   void updateMatrix() override { setMatrix(TAffine()); }
 
@@ -703,7 +731,7 @@ public:
     finishDrag();
     m_pointSelection.makeNotCurrent();
     setSelection({});
-    m_selectionBox.reset();
+    m_selectionGesture.reset();
     m_drawTarget = {};
     m_projection.reset();
   }
@@ -711,7 +739,7 @@ public:
   void onImageChanged() override {
     if (!(m_drawTarget == currentTarget())) {
       finishDrag();
-      m_selectionBox.reset();
+      m_selectionGesture.reset();
     }
   }
 
@@ -720,6 +748,7 @@ public:
     if (!viewer || QOpenGLContext::currentContext() != viewer->context())
       return;
     m_projection.reset();
+    m_transformBox.reset();
     m_handles.clear();
     if (viewer->isPreviewEnabled()) return;
     auto active = currentTarget();
@@ -789,6 +818,7 @@ public:
       }
     }
 
+    std::vector<TPointD> selectedPositions;
     glPointSize(float(6 * dpi));
     glBegin(GL_POINTS);
     for (std::size_t i = 0; i < model->points.size(); ++i) {
@@ -797,6 +827,7 @@ public:
       const auto p = m_projection->project(point.position);
       if (!p) continue;
       const bool selected = m_selectedHeads.count(i);
+      if (selected) selectedPositions.push_back(xy(*p));
       if (hasPositionKey(binding, point.id, time))
         glColor3ub(255, selected ? 119 : 163, 208);
       else if (selected)
@@ -807,15 +838,12 @@ public:
     }
     glEnd();
 
-    if (m_selectionBox && m_selectionBox->target == active) {
-      const auto rect = m_selectionBox->rect();
-      glColor3ub(123, 232, 229);
-      glBegin(GL_LINE_LOOP);
-      glVertex2d(rect.x0, rect.y0);
-      glVertex2d(rect.x1, rect.y0);
-      glVertex2d(rect.x1, rect.y1);
-      glVertex2d(rect.x0, rect.y1);
-      glEnd();
+    if (m_selectionGesture && m_selectionGesture->target == active) {
+      tglColor(TPixel32(123, 232, 229));
+      m_selectionGesture->region.draw();
+    } else if (actionMode && time >= 0 && selectedPositions.size() > 1) {
+      m_transformBox.emplace(selectedPositions, dpi);
+      m_transformBox->draw();
     }
     glPopMatrix();
     glPopAttrib();
@@ -825,7 +853,7 @@ public:
 
   void leftButtonDown(const TPointD &, const TMouseEvent &event) override {
     finishDrag();
-    m_selectionBox.reset();
+    m_selectionGesture.reset();
     const auto active = currentTarget();
     if (!m_projection || !active.level || !(m_drawTarget == active) ||
         m_drawViewer != getViewer() || getViewer()->isPreviewEnabled())
@@ -833,6 +861,18 @@ public:
     const auto model = amModelAt(active.xsheet, active.column, active.row);
     if (!model || m_revision != active.level->revision()) return;
     const bool actionMode = bool(actionBinding(active).action);
+    m_pointSelection.makeCurrent();
+    const auto transform =
+        actionMode && m_transformBox && !event.isCtrlPressed()
+            ? m_transformBox->hit(event.m_pos)
+            : std::nullopt;
+    if (transform) {
+      const auto head = *m_selectedHeads.begin();
+      beginDrag(active, *model, head, {}, event, {}, true, transform);
+      invalidate();
+      return;
+    }
+
     const double radius = 7 * getViewer()->getDevPixRatio();
     double nearest      = radius * radius;
     std::optional<Handle> handle;
@@ -864,13 +904,26 @@ public:
       }
     }
 
-    m_pointSelection.makeCurrent();
     if (!hit) {
-      m_selectionBox = SelectionBox{active, event.m_pos, event.m_pos,
-                                    event.isShiftPressed()};
+      const bool additive = event.isShiftPressed() || event.isCtrlPressed();
+      if (actionMode && !additive && m_transformBox &&
+          m_transformBox->contains(event.m_pos)) {
+        for (auto head : m_selectedHeads) {
+          const auto p = m_projection->project(model->points[head].position);
+          if (!p) continue;
+          beginDrag(active, *model, head, *p, event, {}, true);
+          break;
+        }
+      } else {
+        m_selectionGesture = SelectionGesture{
+            active,
+            ActionPointSelectionRegion(
+                event.m_pos, m_selectionType.getValue() == L"Freehand"),
+            additive};
+      }
     } else if (handle) {
       beginDrag(active, *model, *hit, screen, event, handle, actionMode);
-    } else if (event.isShiftPressed()) {
+    } else if (event.isShiftPressed() || event.isCtrlPressed()) {
       auto selected = m_selectedHeads;
       if (!selected.erase(*hit)) selected.insert(*hit);
       setSelection(std::move(selected));
@@ -887,8 +940,8 @@ public:
   }
 
   void leftButtonDrag(const TPointD &, const TMouseEvent &event) override {
-    if (m_selectionBox) {
-      m_selectionBox->end = event.m_pos;
+    if (m_selectionGesture) {
+      m_selectionGesture->region.update(event.m_pos);
       invalidate();
     } else {
       updateDrag(event, false);
@@ -896,8 +949,8 @@ public:
   }
 
   void leftButtonUp(const TPointD &, const TMouseEvent &event) override {
-    if (m_selectionBox) {
-      finishBox(event.m_pos);
+    if (m_selectionGesture) {
+      finishSelection(event.m_pos);
     } else {
       updateDrag(event, true);
       finishDrag();
@@ -961,8 +1014,8 @@ public:
 
   bool keyDown(QKeyEvent *event) override {
     if (event->key() != Qt::Key_Escape || !isDragging()) return false;
-    if (m_selectionBox) {
-      m_selectionBox.reset();
+    if (m_selectionGesture) {
+      m_selectionGesture.reset();
       invalidate();
       TSelectionHandle::getCurrent()->notifySelectionChanged();
       return true;

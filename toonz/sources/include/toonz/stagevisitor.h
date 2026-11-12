@@ -266,7 +266,7 @@ private:
   // darken blended view mode for viewing the non-cleanuped and stacked drawings
   bool m_doRasterDarkenBlendedView;
 
-  std::vector<TStroke *> m_guidedStrokes;
+  TRectD m_guidedStrokeBBox;
 
 public:
   RasterPainter(const TDimension &dim, const TAffine &viewAff,
@@ -296,7 +296,7 @@ public:
 
   void setRasterDarkenBlendedView(bool on) { m_doRasterDarkenBlendedView = on; }
   void setCurrentImageId(std::string id) { m_currentImageId = id; }
-  std::vector<TStroke *> &getGuidedStrokes() { return m_guidedStrokes; }
+  const TRectD &getGuidedStrokeBBox() const { return m_guidedStrokeBBox; }
 };
 
 //=============================================================================

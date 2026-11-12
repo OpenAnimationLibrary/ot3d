@@ -27,6 +27,7 @@
 #include "toonz/toonzscene.h"
 #include "toonz/txsheet.h"
 #include "toonz/txshlevelcolumn.h"
+#include "toonz/vectoraction.h"
 #include "toonz/txshpalettecolumn.h"
 #include "toonz/txshzeraryfxcolumn.h"
 #include "toonz/txshlevel.h"
@@ -1020,6 +1021,7 @@ void TLevelColumnFx::doCompute(TTile &tile, double frame,
           fid, ((info.m_bpp == 64) ? ImageManager::is64bitEnabled : 0) |
                    ImageManager::dontPutInCache);
     }
+    img = m_levelColumn->vectorActionPose(cell, img, frame);
   }
 
   // Extract the required geometry
@@ -1450,7 +1452,8 @@ bool TLevelColumnFx::doGetBBox(double frame, TRectD &bBox,
     }
     dpi = imageInfo.m_dpix / Stage::inch;
   } else {
-    TImageP img = m_levelColumn->getCell(row).getImage(false);
+    TImageP img =
+        m_levelColumn->vectorActionPose(cell, cell.getImage(false), frame);
     if (!img) return false;
     bBox = img->getBBox();
   }
@@ -1550,6 +1553,13 @@ std::string TLevelColumnFx::getAlias(double frame,
     if (palette && palette->isAnimated())
       rdata += "animatedPlt" + std::to_string(frame);
   }
+
+  const auto binding = m_levelColumn->getVectorAction();
+  if (binding.matches(cell) && frame >= binding.startRow &&
+      !binding.action->channels.empty())
+    rdata += ",vectorAction:" + std::to_string(binding.revision) + ':' +
+             std::to_string(vectorActionTime(m_levelColumn->getXsheet(),
+                                             binding.startRow, frame));
 
   if (Preferences::instance()->isIgnoreAlphaonColumn1Enabled()) {
     TXsheet *xsh  = m_levelColumn->getLevelColumn()->getXsheet();

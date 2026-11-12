@@ -25,6 +25,7 @@
 #include <QSaveFile>
 
 #include <exception>
+#include <stdexcept>
 #include <utility>
 
 namespace {
@@ -255,6 +256,21 @@ void runActionCommand(void (*command)(const ActionTarget &, QWidget *),
 
 }  // namespace
 
+bool amActionFileDiffers(const ToonzScene &scene,
+                         const AMActionBinding &binding) {
+  if (!binding.action) return false;
+  if (binding.path.isEmpty()) return true;
+  try {
+    const auto saved =
+        readActionFile(scene.decodeFilePath(binding.path).getQString());
+    return otam::writeAction(saved) != otam::writeAction(*binding.action);
+  } catch (const TException &) {
+    return true;
+  } catch (const std::runtime_error &) {
+    return true;
+  }
+}
+
 void changeAMActionBinding(TXshLevelColumn *column, AMActionBinding binding,
                            const QString &name) {
   auto undo =
@@ -369,9 +385,12 @@ void addAMActionMenu(QMenu &menu, TXsheet *xsheet, int row, int column) {
                                              parent);
                   })
       ->setEnabled(!attached.path.isEmpty());
-  actionMenu->addAction(
-      QObject::tr("Save Action..."), actionMenu,
-      [parent, target] { runActionCommand(saveAction, target, parent); });
+  actionMenu->addAction(amActionFileDiffers(*scene, attached)
+                            ? QObject::tr("Save Action… (File Differs)")
+                            : QObject::tr("Save Action…"),
+                        actionMenu, [parent, target] {
+                          runActionCommand(saveAction, target, parent);
+                        });
   actionMenu
       ->addAction(QObject::tr("Set Start to This Frame"), actionMenu,
                   [target] {
