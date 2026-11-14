@@ -1,4 +1,5 @@
 #include "toonz/amlevelrender.h"
+#include "ext/plasticskeletondeformation.h"
 #include "toonz/sceneproperties.h"
 #include "toonz/toonzscene.h"
 #include "toonz/t3drendersource.h"
@@ -26,6 +27,10 @@
 #include <map>
 #include <set>
 #include <stdexcept>
+
+namespace {
+const double amStageUnits = Stage::inch / 2.54;
+}
 
 AMModelCamera amModelCamera(TXsheet *xsheet, double frame, bool preview) {
   const auto id =
@@ -63,7 +68,11 @@ static otam::Matrix modelPlacement(TXsheet *xsheet, int column, double frame,
 }
 
 otam::Matrix amModelPlacement(TXsheet *xsheet, int column, double frame) {
-  return modelPlacement(xsheet, column, frame, Stage::inch / 2.54);
+  return modelPlacement(xsheet, column, frame, amStageUnits);
+}
+
+otam::Matrix amPlasticPlacement(TXsheet *xsheet, int column, double frame) {
+  return modelPlacement(xsheet, column, frame, 1.0);
 }
 
 double amActionTime(TXsheet *xsheet, int startRow, double frame) {
@@ -87,6 +96,40 @@ AMActionBinding matchingAction(TXsheet *xsheet, int column,
   auto binding = levelColumn->getAMAction();
   if (binding.level != level) return {};
   return binding;
+}
+
+std::vector<otam::PlasticBone> amPlasticBones(TXsheet *xsheet, int column,
+                                              double frame) {
+  const auto *object = xsheet->getStageObject(TStageObjectId::ColumnId(column));
+  const auto deformation = object->getPlasticSkeletonDeformation();
+  if (!deformation) return {};
+  const double time    = object->paramsTime(frame);
+  const int skeletonId = deformation->skeletonId(time);
+  const auto rest      = deformation->skeleton(skeletonId);
+  if (!rest || rest->vertices().size() < 2) return {};
+
+  PlasticSkeleton posed;
+  deformation->storeDeformedSkeleton(skeletonId, time, posed);
+  const auto modelPoint = [](const TPointD &p) {
+    return otam::Vec3{p.x / amStageUnits, p.y / amStageUnits, 0.0};
+  };
+  std::vector<otam::PlasticBone> bones;
+  bones.reserve(rest->vertices().size() - 1);
+  bool moves = false;
+  for (auto vertex = rest->vertices().begin(); vertex != rest->vertices().end();
+       ++vertex) {
+    const int parent = vertex->parent();
+    if (parent < 0) continue;
+    const auto &from      = rest->vertex(parent).P();
+    const auto &to        = vertex->P();
+    const auto &posedFrom = posed.vertex(parent).P();
+    const auto &posedTo   = posed.vertex(vertex.m_idx).P();
+    bones.push_back({modelPoint(from), modelPoint(to), modelPoint(posedFrom),
+                     modelPoint(posedTo)});
+    moves |= from != posedFrom || to != posedTo;
+  }
+  if (!moves) bones.clear();
+  return bones;
 }
 
 otam::Matrix modelTransform(const otglb::ModelTransform &t) {
@@ -119,19 +162,19 @@ std::shared_ptr<const otam::Model> amModelAt(TXsheet *xsheet, int column,
 
 static std::shared_ptr<const otam::Mesh> prepareModelGeometryImpl(
     TXsheet *xsheet, int column, double frame, bool projectToCamera,
-    bool previewCamera, bool allowGlb) {
+    bool previewCamera, bool allowGlb, bool applyPlastic = true) {
   if (!xsheet || column < 0 || !validModelFrame(frame)) return {};
   const int row   = int(std::floor(frame));
   const auto cell = xsheet->getCell(row, column);
   if (cell.isEmpty()) return {};
   std::shared_ptr<const otam::Mesh> mesh;
-  double units = Stage::inch / 2.54;
+  double units = amStageUnits;
   if (auto *am = cell.m_level->getAMLevel()) {
     const auto binding = matchingAction(xsheet, column, cell.m_level);
-    mesh               = binding.action
-                             ? am->renderMesh(row, binding.action,
-                                              amActionTime(xsheet, binding.startRow, frame))
-                             : am->renderMesh(row);
+    const auto bones   = applyPlastic ? amPlasticBones(xsheet, column, frame)
+                                      : std::vector<otam::PlasticBone>();
+    mesh               = am->renderMesh(row, binding.action,
+                                        amActionTime(xsheet, binding.startRow, frame), bones);
     if (!mesh)
       throw std::runtime_error(
           am->error().empty() ? "A:M model source is not loaded" : am->error());
@@ -173,9 +216,10 @@ std::shared_ptr<const otam::Mesh> prepareAMLevelGeometry(TXsheet *xsheet,
 }
 
 std::shared_ptr<const otam::Mesh> prepareNativeModelGeometry(
-    TXsheet *xsheet, int column, double frame, bool projectToCamera) {
+    TXsheet *xsheet, int column, double frame, bool projectToCamera,
+    bool applyPlastic) {
   return prepareModelGeometryImpl(xsheet, column, frame, projectToCamera, false,
-                                  true);
+                                  true, applyPlastic);
 }
 
 namespace {

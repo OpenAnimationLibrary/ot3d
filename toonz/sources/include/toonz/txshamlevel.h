@@ -70,6 +70,13 @@ private:
   };
   mutable ActionSample m_actionSample;
 
+  struct PlasticSample {
+    std::weak_ptr<const otam::Model> pose;
+    std::vector<otam::PlasticBone> bones;
+    std::shared_ptr<const otam::Mesh> mesh;
+  };
+  mutable PlasticSample m_plasticSample;
+
   void refreshPalette(const otam::Model &model, const std::string &revision);
   bool updatePaletteColorsLocked();
   std::map<int, TPixel32> paletteColorOverridesLocked(
@@ -107,7 +114,7 @@ public:
   std::shared_ptr<const otam::Mesh> renderMesh(int frame = 0) const;
   std::shared_ptr<const otam::Mesh> renderMesh(
       int frame, const std::shared_ptr<const otam::Action> &action,
-      double seconds) const;
+      double seconds, const std::vector<otam::PlasticBone> &bones = {}) const;
   TPalette *getPalette() const { return m_palette.getPointer(); }
   // Called on the UI thread after palette edits. Renderers use the snapshot.
   bool updatePaletteColors();

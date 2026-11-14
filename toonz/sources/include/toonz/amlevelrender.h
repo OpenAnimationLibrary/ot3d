@@ -24,6 +24,9 @@ struct AMModelCamera {
 DVAPI AMModelCamera amModelCamera(TXsheet *xsheet, double frame,
                                   bool preview = false);
 DVAPI otam::Matrix amModelPlacement(TXsheet *xsheet, int column, double frame);
+// Plastic joints use stage units in the model's local XY plane.
+DVAPI otam::Matrix amPlasticPlacement(TXsheet *xsheet, int column,
+                                      double frame);
 
 // Convert a zero-based scene frame to signed seconds relative to the action's
 // start. A negative sample uses the unanimated model.
@@ -43,7 +46,8 @@ DVAPI TRasterFx *makeAMLevelRenderFx(
 DVAPI bool isAMModelColumn(TFx *fx);
 DVAPI bool isNativeModelColumn(TFx *fx);
 DVAPI std::shared_ptr<const otam::Mesh> prepareNativeModelGeometry(
-    TXsheet *xsheet, int column, double frame, bool projectToCamera);
+    TXsheet *xsheet, int column, double frame, bool projectToCamera,
+    bool applyPlastic = true);
 // Convert a camera-image point to a new model's position in table space.
 DVAPI otam::Vec3 nativeModelDropPosition(TXsheet *xsheet, int frame,
                                          const TPointD &imagePoint, bool snap,

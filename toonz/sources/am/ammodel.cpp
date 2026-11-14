@@ -396,6 +396,74 @@ SplineSegment splineSegment(const Model &m, const Spline &s,
           handle(end, true)};
 }
 
+bool applyPlasticBones(const Model &rest, Model &pose,
+                       const std::vector<PlasticBone> &bones) {
+  struct BoneFrame {
+    Vec3 restStart, posedStart, restAxis, posedAxis;
+    double restLength, posedLength;
+    bool moves;
+  };
+  std::vector<BoneFrame> frames;
+  frames.reserve(bones.size());
+  for (const auto &bone : bones) {
+    auto restVector  = sub(bone.restEnd, bone.restStart);
+    auto posedVector = sub(bone.posedEnd, bone.posedStart);
+    restVector[2] = posedVector[2] = 0;
+    const double restLength        = length(restVector);
+    const double posedLength       = length(posedVector);
+    if (!std::isfinite(restLength) || !std::isfinite(posedLength) ||
+        restLength <= 1e-12)
+      continue;
+    const auto restAxis = scale(restVector, 1 / restLength);
+    frames.push_back(
+        {bone.restStart, bone.posedStart, restAxis,
+         posedLength > 1e-12 ? scale(posedVector, 1 / posedLength) : restAxis,
+         restLength, posedLength,
+         bone.restStart != bone.posedStart || bone.restEnd != bone.posedEnd});
+  }
+  if (frames.empty() || rest.points.size() != pose.points.size()) return false;
+
+  bool changed = false;
+  for (std::size_t i = 0; i < rest.points.size(); ++i) {
+    if (rest.points[i].head != i) continue;
+    const BoneFrame *nearest = nullptr;
+    double best              = std::numeric_limits<double>::infinity();
+    for (const auto &bone : frames) {
+      auto fromStart = sub(rest.points[i].position, bone.restStart);
+      fromStart[2]   = 0;
+      const double along =
+          std::clamp(dot(fromStart, bone.restAxis), 0.0, bone.restLength);
+      const auto offSegment = sub(fromStart, scale(bone.restAxis, along));
+      const double distanceSquared = dot(offSegment, offSegment);
+      if (distanceSquared < best) {
+        best    = distanceSquared;
+        nearest = &bone;
+      }
+    }
+    if (!nearest || !nearest->moves) continue;
+
+    auto &position        = pose.points[i].position;
+    const auto fromStart  = sub(position, nearest->restStart);
+    const auto &restAxis  = nearest->restAxis;
+    const auto &posedAxis = nearest->posedAxis;
+    const double along =
+        dot(fromStart, restAxis) * nearest->posedLength / nearest->restLength;
+    const double across =
+        restAxis[0] * fromStart[1] - restAxis[1] * fromStart[0];
+    const double x =
+        nearest->posedStart[0] + along * posedAxis[0] - across * posedAxis[1];
+    const double y =
+        nearest->posedStart[1] + along * posedAxis[1] + across * posedAxis[0];
+    if (std::isfinite(x) && std::isfinite(y) &&
+        (x != position[0] || y != position[1])) {
+      position[0] = x;
+      position[1] = y;
+      changed     = true;
+    }
+  }
+  return changed;
+}
+
 Mesh previewMesh(const Document &d, std::size_t modelIndex,
                  unsigned subdivisions, const Limits &limits) {
   if (modelIndex >= d.models.size()) fail("invalid preview request");

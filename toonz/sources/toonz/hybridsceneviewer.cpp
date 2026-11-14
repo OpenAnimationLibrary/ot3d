@@ -3,8 +3,11 @@
 #include "hybridsceneviewer.h"
 
 #include "tapp.h"
+#include "tools/toolcommandids.h"
+#include "tools/toolhandle.h"
 #include "../stdfx/t3dsource.h"
 #include "toonz/tframehandle.h"
+#include "toonz/tcolumnhandle.h"
 #include "toonz/tstageobject.h"
 #include "toonz/tstageobjecttree.h"
 #include "toonz/txsheethandle.h"
@@ -92,6 +95,15 @@ void HybridSceneViewer::drawScene() {
   if (!xsheet) return;
   const bool view3D = is3DView();
 
+  const auto &plastic = visualSettings().m_plasticVisualSettings;
+  const auto *tool    = app->getCurrentTool()->getTool();
+  // The control point editor authors model and Action coordinates before
+  // rigging. Display the same coordinates while that tool owns the column.
+  const int editingPoints =
+      tool && tool->isEnabled() && tool->getName() == T_ControlPointEditor
+          ? app->getCurrentColumn()->getColumnIndex()
+          : -1;
+
   struct Item {
     std::shared_ptr<const otglb::ViewerGeometry> geometry;
     TAffine placement;
@@ -111,7 +123,11 @@ void HybridSceneViewer::drawScene() {
     const auto cell = xsheet->getCell(frame, i);
     if (isNativeModelLevel(cell.m_level->getType())) {
       try {
-        auto snapshot = prepareNativeModelGeometry(xsheet, i, frame, !view3D);
+        const bool applyPlastic = plastic.m_applyPlasticDeformation &&
+                                  plastic.m_showOriginalColumn != column &&
+                                  i != editingPoints;
+        auto snapshot =
+            prepareNativeModelGeometry(xsheet, i, frame, !view3D, applyPlastic);
         if (!snapshot) continue;
         for (const auto &warning : snapshot->warnings)
           reportDiagnostic(QString::fromStdString(warning));

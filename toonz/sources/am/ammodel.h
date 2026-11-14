@@ -59,6 +59,20 @@ struct Model {
   std::vector<Patch> patches;
   std::vector<Group> groups;
 };
+struct PlasticBone {
+  Vec3 restStart, restEnd, posedStart, posedEnd;
+
+  bool operator==(const PlasticBone &other) const {
+    return restStart == other.restStart && restEnd == other.restEnd &&
+           posedStart == other.posedStart && posedEnd == other.posedEnd;
+  }
+};
+
+// Bind attachment heads by their rest XY positions. Apply Plastic's planar
+// pose to the current point positions, retaining model-space depth.
+bool applyPlasticBones(const Model &rest, Model &pose,
+                       const std::vector<PlasticBone> &bones);
+
 // The two handles belong to spline occurrences. Their origins belong to
 // attachment heads. The same cubic is used by the overlay and patch preview.
 struct BiasHandle {
