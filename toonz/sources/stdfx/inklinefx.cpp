@@ -15,7 +15,7 @@ class InkLineFx final : public TStandardRasterFx,
                         public T3DRenderSource,
                         public TFxAMGroupSource {
   FX_PLUGIN_DECLARATION(InkLineFx)
-  T3DSourcePort m_source;
+  T3DSourcePort m_source{true};
   TStringParamP m_group;
   TIntEnumParamP m_scope, m_profileRange;
   TBoolParamP m_profile, m_useSplineProfile, m_useRamp;
@@ -109,11 +109,19 @@ class InkLineFx final : public TStandardRasterFx,
     return ink;
   }
 
+  TRenderSettings vectorSettings(double frame,
+                                 const TRenderSettings &info) const {
+    TRenderSettings input(info);
+    auto ink = bindings(frame, nullptr);
+    input.m_data.push_back(new TVectorInkRenderData(std::move(ink.front())));
+    return input;
+  }
+
 public:
   InkLineFx()
       : m_group(new TStringParam())
-      , m_scope(new TIntEnumParam(0, "All Splines"))
-      , m_profileRange(new TIntEnumParam(0, "Whole Spline"))
+      , m_scope(new TIntEnumParam(0, "All Splines / Strokes"))
+      , m_profileRange(new TIntEnumParam(0, "Whole Spline / Stroke"))
       , m_profile(false)
       , m_useSplineProfile(false)
       , m_useRamp(false)
@@ -125,7 +133,7 @@ public:
       , m_fadeIn(0.0)
       , m_fadeOut(0.0) {
     addInputPort("Source", m_source);
-    m_scope->addItem(1, "Unfilled Splines Only");
+    m_scope->addItem(1, "Unfilled Splines / Strokes Only");
     bindParam(this, "group", m_group);
     bindParam(this, "scope", m_scope);
     bindParam(this, "profile", m_profile);
@@ -202,6 +210,8 @@ public:
                  const TRenderSettings &info) override {
     bbox = TRectD();
     try {
+      if (m_source.hasVectorInput(frame))
+        return m_source->doGetBBox(frame, bbox, vectorSettings(frame, info));
       const auto scene =
           get3DRenderGeometry(frame, info.m_isCanceled, nullptr, &info);
       if (!scene || scene->empty()) return false;
@@ -228,10 +238,23 @@ public:
         std::min(double(std::numeric_limits<int>::max()), std::ceil(mb)));
   }
 
+  void doDryCompute(TRectD &rect, double frame,
+                    const TRenderSettings &info) override {
+    if (m_source.hasVectorInput(frame))
+      m_source->dryCompute(rect, frame, vectorSettings(frame, info));
+    else
+      TRasterFx::doDryCompute(rect, frame, info);
+  }
+
   void doCompute(TTile &tile, double frame,
                  const TRenderSettings &info) override {
     tile.getRaster()->clear();
+    if (info.m_isCanceled && *info.m_isCanceled) return;
     try {
+      if (m_source.hasVectorInput(frame)) {
+        m_source->compute(tile, frame, vectorSettings(frame, info));
+        return;
+      }
       const auto scene =
           get3DRenderScene(frame, info.m_isCanceled, nullptr, nullptr, &info);
       if (scene && !scene->empty()) ot3d::renderScene(*scene, tile, info);

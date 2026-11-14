@@ -669,8 +669,11 @@ rdRegions.m_alphaChannel = rdRegions.m_antiAliasing = false;*/
       CurrStrokeIndex = strokeIndex;
       CurrVimg        = vim;
 #endif
-      bool isGuided = tglDoDraw(rd, vim->getStroke(strokeIndex));
-      if (isGuided && guidedStroke) *guidedStroke = vim->getStroke(strokeIndex);
+      if (!rd.m_drawStroke || !rd.m_drawStroke(*vim, strokeIndex)) {
+        bool isGuided = tglDoDraw(rd, vim->getStroke(strokeIndex));
+        if (isGuided && guidedStroke)
+          *guidedStroke = vim->getStroke(strokeIndex);
+      }
       strokeIndex++;
     }
   }

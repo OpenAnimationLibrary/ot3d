@@ -3,6 +3,7 @@
 // TnzCore includes
 #include "tsystem.h"
 #include "tstream.h"
+#include "tstroke.h"
 #include "tthreadmessage.h"
 #include "tconvert.h"
 #include "tstopwatch.h"
@@ -28,6 +29,7 @@
 #include "toonz/txsheet.h"
 #include "toonz/txshlevelcolumn.h"
 #include "toonz/vectoraction.h"
+#include "toonz/vectorinkrender.h"
 #include "toonz/txshpalettecolumn.h"
 #include "toonz/txshzeraryfxcolumn.h"
 #include "toonz/txshlevel.h"
@@ -60,6 +62,8 @@ extern "C" {
 }
 
 #include "toonz/tcolumnfx.h"
+
+#include <exception>
 
 //****************************************************************************************
 //    Preliminaries
@@ -1040,8 +1044,22 @@ void TLevelColumnFx::doCompute(TTile &tile, double frame,
     // Vector case
 
     if (vectorMustApplyCmappedFx(info.m_data)) {
-      // Deal separately
-      applyTzpFxsOnVector(vectorImage, tile, frame, info);
+      // Indexed raster effects cannot carry the continuous ink color ramp.
+      VectorInkRenderer ink(*vectorImage, info);
+      if (ink.empty()) {
+        applyTzpFxsOnVector(vectorImage, tile, frame, info);
+      } else {
+        TVectorImageP base;
+        {
+          QMutexLocker lock(vectorImage->getMutex());
+          base = vectorImage->clone();
+        }
+        for (UINT i = 0; i < base->getStrokeCount(); ++i)
+          if (ink.replaces(i)) base->getStroke(i)->setStyle(0);
+        applyTzpFxsOnVector(base, tile, frame, info);
+        QMutexLocker lock(vectorImage->getMutex());
+        ink.overlay(*vectorImage, tile, info);
+      }
     } else {
       QMutexLocker m(&m_mutex);
       bBox = info.m_affine * vectorImage->getBBox();
@@ -1059,6 +1077,22 @@ void TLevelColumnFx::doCompute(TTile &tile, double frame,
 
       TVectorRenderData rd(TVectorRenderData::ProductionSettings(), aff,
                            TRect(size), vpalette);
+      const VectorInkRenderer ink(*vectorImage, info);
+      std::exception_ptr inkError;
+      if (!ink.empty())
+        rd.m_drawStroke = [&](const TVectorImage &image, UINT i) {
+          if (&image != vectorImage.getPointer() || !ink.replaces(i))
+            return false;
+          if (!inkError) {
+            try {
+              ink.drawStroke(*image.getStroke(i), i, aff, rd.m_clippingRect,
+                             info.m_isCanceled);
+            } catch (...) {
+              inkError = std::current_exception();
+            }
+          }
+          return true;
+        };
 
       // obtain jaggy image when the Closest Pixel is set
       if (info.m_quality == TRenderSettings::ClosestPixel_FilterResampleQuality)
@@ -1087,6 +1121,7 @@ void TLevelColumnFx::doCompute(TTile &tile, double frame,
       m_offlineContext->getRaster(tile.getRaster());
 
       m_offlineContext->doneCurrent();
+      if (inkError) std::rethrow_exception(inkError);
     }
   } else {
     // Raster case

@@ -7,6 +7,7 @@
 #include "toonz/tcolumnfx.h"
 #include "toonz/t3drendersource.h"
 #include "toonz/amlevelrender.h"
+#include "toonz/vectorinkrender.h"
 
 #include <memory>
 
@@ -16,6 +17,8 @@
 class T3DSourcePort final : public TRasterFxPort,
                             public TFxPortConnectionPolicy,
                             private T3DRenderSource {
+  bool m_allowVector;
+
   static T3DRenderSource *resolve(TFx *fx) {
     if (auto *column = dynamic_cast<TZeraryColumnFx *>(fx))
       fx = column->getZeraryFx();
@@ -33,15 +36,30 @@ class T3DSourcePort final : public TRasterFxPort,
   }
 
 public:
+  explicit T3DSourcePort(bool allowVector = false)
+      : m_allowVector(allowVector) {}
+
   bool canConnect(TFx *fx) const override {
-    return !fx || resolve(fx) || isNativeModelColumn(fx);
+    return !fx || resolve(fx) || isNativeModelColumn(fx) ||
+           (m_allowVector && isVectorInkColumn(fx));
   }
   void setFx(TFx *fx) override {
     // Scene restoration can connect a column before its cells are populated.
     // Interactive connection checks use canConnect(), not this deferred case.
-    if (fx && !resolve(fx) && !dynamic_cast<TLevelColumnFx *>(fx))
+    // The render tree can wrap vector columns in internal raster FX.
+    if (fx && !resolve(fx) && !dynamic_cast<TLevelColumnFx *>(fx) &&
+        !(m_allowVector && dynamic_cast<TRasterFx *>(fx)))
       throw TException("Fx: 3D source port requires a compatible 3D FX");
     TRasterFxPort::setFx(fx);
+  }
+
+  bool hasVectorInput(double frame) const {
+    if (!m_allowVector) return false;
+    auto *fx = getFx();
+    // A render-tree wrapper or another Ink Line can sit above the column.
+    while (fx && fx->getInputPortCount() == 1)
+      fx = fx->getInputPort(0)->getFx();
+    return isVectorInkColumn(fx, int(frame));
   }
 
   T3DRenderSource *source() const {

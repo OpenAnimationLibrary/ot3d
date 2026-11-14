@@ -20,6 +20,9 @@ using ArcSamples         = std::array<double, CurveSteps + 1>;
 ArcSamples measureCurve(const InkCurve &curve) {
   ArcSamples lengths{};
   auto previous = curve.points.front();
+  if (std::all_of(curve.points.begin() + 1, curve.points.end(),
+                  [&](const auto &point) { return point == previous; }))
+    return lengths;
   for (int i = 1; i <= CurveSteps; ++i) {
     const auto point = sampleSpline(curve.points, double(i) / CurveSteps);
     lengths[i]       = lengths[i - 1] + std::hypot(point[0] - previous[0],
@@ -110,6 +113,49 @@ XY normal(const Vec3 &a, const Vec3 &b) {
   return length > 1e-12 ? XY{{-dy / length, dx / length}} : XY{};
 }
 
+std::pair<double, InkColor> sampleStyle(const InkStyle &style, double u) {
+  double width;
+  InkColor color;
+  if (style.profile) {
+    width = style.widths[0] * widthAt(*style.profile, u);
+    color = colorAt(*style.profile, u, style.colors[0]);
+  } else {
+    const double middle = style.middle;
+    const int stop      = u < middle ? 0 : 1;
+    const double blend  = stop == 0 ? u / middle : (u - middle) / (1 - middle);
+    width = style.widths[stop] * (1 - blend) + style.widths[stop + 1] * blend;
+    color = mixColor(style.colors[stop], style.colors[stop + 1], blend);
+  }
+  if (style.fadeIn > 0) color[3] *= float(std::min(1.0, u / style.fadeIn));
+  if (style.fadeOut > 0)
+    color[3] *= float(std::min(1.0, (1 - u) / style.fadeOut));
+  for (int c = 0; c < 3; ++c) color[c] *= color[3];
+  return {width, color};
+}
+
+void emitPoint(const Vec3 &position, const InkStyle &style,
+               const Matrix &imageToStage, std::vector<InkTriangle> &output) {
+  const auto [width, color] = sampleStyle(style, 0.5);
+  if (width <= 0 || color[3] <= 0) return;
+  constexpr int Sides = 24;
+  if (output.size() + Sides > MaxStrokeTriangles)
+    throw std::runtime_error("Ink stroke triangle budget exceeded");
+  const auto center = transform(imageToStage, position);
+  auto rim          = [&](int side) {
+    const double angle = Turn * side / Sides;
+    auto point         = position;
+    point[0] += 0.5 * width * std::cos(angle);
+    point[1] += 0.5 * width * std::sin(angle);
+    return transform(imageToStage, point);
+  };
+  auto previous = rim(0);
+  for (int side = 1; side <= Sides; ++side) {
+    const auto next = rim(side % Sides);
+    output.push_back({{{center, previous, next}}, {{color, color, color}}});
+    previous = next;
+  }
+}
+
 void emitStroke(const std::vector<StrokePoint> &points, const InkStyle &style,
                 std::size_t spline, bool closed, const Matrix &imageToStage,
                 std::vector<InkTriangle> &output) {
@@ -119,22 +165,7 @@ void emitStroke(const std::vector<StrokePoint> &points, const InkStyle &style,
   for (std::size_t i = 0; i < points.size(); ++i) {
     const auto &p       = points[i];
     const double u      = p.progress;
-    double width;
-    InkColor color;
-    if (style.profile) {
-      width = style.widths[0] * widthAt(*style.profile, u);
-      color = colorAt(*style.profile, u, style.colors[0]);
-    } else {
-      const double middle = style.middle;
-      const int stop      = u < middle ? 0 : 1;
-      const double blend = stop == 0 ? u / middle : (u - middle) / (1 - middle);
-      width = style.widths[stop] * (1 - blend) + style.widths[stop + 1] * blend;
-      color = mixColor(style.colors[stop], style.colors[stop + 1], blend);
-    }
-    if (style.fadeIn > 0) color[3] *= float(std::min(1.0, u / style.fadeIn));
-    if (style.fadeOut > 0)
-      color[3] *= float(std::min(1.0, (1 - u) / style.fadeOut));
-    for (int c = 0; c < 3; ++c) color[c] *= color[3];
+    const auto [width, color] = sampleStyle(style, u);
 
     const auto before = i > 0 ? i - 1 : (closed ? points.size() - 2 : i);
     const auto after  = i + 1 < points.size() ? i + 1 : (closed ? 1 : i);
@@ -179,7 +210,8 @@ std::vector<InkTriangle> strokeSplines(const Mesh &mesh,
                                        const InkBindings &bindings,
                                        const Matrix *view,
                                        const Matrix &imageToStage,
-                                       const int *canceled) {
+                                       const int *canceled, bool useArcLength,
+                                       std::size_t firstSplineIndex) {
   std::vector<InkTriangle> result;
   if (bindings.empty()) return result;
   const auto project = [&](StrokePoint p) {
@@ -212,7 +244,8 @@ std::vector<InkTriangle> strokeSplines(const Mesh &mesh,
 
     std::vector<ArcSamples> arc;
     std::vector<double> lengths;
-    if (std::any_of(styles.begin(), styles.end(), [](const InkStyle *style) {
+    if (useArcLength ||
+        std::any_of(styles.begin(), styles.end(), [](const InkStyle *style) {
           return style && style->profile.has_value();
         })) {
       arc.reserve(count);
@@ -255,11 +288,19 @@ std::vector<InkTriangle> strokeSplines(const Mesh &mesh,
       const bool perSection = advanced && style->profile->perSection;
       const double origin   = perSection ? cumulative(begin) : 0;
       const double span =
-          advanced ? (perSection ? cumulative(end) - origin : lengths.back())
-                   : 0;
+          (advanced || useArcLength)
+              ? (perSection ? cumulative(end) - origin : lengths.back())
+              : 0;
+      // A vector brush click can have no centerline length and still be ink.
+      if (useArcLength && lengths.back() == 0) {
+        emitPoint(spline.curves.front().points.front(), *style, imageToStage,
+                  result);
+        break;
+      }
       bool wholeSpline = spline.closed && end - begin == count;
       const auto flush = [&]() {
-        emitStroke(run, *style, s, wholeSpline, imageToStage, result);
+        emitStroke(run, *style, firstSplineIndex + s, wholeSpline, imageToStage,
+                   result);
         run.clear();
         wholeSpline = false;
       };

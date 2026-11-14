@@ -35,9 +35,8 @@ struct InkTriangle {
 
 // Ink widths are in the image plane. The centerline retains model depth so
 // it can be occluded by filled geometry. A null view uses preprojected input.
-std::vector<InkTriangle> strokeSplines(const Mesh &mesh,
-                                       const InkBindings &bindings,
-                                       const Matrix *view,
-                                       const Matrix &imageToStage,
-                                       const int *canceled = nullptr);
+std::vector<InkTriangle> strokeSplines(
+    const Mesh &mesh, const InkBindings &bindings, const Matrix *view,
+    const Matrix &imageToStage, const int *canceled = nullptr,
+    bool useArcLength = false, std::size_t firstSplineIndex = 0);
 }  // namespace otam
