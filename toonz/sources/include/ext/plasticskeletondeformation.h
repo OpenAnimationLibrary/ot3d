@@ -53,9 +53,14 @@ typedef struct DVAPI PlasticSkeletonVertexDeformation final : public TPersist {
 
 public:
   enum Params {
-    ANGLE = 0,  //!< Distance from parent vertex (delta)
-    DISTANCE,   //!< Angle with parent edge (delta)
+    ANGLE = 0,  //!< Angle with parent edge (delta)
+    DISTANCE,   //!< Distance from parent vertex (delta)
     SO,         //!< Vertex's stacking order
+    ELEVATION,
+    TWIST,
+    ROOT_X,
+    ROOT_Y,
+    ROOT_Z,
     PARAMS_COUNT
   };
 
@@ -65,6 +70,9 @@ public:
 
 public:
   TDoubleParamP m_params[PARAMS_COUNT];
+  bool m_spatial = false;
+
+  int paramCount() const { return m_spatial ? PARAMS_COUNT : ELEVATION; }
 
 public:
   Keyframe getKeyframe(double frame) const;
@@ -293,8 +301,22 @@ public:
   // Interface methods using a deformed copy of the original skeleton (which is
   // owned by this class)
 
+  struct BoneFrame {
+    T3DPointD axis{1, 0, 0}, side{0, 1, 0}, up{0, 0, 1};
+  };
+  using BoneFrames = std::map<int, std::pair<BoneFrame, BoneFrame>>;
+
+  bool isSpatial() const;
+  void enableSpatial();
+
   void storeDeformedSkeleton(int skeletonId, double frame,
                              PlasticSkeleton &skeleton) const;
+  void storeSpatialSkeleton(int skeletonId, double frame,
+                            PlasticSkeleton &skeleton,
+                            BoneFrames *frames = nullptr) const;
+
+  void updateSpatialPosition(int skeletonId, double frame, int v,
+                             const T3DPointD &position, bool keepDistance);
 
   void updatePosition(const PlasticSkeleton &originalSkeleton,
                       PlasticSkeleton &deformedSkeleton, double frame, int v,

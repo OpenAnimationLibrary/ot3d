@@ -16,11 +16,13 @@
 // TnzLib includes
 #include "toonz/amlevelrender.h"
 #include "toonz/tframehandle.h"
+#include "toonz/stage.h"
 #include "toonz/tcolumnhandle.h"
 #include "toonz/txsheethandle.h"
 #include "toonz/tobjecthandle.h"
 #include "toonz/tonionskinmaskhandle.h"
 #include "toonz/tstageobject.h"
+#include "toonz/tscenehandle.h"
 #include "toonz/doubleparamcmd.h"
 #include "toonz/palettecontroller.h"
 #include "toonz/txshamlevel.h"
@@ -61,44 +63,9 @@ namespace {
 
 static const double l_dmax = (std::numeric_limits<double>::max)();
 
-// The skeleton lives on the model's local XY plane. Draw and hit-test it
-// with the same model and camera matrices as the native geometry.
-std::optional<QTransform> amRigPlane(TXsheet *sheet, int column, double frame,
-                                     bool view3D) {
-  double glView[16];
-  glGetDoublev(GL_MODELVIEW_MATRIX, glView);
-  otam::Matrix viewer;
-  for (int row = 0; row < 4; ++row)
-    for (int col = 0; col < 4; ++col)
-      viewer[4 * row + col] = glView[4 * col + row];
+otam::Vec3 rigPoint(const T3DPointD &p) { return {p.x, p.y, p.z}; }
 
-  const auto placement = amPlasticPlacement(sheet, column, frame);
-  QTransform transform;
-  if (view3D) {
-    const auto a = otam::multiply(viewer, placement);
-    transform    = QTransform(a[0], a[4], a[1], a[5], a[3], a[7]);
-  } else {
-    const auto camera  = amModelCamera(sheet, frame);
-    const auto eye     = otam::multiply(otam::inverse(camera.pose), placement);
-    const auto screen  = otam::multiply(viewer, camera.imageToStage);
-    const double depth = -eye[11];
-    if (!std::isfinite(depth) || depth <= 1.0) return {};
-    const auto x = [&](int i) {
-      return (1000 * (screen[0] * eye[i] + screen[1] * eye[4 + i]) -
-              screen[3] * eye[8 + i]) /
-             depth;
-    };
-    const auto y = [&](int i) {
-      return (1000 * (screen[4] * eye[i] + screen[5] * eye[4 + i]) -
-              screen[7] * eye[8 + i]) /
-             depth;
-    };
-    transform = QTransform(x(0), y(0), -eye[8] / depth, x(1), y(1),
-                           -eye[9] / depth, x(3), y(3), 1);
-  }
-  if (!transform.isInvertible()) return {};
-  return transform;
-}
+T3DPointD rigPoint(const otam::Vec3 &p) { return {p[0], p[1], p[2]}; }
 
 }  // namespace
 
@@ -206,7 +173,7 @@ void setKeyframe(SkVD *vd, double frame) {
 
   // Traverse vd's parameters. In case they don't have a keyframe at current
   // frame, add one.
-  for (int p = 0; p < SkVD::PARAMS_COUNT; ++p)
+  for (int p = 0; p < vd->paramCount(); ++p)
     setKeyframe(vd->m_params[p], frame);
 }
 
@@ -543,6 +510,29 @@ PlasticToolOptionsBox::PlasticToolOptionsBox(QWidget *parent, TTool *tool,
   m_soLabel = soLabel;
 
   QHBoxLayout *animateLayout = animateOptionsBox->hLayout();
+  const auto addSpatialField =
+      [&](const QString &name, TDoubleParamRelayProperty &relay,
+          QWidget *&fieldWidget, QWidget *&labelWidget) {
+        auto *field = new ToolOptionParamRelayField(&l_plasticTool, &relay);
+        field->setGlobalKey(&l_plasticTool.m_globalKey,
+                            &l_plasticTool.m_relayGroup);
+        auto *label = new ClickableLabel(name);
+        label->setFixedHeight(20);
+        connect(label, SIGNAL(onMousePress(QMouseEvent *)), field,
+                SLOT(receiveMousePress(QMouseEvent *)));
+        connect(label, SIGNAL(onMouseMove(QMouseEvent *)), field,
+                SLOT(receiveMouseMove(QMouseEvent *)));
+        connect(label, SIGNAL(onMouseRelease(QMouseEvent *)), field,
+                SLOT(receiveMouseRelease(QMouseEvent *)));
+        fieldWidget = field;
+        labelWidget = label;
+        animateLayout->insertWidget(0, field);
+        animateLayout->insertWidget(0, label);
+      };
+  addSpatialField(tr("Twist"), l_plasticTool.m_twistRelay, m_twistField,
+                  m_twistLabel);
+  addSpatialField(tr("Elevation"), l_plasticTool.m_elevationRelay,
+                  m_elevationField, m_elevationLabel);
   animateLayout->insertWidget(0, soField);
   animateLayout->insertWidget(0, soLabel);
   animateLayout->insertWidget(0, angleField);
@@ -629,6 +619,17 @@ void PlasticToolOptionsBox::updateTargetControls() {
   m_meshifyButton->setVisible(!native);
   m_soField->setVisible(!native);
   m_soLabel->setVisible(!native);
+  for (auto *widget :
+       {m_elevationField, m_elevationLabel, m_twistField, m_twistLabel})
+    widget->setVisible(native);
+  if (auto *label = m_labels.value("amDragAxis", nullptr))
+    label->setVisible(native);
+  if (auto *axis = dynamic_cast<ToolOptionCombo *>(control("amDragAxis"))) {
+    axis->setVisible(native);
+    axis->setToolTip(
+        tr("Drag in the view plane or along a model axis. "
+           "Alt-drag moves along Z."));
+  }
   if (auto *combo = dynamic_cast<ToolOptionCombo *>(control("mode"))) {
     if (auto *model = qobject_cast<QStandardItemModel *>(combo->model())) {
       for (int index : {PlasticTool::MESH_IDX, PlasticTool::RIGIDITY_IDX})
@@ -688,6 +689,7 @@ PlasticTool::PlasticTool()
     : TTool(T_Plastic)
     , m_skelId(-(std::numeric_limits<int>::max)())
     , m_propGroup(new TPropertyGroup[MODES_COUNT + 1])
+    , m_amDragAxis("amDragAxis")
     , m_mode("mode")
     , m_vertexName("vertexName", L"")
     , m_interpolate("interpolate", false)
@@ -700,6 +702,8 @@ PlasticTool::PlasticTool()
     , m_maxAngle("maxAngle", L"")
     , m_distanceRelay("distanceRelay")
     , m_angleRelay("angleRelay")
+    , m_elevationRelay("elevationRelay")
+    , m_twistRelay("twistRelay")
     , m_soRelay("soRelay")
     , m_skelIdRelay("skelIdRelay")
     , m_pressedPos(TConsts::napd)
@@ -723,6 +727,7 @@ PlasticTool::PlasticTool()
   // toolbar builder)
   m_propGroup[MODES_COUNT].bind(m_mode);
   m_propGroup[MODES_COUNT].bind(m_vertexName);
+  m_propGroup[MODES_COUNT].bind(m_amDragAxis);
 
   m_propGroup[RIGIDITY_IDX].bind(m_thickness);
   m_propGroup[RIGIDITY_IDX].bind(m_rigidValue);
@@ -738,6 +743,8 @@ PlasticTool::PlasticTool()
   m_relayGroup.bind(m_distanceRelay);
   m_relayGroup.bind(m_angleRelay);
   m_relayGroup.bind(m_soRelay);
+  m_relayGroup.bind(m_elevationRelay);
+  m_relayGroup.bind(m_twistRelay);
 
   m_mode.setId("SkeletonMode");
   m_vertexName.setId("VertexName");
@@ -801,27 +808,85 @@ void PlasticTool::updateMatrix() {
 std::optional<TPointD> PlasticTool::rigPosition(
     const TPointD &pos, const TMouseEvent &event) const {
   if (!isAMTarget()) return pos;
-  if (!m_amRigPlane || m_amRigViewer != getViewer()) return {};
-  const auto local =
-      m_amRigPlane->inverted().map(QPointF(event.m_pos.x, event.m_pos.y));
-  const double w = m_amRigPlane->m13() * local.x() +
-                   m_amRigPlane->m23() * local.y() + m_amRigPlane->m33();
-  if (!std::isfinite(local.x()) || !std::isfinite(local.y()) || w <= 0)
-    return {};
-  return TPointD(local.x(), local.y());
+  if (!m_amProjection || m_amRigViewer != getViewer()) return {};
+  return event.m_pos;
+}
+
+std::optional<TPointD> PlasticTool::drawPosition(const T3DPointD &point) const {
+  if (!isAMTarget()) return TPointD(point.x, point.y);
+  if (m_amProjection)
+    if (auto screen = m_amProjection->project(rigPoint(point)))
+      return TPointD((*screen)[0], (*screen)[1]);
+  return {};
+}
+
+std::optional<T3DPointD> PlasticTool::amPointAt(const TPointD &pixel,
+                                                double depth) const {
+  const auto model = m_amProjection->unproject(pixel, depth);
+  if (std::all_of(model.begin(), model.end(),
+                  [](double value) { return std::isfinite(value); }))
+    return rigPoint(model);
+  return {};
+}
+
+std::optional<T3DPointD> PlasticTool::amDragTarget(
+    const TMouseEvent &event) const {
+  if (!m_amDragAnchor || !m_amProjection) return {};
+  const auto start = m_amProjection->project(rigPoint(*m_amDragAnchor));
+  if (!start) return {};
+  const TPointD pixel((*start)[0], (*start)[1]);
+  const auto delta = event.m_pos - m_amMouseStart;
+  const int axis   = event.isAltPressed() ? 3 : m_amDragAxis.getIndex();
+  if (axis == 0) return amPointAt(pixel + delta, (*start)[2]);
+
+  // Project the selected local axis to a screen direction. When an axis
+  // points straight at the viewer, vertical motion still changes its value.
+  const T3DPointD axes[] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
+  const auto direction   = axes[axis - 1];
+  const auto along       = drawPosition(*m_amDragAnchor + direction);
+  const auto onScreen    = along ? *along - pixel : TPointD();
+  const auto x           = amPointAt(pixel + TPointD(1, 0), (*start)[2]);
+  const auto y           = amPointAt(pixel + TPointD(0, 1), (*start)[2]);
+  if (!x || !y) return {};
+  const double units    = std::max(std::sqrt(tdistance2(*x, *m_amDragAnchor)),
+                                   std::sqrt(tdistance2(*y, *m_amDragAnchor)));
+  const double pixels   = std::sqrt(norm2(onScreen));
+  const double movement = pixels * units > 0.15
+                              ? (delta * onScreen) / norm2(onScreen)
+                              : units * delta.y;
+  return *m_amDragAnchor + movement * direction;
+}
+
+int PlasticTool::closestRigJoint(const PlasticSkeleton &skel,
+                                 const TPointD &pos) const {
+  const double radius = HIGHLIGHT_DISTANCE * getPixelSize();
+  if (!isAMTarget()) {
+    double distance;
+    const int joint = skel.closestVertex(pos, &distance);
+    return joint >= 0 && distance < radius ? joint : -1;
+  }
+
+  int closest  = -1;
+  double best  = radius * radius;
+  double front = -std::numeric_limits<double>::infinity();
+  for (auto joint = skel.vertices().begin(); joint != skel.vertices().end();
+       ++joint) {
+    const auto screen = m_amProjection->project(rigPoint(joint->position3D()));
+    if (!screen) continue;
+    const double distance = norm2(TPointD((*screen)[0], (*screen)[1]) - pos);
+    if (distance < best ||
+        (distance == best && closest >= 0 && (*screen)[2] > front)) {
+      best    = distance;
+      closest = joint.m_idx;
+      front   = (*screen)[2];
+    }
+  }
+  return closest;
 }
 
 double PlasticTool::getPixelSize() const {
-  if (!isAMTarget() || !m_amRigPlane) return TTool::getPixelSize();
-  const QPointF origin(m_pos.x, m_pos.y);
-  const auto center = m_amRigPlane->map(origin);
-  const auto x      = m_amRigPlane->map(origin + QPointF(1, 0)) - center;
-  const auto y      = m_amRigPlane->map(origin + QPointF(0, 1)) - center;
-  const double scale =
-      std::max(std::hypot(x.x(), x.y()), std::hypot(y.x(), y.y()));
-  return std::isfinite(scale) && scale > 1e-8
-             ? getViewer()->getDevPixRatio() / scale
-             : TTool::getPixelSize();
+  return isAMTarget() && getViewer() ? getViewer()->getDevPixRatio()
+                                     : TTool::getPixelSize();
 }
 
 TTool::ToolType PlasticTool::getToolType() const {
@@ -849,6 +914,14 @@ void PlasticTool::updateTranslation() {
   m_mode.addValue(tr("Build Skeleton").toStdWString());
   m_mode.addValue(tr("Animate").toStdWString());
   m_mode.setIndex(BUILD_IDX);
+
+  m_amDragAxis.setQStringName(tr("Drag Axis"));
+  m_amDragAxis.deleteAllValues();
+  m_amDragAxis.addValue(tr("View").toStdWString());
+  m_amDragAxis.addValue(L"X");
+  m_amDragAxis.addValue(L"Y");
+  m_amDragAxis.addValue(L"Z");
+  m_amDragAxis.setIndex(0);
 
   m_vertexName.setQStringName(tr("Vertex Name:"));
   m_interpolate.setQStringName(tr("Allow Stretching"));
@@ -941,6 +1014,7 @@ void PlasticTool::storeDeformation() {
     m_skelIdRelay.notifyListeners();
   }
 
+  if (m_sd && isAMTarget()) m_sd->enableSpatial();
   storeSkeletonId();
   if (m_mode.getIndex() == ANIMATE_IDX)
     m_deformedSkeleton.invalidate();  // Store the deformed skeleton too
@@ -964,7 +1038,9 @@ void PlasticTool::storeSkeletonId() {
 //------------------------------------------------------------------------
 
 void PlasticTool::updateDeformedSkeleton(PlasticSkeleton &deformedSkeleton) {
-  if (m_sd)
+  if (m_sd && isAMTarget())
+    m_sd->storeSpatialSkeleton(::skeletonId(), ::sdFrame(), deformedSkeleton);
+  else if (m_sd)
     m_sd->storeDeformedSkeleton(::skeletonId(), ::sdFrame(), deformedSkeleton);
   else
     deformedSkeleton.clear();
@@ -973,7 +1049,10 @@ void PlasticTool::updateDeformedSkeleton(PlasticSkeleton &deformedSkeleton) {
 //------------------------------------------------------------------------
 
 void PlasticTool::onFrameSwitched() {
-  m_amRigPlane.reset();
+  m_amProjection.reset();
+  m_amBuildPoint.reset();
+  m_amDragAnchor.reset();
+  if (m_sd && isAMTarget()) m_sd->enableSpatial();
   storeSkeletonId();
   storeMeshImage();
 
@@ -988,18 +1067,24 @@ void PlasticTool::onFrameSwitched() {
   m_distanceRelay.frame() = frame;
   m_angleRelay.frame()    = frame;
   m_soRelay.frame()       = frame;
+  m_elevationRelay.frame() = frame;
+  m_twistRelay.frame()     = frame;
   m_skelIdRelay.frame()   = frame;
 
   m_distanceRelay.notifyListeners();
   m_angleRelay.notifyListeners();
   m_soRelay.notifyListeners();
+  m_elevationRelay.notifyListeners();
+  m_twistRelay.notifyListeners();
   m_skelIdRelay.notifyListeners();
 }
 
 //------------------------------------------------------------------------
 
 void PlasticTool::onColumnSwitched() {
-  m_amRigPlane.reset();
+  m_amProjection.reset();
+  m_amBuildPoint.reset();
+  m_amDragAnchor.reset();
   if (isAMTarget() && m_mode.getIndex() < BUILD_IDX) {
     m_mode.setIndex(BUILD_IDX);
     m_mode.notifyListeners();
@@ -1119,7 +1204,7 @@ void PlasticTool::onActivate() {
 
 void PlasticTool::onDeactivate() {
   setActive(false);
-  m_amRigPlane.reset();
+  m_amProjection.reset();
   m_amRigViewer = nullptr;
 
   bool ret;
@@ -1156,6 +1241,7 @@ void PlasticTool::onEnter() {}
 
 void PlasticTool::onLeave() {
   // Clear visualization vars
+  m_amBuildPoint.reset();
   m_pos    = TConsts::napd;
   m_svHigh = m_seHigh = -1;
   m_mvHigh = m_meHigh = MeshIndex();
@@ -1191,12 +1277,19 @@ void PlasticTool::onSelectionChanged() {
   }
 
   // Attach or detach relays depending on selected vertex's parameters
-  m_soRelay.setParam(vd ? vd->m_params[SkVD::SO] : TDoubleParamP());
+  m_soRelay.setParam(vd && !isAMTarget() ? vd->m_params[SkVD::SO]
+                                         : TDoubleParamP());
 
   if (vd && m_svSel.hasSingleObject() && m_svSel.objects().front() > 0) {
+    m_elevationRelay.setParam(isAMTarget() ? vd->m_params[SkVD::ELEVATION]
+                                           : TDoubleParamP());
+    m_twistRelay.setParam(isAMTarget() ? vd->m_params[SkVD::TWIST]
+                                       : TDoubleParamP());
     m_distanceRelay.setParam(vd->m_params[SkVD::DISTANCE]);
     m_angleRelay.setParam(vd->m_params[SkVD::ANGLE]);
   } else {
+    m_elevationRelay.setParam(TDoubleParamP());
+    m_twistRelay.setParam(TDoubleParamP());
     m_distanceRelay.setParam(TDoubleParamP());
     m_angleRelay.setParam(TDoubleParamP());
   }
@@ -1209,6 +1302,8 @@ void PlasticTool::onSelectionChanged() {
   m_distanceRelay.notifyListeners();
   m_angleRelay.notifyListeners();
   m_soRelay.notifyListeners();
+  m_elevationRelay.notifyListeners();
+  m_twistRelay.notifyListeners();
 }
 
 //------------------------------------------------------------------------
@@ -1401,7 +1496,7 @@ void PlasticTool::setKey() {
   assert(m_svSel.hasSingleObject());
 
   SkVD *vd     = m_sd->vertexDeformation(::skeletonId(), m_svSel);
-  double frame = ::frame();
+  double frame = ::sdFrame();
 
   if (vd->isFullKeyframe(frame))
     vd->deleteKeyframe(frame);
@@ -1424,7 +1519,7 @@ void PlasticTool::setGlobalKey() {
     }
   };
 
-  double frame = ::frame();
+  double frame = ::sdFrame();
 
   if (locals::isFullKeyframe(m_sd, frame))
     m_sd->deleteKeyframe(frame);
@@ -1438,16 +1533,16 @@ void PlasticTool::setRestKey() {
   assert(m_svSel.hasSingleObject());
 
   SkVD *vd     = m_sd->vertexDeformation(::skeletonId(), m_svSel);
-  double frame = ::frame();
+  double frame = ::sdFrame();
 
-  for (int p = 0; p != SkVD::PARAMS_COUNT; ++p)
+  for (int p = 0; p != vd->paramCount(); ++p)
     vd->m_params[p]->setValue(frame, vd->m_params[p]->getDefaultValue());
 }
 
 //------------------------------------------------------------------------
 
 void PlasticTool::setGlobalRestKey() {
-  double frame = ::frame();
+  double frame = ::sdFrame();
 
   SkD::vd_iterator vdt, vdEnd;
   m_sd->vertexDeformations(vdt, vdEnd);
@@ -1455,7 +1550,7 @@ void PlasticTool::setGlobalRestKey() {
   for (; vdt != vdEnd; ++vdt) {
     SkVD *vd = (*vdt).second;
 
-    for (int p = 0; p != SkVD::PARAMS_COUNT; ++p)
+    for (int p = 0; p != vd->paramCount(); ++p)
       vd->m_params[p]->setValue(frame, vd->m_params[p]->getDefaultValue());
   }
 }
@@ -1599,6 +1694,8 @@ void PlasticTool::leftButtonUp(const TPointD &pos, const TMouseEvent &me) {
 
   m_pressedPos = TConsts::napd;
   m_pressedVxsPos.clear();
+  m_pressedRestPositions.clear();
+  m_amDragAnchor.reset();
   m_dragged = false;
 }
 
@@ -1942,6 +2039,8 @@ void PlasticTool::drawHighlights(const SkDP &sd,
 
     const PlasticSkeleton::vertex_type &vx = skeleton->vertex(m_svHigh);
 
+    const auto pos = drawPosition(vx.position3D());
+    if (!pos) return;
     int hookNumber = sd->hookNumber(vx.name());
     assert(hookNumber >= 0);
 
@@ -1951,18 +2050,22 @@ void PlasticTool::drawHighlights(const SkDP &sd,
       glEnable(GL_LINE_STIPPLE);
       glLineStipple(1, 0xCCCC);
 
-      drawSquare(vx.P(), handleRadius);
+      drawSquare(*pos, handleRadius);
 
       glPopAttrib();
     }
 
-    drawText(vx.P() + TPointD(2.0 * handleRadius, 2.0 * handleRadius),
+    drawText(*pos + TPointD(2.0 * handleRadius, 2.0 * handleRadius),
              QString("(%1) ").arg(hookNumber) + vx.name(), 1.7);
   } else if (m_seHigh >= 0) {
     // Draw a handle at the projection of current mouse position towards the
     // highlighted edge
     double handleRadius = HANDLE_SIZE * pixelSize;
-    drawSquare(projection(*skeleton, m_seHigh, m_pos), handleRadius);
+    if (!isAMTarget())
+      drawSquare(projection(*skeleton, m_seHigh, m_pos), handleRadius);
+    else if (m_amBuildPoint)
+      if (const auto pos = drawPosition(*m_amBuildPoint))
+        drawSquare(*pos, handleRadius);
   }
 }
 
@@ -1983,18 +2086,25 @@ void PlasticTool::drawSelections(const SkDP &sd,
     // Draw a handle square for each selected vertex
     objects_container::const_iterator vst, vsEnd = vIdxs.end();
     for (vst = vIdxs.begin(); vst != vsEnd; ++vst)
-      drawSquare(skeleton.vertex(*vst).P(), handleRadius);
+      if (const auto pos = drawPosition(skeleton.vertex(*vst).position3D()))
+        drawSquare(*pos, handleRadius);
 
     // Draw vertex descriptions (only in the single selection case - to avoid
     // text pollution)
     if (vIdxs.size() == 1) {
       const PlasticSkeleton::vertex_type &vx = skeleton.vertex(m_svSel);
 
+      const auto pos = drawPosition(vx.position3D());
+      if (!pos) return;
       int hookNumber = sd->hookNumber(vx.name());
       assert(hookNumber >= 0);
 
-      drawText(vx.P() + TPointD(2.0 * handleRadius, 2.0 * handleRadius),
-               QString("(%1) ").arg(hookNumber) + vx.name(), 1.7);
+      QString label = QString("(%1) ").arg(hookNumber) + vx.name();
+      if (isAMTarget())
+        label +=
+            tr("  Z %1 cm").arg(vx.m_depth * 2.54 / Stage::inch, 0, 'f', 2);
+      drawText(*pos + TPointD(2.0 * handleRadius, 2.0 * handleRadius), label,
+               1.7);
     }
   }
 }
@@ -2003,12 +2113,13 @@ void PlasticTool::drawSelections(const SkDP &sd,
 
 void PlasticTool::drawSkeleton(const PlasticSkeleton &skel, double pixelSize,
                                UCHAR alpha) {
-  struct locals {
-    inline static void drawLine(const TPointD &p0, const TPointD &p1) {
-      glVertex2d(p0.x, p0.y);
-      glVertex2d(p1.x, p1.y);
-    }
-  };  // locals
+  const auto drawEdge = [&](const PlasticSkeleton::edge_type &edge) {
+    const auto a = drawPosition(skel.vertex(edge.vertex(0)).position3D());
+    const auto b = drawPosition(skel.vertex(edge.vertex(1)).position3D());
+    if (!a || !b) return;
+    glVertex2d(a->x, a->y);
+    glVertex2d(b->x, b->y);
+  };
 
   const tcg::list<PlasticSkeleton::vertex_type> &vertices = skel.vertices();
   if (vertices.size() > 0) {
@@ -2024,9 +2135,7 @@ void PlasticTool::drawSkeleton(const PlasticSkeleton &skel, double pixelSize,
 
       glBegin(GL_LINES);
       {
-        for (et = edges.begin(); et != eEnd; ++et)
-          locals::drawLine(skel.vertex(et->vertex(0)).P(),
-                           skel.vertex(et->vertex(1)).P());
+        for (et = edges.begin(); et != eEnd; ++et) drawEdge(*et);
       }
       glEnd();
 
@@ -2035,9 +2144,7 @@ void PlasticTool::drawSkeleton(const PlasticSkeleton &skel, double pixelSize,
 
       glBegin(GL_LINES);
       {
-        for (et = edges.begin(); et != eEnd; ++et)
-          locals::drawLine(skel.vertex(et->vertex(0)).P(),
-                           skel.vertex(et->vertex(1)).P());
+        for (et = edges.begin(); et != eEnd; ++et) drawEdge(*et);
       }
       glEnd();
     }
@@ -2048,10 +2155,10 @@ void PlasticTool::drawSkeleton(const PlasticSkeleton &skel, double pixelSize,
       const TPixel32 yellow(255, 255, 0, alpha);
 
       double handleRadius  = HANDLE_SIZE * pixelSize;
-      float intHandleThick = 2.0f, extHandleThick = 4.0f;
 
       // Draw root
-      drawFilledHandle(vertices.begin()->P(), handleRadius, pixelSize, magenta);
+      if (const auto pos = drawPosition(vertices.begin()->position3D()))
+        drawFilledHandle(*pos, handleRadius, pixelSize, magenta);
 
       // Draw remaining vertices
       tcg::list<PlasticSkeleton::vertex_type>::const_iterator vt(
@@ -2059,8 +2166,9 @@ void PlasticTool::drawSkeleton(const PlasticSkeleton &skel, double pixelSize,
           vEnd(vertices.end());
       if (vt != vEnd) {
         for (vt = ++vertices.begin(); vt != vEnd; ++vt)
-          drawHandle(vt->P(), handleRadius,
-                     vt->m_interpolate ? magenta : yellow);
+          if (const auto pos = drawPosition(vt->position3D()))
+            drawHandle(*pos, handleRadius,
+                       vt->m_interpolate ? magenta : yellow);
       }
     }
   }
@@ -2128,7 +2236,11 @@ void PlasticTool::drawOnionSkinSkeletons_animate(double pixelSize) {
     double sdFrame = obj->paramsTime(double(osRows[r] - 1));
 
     PlasticSkeleton skel;
-    m_sd->storeDeformedSkeleton(m_sd->skeletonId(sdFrame), sdFrame, skel);
+    const int id = m_sd->skeletonId(sdFrame);
+    if (isAMTarget())
+      m_sd->storeSpatialSkeleton(id, sdFrame, skel);
+    else
+      m_sd->storeDeformedSkeleton(id, sdFrame, skel);
 
     UCHAR alpha = 255 - 255.0 * OnionSkinMask::getOnionSkinFade(
                                     abs(osRows[r] - currentRow));
@@ -2270,22 +2382,18 @@ void PlasticTool::draw() {
   const bool native = isAMTarget();
   if (native) {
     m_amRigViewer = getViewer();
-    m_amRigPlane.reset();
+    m_amProjection.reset();
     if (!m_amRigViewer) return;
     try {
-      m_amRigPlane = amRigPlane(getXsheet(), ::column(), ::frame(),
-                                m_amRigViewer->is3DView());
+      auto *sheet    = getXsheet();
+      m_amProjection = amToolProjection(
+          sheet, ::frame(), amPlasticPlacement(sheet, ::column(), ::frame()),
+          m_amRigViewer->is3DView());
     } catch (const std::runtime_error &) {
-      return;  // The camera or plane can be singular.
+      return;
     }
-    if (!m_amRigPlane) return;
-    const auto &t         = *m_amRigPlane;
-    const double matrix[] = {t.m11(), t.m12(), 0, t.m13(), t.m21(), t.m22(),
-                             0,       t.m23(), 0, 0,       1,       0,
-                             t.m31(), t.m32(), 0, t.m33()};
     glPushMatrix();
     glLoadIdentity();
-    glMultMatrixd(matrix);
   }
   glPushAttrib(GL_LINE_BIT | GL_COLOR_BUFFER_BIT | GL_ENABLE_BIT);
 

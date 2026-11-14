@@ -61,7 +61,7 @@ std::string toString(const TAffine &aff) {
 std::string toString(SkVD *vd, double sdFrame) {
   std::string result;
 
-  for (int p = 0; p < SkVD::PARAMS_COUNT; ++p)
+  for (int p = 0; p < SkVD::ELEVATION; ++p)
     result += ::to_string(vd->m_params[p]->getValue(sdFrame), 5) + " ";
 
   return result;

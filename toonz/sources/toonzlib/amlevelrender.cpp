@@ -106,27 +106,59 @@ std::vector<otam::PlasticBone> amPlasticBones(TXsheet *xsheet, int column,
   const double time    = object->paramsTime(frame);
   const int skeletonId = deformation->skeletonId(time);
   const auto rest      = deformation->skeleton(skeletonId);
-  if (!rest || rest->vertices().size() < 2) return {};
+  if (!rest || rest->vertices().empty()) return {};
 
+  const bool spatial = deformation->isSpatial();
   PlasticSkeleton posed;
-  deformation->storeDeformedSkeleton(skeletonId, time, posed);
-  const auto modelPoint = [](const TPointD &p) {
-    return otam::Vec3{p.x / amStageUnits, p.y / amStageUnits, 0.0};
+  SkD::BoneFrames frames;
+  if (spatial)
+    deformation->storeSpatialSkeleton(skeletonId, time, posed, &frames);
+  else
+    deformation->storeDeformedSkeleton(skeletonId, time, posed);
+  const auto vector = [](const T3DPointD &p) {
+    return otam::Vec3{p.x, p.y, p.z};
+  };
+  const auto modelPoint = [&](const PlasticSkeletonVertex &v) {
+    return vector(v.position3D() / amStageUnits);
   };
   std::vector<otam::PlasticBone> bones;
-  bones.reserve(rest->vertices().size() - 1);
+  bones.reserve(rest->vertices().size());
   bool moves = false;
   for (auto vertex = rest->vertices().begin(); vertex != rest->vertices().end();
        ++vertex) {
     const int parent = vertex->parent();
     if (parent < 0) continue;
-    const auto &from      = rest->vertex(parent).P();
-    const auto &to        = vertex->P();
-    const auto &posedFrom = posed.vertex(parent).P();
-    const auto &posedTo   = posed.vertex(vertex.m_idx).P();
-    bones.push_back({modelPoint(from), modelPoint(to), modelPoint(posedFrom),
-                     modelPoint(posedTo)});
-    moves |= from != posedFrom || to != posedTo;
+    const auto from      = modelPoint(rest->vertex(parent));
+    const auto to        = modelPoint(*vertex);
+    const auto posedFrom = modelPoint(posed.vertex(parent));
+    const auto posedTo   = modelPoint(posed.vertex(vertex.m_idx));
+    otam::PlasticBone bone{from, to, posedFrom, posedTo, spatial};
+    if (spatial) {
+      const auto &basis = frames.at(vertex.m_idx);
+      bone.restSide     = vector(basis.first.side);
+      bone.posedSide    = vector(basis.second.side);
+      bone.posedAxis    = vector(basis.second.axis);
+    }
+    moves |= rest->vertex(parent).position3D() !=
+                 posed.vertex(parent).position3D() ||
+             vertex->position3D() != posed.vertex(vertex.m_idx).position3D() ||
+             bone.restSide != bone.posedSide;
+    bones.push_back(bone);
+  }
+  // A spatial rig can translate the entire model even with only its root.
+  if (spatial &&
+      (bones.empty() || std::all_of(bones.begin(), bones.end(),
+                                    [](const otam::PlasticBone &bone) {
+                                      return bone.restStart == bone.restEnd;
+                                    }))) {
+    const auto root = rest->vertices().begin();
+    if (root->position3D() == posed.vertex(root.m_idx).position3D()) return {};
+    auto from      = modelPoint(*root),
+         posedFrom = modelPoint(posed.vertex(root.m_idx));
+    auto to = from, posedTo = posedFrom;
+    to[0] += 1.0;
+    posedTo[0] += 1.0;
+    return {{from, to, posedFrom, posedTo, true}};
   }
   if (!moves) bones.clear();
   return bones;

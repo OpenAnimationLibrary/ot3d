@@ -68,6 +68,41 @@ void testPlasticBones() {
         "an absent rig reported deformation");
 }
 
+void testSpatialPlasticBones() {
+  otam::Model rest;
+  rest.points.resize(2);
+  rest.points[0].position = {1, 0.5, 4};
+  rest.points[1].position = {1, 0.5, 0};
+  rest.points[1].head     = 1;
+
+  auto pose = rest;
+  // The current Action pose is closer to the other bone. Bind from the rest
+  // point, then rotate and stretch the Action position in the bone frame.
+  pose.points[0].position = {1, 0.5, 0};
+  const otam::PlasticBone front{
+      {0, 0, 0}, {2, 0, 0}, {0, 0, 0}, {2, 0, 0}, true};
+  otam::PlasticBone back{{0, 0, 4}, {2, 0, 4}, {0, 1, 4}, {0, 1, 8}, true};
+  back.posedAxis = {0, 0, 1};
+  back.posedSide = {1, 0, 0};
+
+  check(otam::applyPlasticBones(rest, pose, {front, back}),
+        "spatial pose did not move a depth-bound control point");
+  near(pose.points[0].position[0], 0.5);
+  near(pose.points[0].position[1], -3);
+  near(pose.points[0].position[2], 6);
+  check(pose.points[1].position == rest.points[1].position,
+        "binding ignored the control point's rest depth");
+
+  auto twisted    = rest;
+  back.posedStart = back.restStart;
+  back.posedEnd   = back.restEnd;
+  back.posedAxis  = {1, 0, 0};
+  back.posedSide  = {0, 0, 1};
+  check(otam::applyPlasticBones(rest, twisted, {front, back}),
+        "pure twist was skipped when the joint positions stayed fixed");
+  near(twisted.points[0].position[2], 4.5);
+}
+
 void testInk(const otam::Mesh &filled) {
   const auto mesh = otam::previewMesh(otam::parse(amtest::splineSource));
   check(mesh.triangles.empty() && mesh.splines.size() == 2,
@@ -253,6 +288,7 @@ int main() {
     check(mesh.triangles.size() == 8, "quad tessellation");
     testInk(mesh);
     testPlasticBones();
+    testSpatialPlasticBones();
     testSplineProfile();
     near(mesh.triangles[0].color[0], 1);
     near(mesh.triangles[0].color[1], 0);
