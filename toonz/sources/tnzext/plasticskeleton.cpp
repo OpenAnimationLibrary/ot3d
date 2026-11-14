@@ -56,6 +56,7 @@ void PlasticSkeletonVertex::saveData(TOStream &os) {
   os.child("name") << m_name;
   os.child("number") << m_number;
   os.child("pos") << this->P().x << this->P().y;
+  if (m_depth != 0.0) os.child("depth") << m_depth;
   os.child("interpolate") << (int)this->m_interpolate;
 
   if (m_minAngle != -(std::numeric_limits<double>::max)())
@@ -78,6 +79,8 @@ void PlasticSkeletonVertex::loadData(TIStream &is) {
       is >> m_number, is.matchEndTag();
     else if (tagName == "pos")
       is >> this->P().x >> this->P().y, is.matchEndTag();
+    else if (tagName == "depth")
+      is >> m_depth, is.matchEndTag();
     else if (tagName == "interpolate")
       is >> val, m_interpolate = (bool)val, is.matchEndTag();
     else if (tagName == "minAngle")

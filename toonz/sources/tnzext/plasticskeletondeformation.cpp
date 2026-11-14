@@ -15,6 +15,7 @@
 #include "tcg/tcg_misc.h"
 
 // STL includes
+#include <cmath>
 #include <memory>
 #include <set>
 #include <map>
@@ -36,8 +37,40 @@ DEFINE_CLASS_CODE(PlasticSkeletonDeformation, 121)
 
 namespace {
 
-static const char *parNames[SkVD::PARAMS_COUNT] = {"Angle", "Distance", "SO"};
-static const char *parMeasures[SkVD::PARAMS_COUNT] = {"angle", "fxLength", ""};
+static const char *parNames[SkVD::PARAMS_COUNT] = {
+    "Angle", "Distance", "SO", "Elevation", "Twist", "RootX", "RootY", "RootZ"};
+static const char *parMeasures[SkVD::PARAMS_COUNT] = {
+    "angle", "fxLength", "",         "angle",
+    "angle", "fxLength", "fxLength", "fxLength"};
+
+using BoneFrame = SkD::BoneFrame;
+
+T3DPointD toLocal(const BoneFrame &frame, const T3DPointD &point) {
+  return {point * frame.axis, point * frame.side, point * frame.up};
+}
+
+T3DPointD fromLocal(const BoneFrame &frame, const T3DPointD &point) {
+  return point.x * frame.axis + point.y * frame.side + point.z * frame.up;
+}
+
+TPointD boneAngles(const T3DPointD &vector) {
+  const double xy = std::hypot(vector.x, vector.y);
+  return {xy > 1e-10 ? std::atan2(vector.y, vector.x) * M_180_PI : 0.0,
+          std::atan2(vector.z, xy) * M_180_PI};
+}
+
+BoneFrame boneFrame(const BoneFrame &parent, const TPointD &angles,
+                    double twist) {
+  const double azimuth = angles.x / M_180_PI, elevation = angles.y / M_180_PI;
+  const double a = std::cos(azimuth), b = std::sin(azimuth);
+  const double c = std::cos(elevation), d = std::sin(elevation);
+  const auto axis   = fromLocal(parent, {a * c, b * c, d});
+  const auto side   = fromLocal(parent, {-b, a, 0});
+  const auto up     = cross(axis, side);
+  const double roll = twist / M_180_PI;
+  const auto rolled = std::cos(roll) * side + std::sin(roll) * up;
+  return {axis, rolled, cross(axis, rolled)};
+}
 
 //------------------------------------------------------------------
 
@@ -70,7 +103,7 @@ double buildAngle(const PlasticSkeleton &skeleton, int v) {
 
 SkVD::Keyframe SkVD::getKeyframe(double frame) const {
   Keyframe kf;
-  for (int p          = 0; p < PARAMS_COUNT; ++p)
+  for (int p = 0; p < paramCount(); ++p)
     kf.m_keyframes[p] = m_params[p]->getKeyframeAt(frame);
 
   return kf;
@@ -79,7 +112,7 @@ SkVD::Keyframe SkVD::getKeyframe(double frame) const {
 //------------------------------------------------------------------
 
 void SkVD::setKeyframe(double frame) {
-  for (int p = 0; p < PARAMS_COUNT; ++p)
+  for (int p = 0; p < paramCount(); ++p)
     m_params[p]->setKeyframe(m_params[p]->getKeyframeAt(frame));
 }
 
@@ -87,7 +120,7 @@ void SkVD::setKeyframe(double frame) {
 
 bool SkVD::setKeyframe(const SkVD::Keyframe &values) {
   bool keyWasSet = false;
-  for (int p = 0; p < PARAMS_COUNT; ++p)
+  for (int p = 0; p < paramCount(); ++p)
     if (values.m_keyframes[p].m_isKeyframe) {
       m_params[p]->setKeyframe(values.m_keyframes[p]);
       keyWasSet = true;
@@ -102,7 +135,7 @@ bool SkVD::setKeyframe(const SkVD::Keyframe &values, double frame,
                        double easeIn, double easeOut) {
   bool keyWasSet = false;
 
-  for (int p = 0; p < PARAMS_COUNT; ++p)
+  for (int p = 0; p < paramCount(); ++p)
     if (values.m_keyframes[p].m_isKeyframe) {
       TDoubleKeyframe kf(values.m_keyframes[p]);
       kf.m_frame = frame;
@@ -120,7 +153,7 @@ bool SkVD::setKeyframe(const SkVD::Keyframe &values, double frame,
 //------------------------------------------------------------------
 
 bool SkVD::isKeyframe(double frame) const {
-  for (int p = 0; p < PARAMS_COUNT; ++p)
+  for (int p = 0; p < paramCount(); ++p)
     if (m_params[p]->isKeyframe(frame)) return true;
 
   return false;
@@ -129,7 +162,7 @@ bool SkVD::isKeyframe(double frame) const {
 //------------------------------------------------------------------
 
 bool SkVD::isFullKeyframe(double frame) const {
-  for (int p = 0; p < PARAMS_COUNT; ++p)
+  for (int p = 0; p < paramCount(); ++p)
     if (!m_params[p]->isKeyframe(frame)) return false;
 
   return true;
@@ -138,13 +171,13 @@ bool SkVD::isFullKeyframe(double frame) const {
 //------------------------------------------------------------------
 
 void SkVD::deleteKeyframe(double frame) {
-  for (int p = 0; p < PARAMS_COUNT; ++p) m_params[p]->deleteKeyframe(frame);
+  for (int p = 0; p < paramCount(); ++p) m_params[p]->deleteKeyframe(frame);
 }
 
 //------------------------------------------------------------------
 
 void SkVD::saveData(TOStream &os) {
-  for (int p = 0; p < PARAMS_COUNT; ++p)
+  for (int p = 0; p < paramCount(); ++p)
     if (!m_params[p]->isDefault()) os.child(::parNames[p]) << *m_params[p];
 }
 
@@ -175,6 +208,7 @@ public:
   PlasticSkeletonDeformation *m_back;  //!< Back-pointer to the interface class
 
   SkeletonSet m_skeletons;  //!< Skeletons owned by the deformation
+  bool m_spatial = false;
   SkVDSet m_vds;            //!< Container of vertex deformations
 
   TDoubleParamP m_skelIdsParam;  //!< Curve of skeleton ids by xsheet frame
@@ -215,6 +249,11 @@ public:
                              PlasticSkeleton &deformedSkeleton, double frame,
                              int v);
 
+  void updateSpatialBranch(const PlasticSkeleton &rest, PlasticSkeleton &pose,
+                           double frame, int v, const BoneFrame &restParent,
+                           const BoneFrame &posedParent,
+                           SkD::BoneFrames *frames) const;
+
   void onChange(
       const TParamChange &change) override;  // Passes param notifications to
                                              // external observers
@@ -251,6 +290,8 @@ PlasticSkeletonDeformation::Imp::Imp(PlasticSkeletonDeformation *back,
   m_skelIdsParam->setGrammar(m_grammar);
   m_skelIdsParam->addObserver(this);
 
+  m_spatial = other.m_spatial;
+
   // Clone the skeletons
   SkeletonSet::const_iterator st, sEnd(other.m_skeletons.end());
   for (st = other.m_skeletons.begin(); st != sEnd; ++st)
@@ -258,11 +299,10 @@ PlasticSkeletonDeformation::Imp::Imp(PlasticSkeletonDeformation *back,
         st->get_left(), new PlasticSkeleton(*st->get_right())));
 
   // Clone each parameters curve
-  SkVD vd;
-
   SkVDSet::const_iterator dt, dEnd(other.m_vds.end());
   for (dt = other.m_vds.begin(); dt != dEnd; ++dt) {
     VDKey vdKey = {dt->m_name, dt->m_hookNumber, dt->m_vIndices};
+    vdKey.m_vd.m_spatial = m_spatial;
 
     for (int p = 0; p < SkVD::PARAMS_COUNT; ++p) {
       TDoubleParamP &param = vdKey.m_vd.m_params[p];
@@ -460,6 +500,7 @@ void PlasticSkeletonDeformation::Imp::rebindVertex(const QString &name,
 //------------------------------------------------------------------
 
 void PlasticSkeletonDeformation::Imp::touchParams(SkVD &vd) {
+  vd.m_spatial = m_spatial;
   for (int p = 0; p < SkVD::PARAMS_COUNT; ++p) {
     if (vd.m_params[p]) continue;
 
@@ -871,6 +912,130 @@ void PlasticSkeletonDeformation::deleteKeyframe(double frame) {
 
 //------------------------------------------------------------------
 
+bool PlasticSkeletonDeformation::isSpatial() const { return m_imp->m_spatial; }
+
+void PlasticSkeletonDeformation::enableSpatial() {
+  if (isSpatial()) return;
+  m_imp->m_spatial = true;
+  for (const auto &entry : m_imp->m_vds) entry.m_vd.m_spatial = true;
+}
+
+void PlasticSkeletonDeformation::Imp::updateSpatialBranch(
+    const PlasticSkeleton &rest, PlasticSkeleton &pose, double frame, int v,
+    const BoneFrame &restParent, const BoneFrame &posedParent,
+    SkD::BoneFrames *frames) const {
+  const auto &original = rest.vertex(v);
+  auto &vertex         = pose.vertex(v);
+  const auto &vd       = vertexDeformation(vertex.name());
+  const auto value     = [&](SkVD::Params channel) {
+    return vd.m_params[channel]->getValue(frame);
+  };
+
+  BoneFrame restFrame = restParent, posedFrame = posedParent;
+  T3DPointD position;
+  const int parent = vertex.parent();
+  if (parent < 0) {
+    position = original.position3D() + T3DPointD(value(SkVD::ROOT_X),
+                                                 value(SkVD::ROOT_Y),
+                                                 value(SkVD::ROOT_Z));
+  } else {
+    const auto offset =
+        original.position3D() - rest.vertex(parent).position3D();
+    const double length      = std::sqrt(norm2(offset));
+    const double posedLength = length + value(SkVD::DISTANCE);
+    const auto angles        = boneAngles(toLocal(restParent, offset));
+    const auto posedAngles =
+        angles + TPointD(value(SkVD::ANGLE), value(SkVD::ELEVATION));
+    if (length > 1e-10) restFrame = boneFrame(restParent, angles, 0.0);
+    const auto direction =
+        boneFrame(posedParent, posedAngles, value(SkVD::TWIST));
+    position = pose.vertex(parent).position3D() + posedLength * direction.axis;
+    // A reversed edge also reverses its children's azimuth reference.
+    if (posedLength > 1e-10)
+      posedFrame = direction;
+    else if (posedLength < -1e-10)
+      posedFrame = {-direction.axis, -direction.side, direction.up};
+  }
+  vertex.P()     = TPointD(position.x, position.y);
+  vertex.m_depth = position.z;
+  if (frames) frames->emplace(v, std::make_pair(restFrame, posedFrame));
+
+  for (auto edge = vertex.edgesBegin(); edge != vertex.edgesEnd(); ++edge) {
+    const int child = pose.edge(*edge).vertex(1);
+    if (child != v)
+      updateSpatialBranch(rest, pose, frame, child, restFrame, posedFrame,
+                          frames);
+  }
+}
+
+void PlasticSkeletonDeformation::updateSpatialPosition(
+    int skelId, double frame, int v, const T3DPointD &position,
+    bool keepDistance) {
+  const auto rest    = skeleton(skelId);
+  const auto &vertex = rest->vertex(v);
+  auto *vd           = vertexDeformation(vertex.name());
+  const auto set     = [&](SkVD::Params channel, double value) {
+    vd->m_params[channel]->setValue(frame, value);
+  };
+  const int parent = vertex.parent();
+  if (parent < 0) {
+    const auto offset = position - vertex.position3D();
+    set(SkVD::ROOT_X, offset.x);
+    set(SkVD::ROOT_Y, offset.y);
+    set(SkVD::ROOT_Z, offset.z);
+    return;
+  }
+
+  PlasticSkeleton pose;
+  BoneFrames frames;
+  storeSpatialSkeleton(skelId, frame, pose, &frames);
+  const auto &basis = frames.at(parent);
+  const auto restOffset =
+      vertex.position3D() - rest->vertex(parent).position3D();
+  const auto offset   = position - pose.vertex(parent).position3D();
+  const double length = std::sqrt(norm2(offset));
+  if (length > 1e-10) {
+    const auto restAngles   = boneAngles(toLocal(basis.first, restOffset));
+    const double restLength = std::sqrt(norm2(restOffset));
+    const bool reversed =
+        keepDistance &&
+        restLength + vd->m_params[SkVD::DISTANCE]->getValue(frame) < 0;
+    const auto local  = toLocal(basis.second, reversed ? -offset : offset);
+    const auto angles = boneAngles(local);
+    const TPointD current(vd->m_params[SkVD::ANGLE]->getValue(frame),
+                          vd->m_params[SkVD::ELEVATION]->getValue(frame));
+    const auto unwrap = [&](const TPointD &a) {
+      const auto delta = a - restAngles - current;
+      return current + TPointD(std::remainder(delta.x, 360.0),
+                               std::remainder(delta.y, 360.0));
+    };
+    auto direct        = unwrap(angles);
+    const auto flipped = unwrap({angles.x + 180.0, 180.0 - angles.y});
+    if (std::hypot(local.x, local.y) <= 1e-10) {
+      direct.x = current.x;
+    } else if (norm2(flipped - current) < norm2(direct - current)) {
+      // Both angle pairs aim down the same ray. Favor the continuous pose
+      // when the bone crosses a pole of its parent's coordinate frame.
+      direct = flipped;
+    }
+    set(SkVD::ANGLE, tcrop(direct.x, vertex.m_minAngle, vertex.m_maxAngle));
+    set(SkVD::ELEVATION, direct.y);
+  }
+  if (!keepDistance) set(SkVD::DISTANCE, length - std::sqrt(norm2(restOffset)));
+}
+
+void PlasticSkeletonDeformation::storeSpatialSkeleton(
+    int skelId, double frame, PlasticSkeleton &skeleton,
+    BoneFrames *frames) const {
+  if (frames) frames->clear();
+  const auto rest = this->skeleton(skelId);
+  skeleton        = rest ? *rest : PlasticSkeleton();
+  if (!skeleton.vertices().empty())
+    m_imp->updateSpatialBranch(*rest, skeleton, frame,
+                               skeleton.vertices().begin().m_idx, {}, {},
+                               frames);
+}
+
 void PlasticSkeletonDeformation::storeDeformedSkeleton(
     int skelId, double frame, PlasticSkeleton &skeleton) const {
   // Copy the un-deformed skeleton to the output one
@@ -1020,6 +1185,7 @@ void PlasticSkeletonDeformation::setGrammar(TSyntax::Grammar *grammar) {
 //------------------------------------------------------------------
 
 void PlasticSkeletonDeformation::saveData(TOStream &os) {
+  if (isSpatial()) os.child("spatial") << 1;
   // Save skeleton vertex deformations
   os.openChild("VertexDeforms");  // These are saved *before* skeletons
   {                               // ON PURPOSE - in loadData(), we'll
@@ -1063,7 +1229,11 @@ void PlasticSkeletonDeformation::loadData(TIStream &is) {
 
   std::string tagName;
   while (is.openChild(tagName)) {
-    if (tagName == "VertexDeforms") {
+    if (tagName == "spatial") {
+      int spatial;
+      is >> spatial, is.matchEndTag();
+      if (spatial) enableSpatial();
+    } else if (tagName == "VertexDeforms") {
       VDKey vKey;
 
       while (is.openChild(tagName)) {
