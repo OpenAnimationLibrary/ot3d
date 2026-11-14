@@ -21,6 +21,7 @@ set(MOC_HEADERS
 
 set(HEADERS
     ${MOC_HEADERS}
+    amtoolprojection.h
     autofill.h
     bluredbrush.h
     hookselection.h

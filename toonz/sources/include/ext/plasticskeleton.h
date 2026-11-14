@@ -71,6 +71,9 @@ private:
   int m_parent;  //!< Index of the parent vertex in the skeleton
 
 public:
+  double m_depth = 0.0;
+  T3DPointD position3D() const { return {P().x, P().y, m_depth}; }
+
   // Tool data
 
   double m_minAngle, m_maxAngle;  //!< Minimum and maximum accepted angles when

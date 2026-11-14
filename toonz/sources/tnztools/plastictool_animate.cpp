@@ -5,6 +5,7 @@
 
 // TnzLib includes
 #include "toonz/tobjecthandle.h"
+#include "toonz/tscenehandle.h"
 
 #include "plastictool.h"
 
@@ -19,12 +20,14 @@ namespace {
 class AnimateValuesUndo final : public TUndo {
   int m_row, m_col;  //!< Xsheet coordinates
   int m_v;           //!< Moved vertex
+  double m_frame;
 
 public:
   SkDKey m_oldValues, m_newValues;  //!< Keyframe values
 
 public:
-  AnimateValuesUndo(int v) : m_row(::row()), m_col(::column()), m_v(v) {}
+  AnimateValuesUndo(int v)
+      : m_row(::row()), m_col(::column()), m_v(v), m_frame(::sdFrame()) {}
 
   // Again, not accurate. We should get in the details of SkDF... So, let's say
   // around 10 kB - max 10k instances in the standard undos pool.
@@ -38,7 +41,7 @@ public:
     l_suspendParamsObservation =
         true;  // Coalesce params change notifications into one
 
-    l_plasticTool.deformation()->deleteKeyframe(m_row - 1);
+    l_plasticTool.deformation()->deleteKeyframe(m_frame);
     l_plasticTool.deformation()->setKeyframe(m_newValues);
 
     l_suspendParamsObservation = false;
@@ -53,8 +56,7 @@ public:
     l_suspendParamsObservation =
         true;  // Coalesce params change notifications into one
 
-    l_plasticTool.deformation()->deleteKeyframe(
-        m_row - 1);  // Yep. Typical frame/row shift... xD
+    l_plasticTool.deformation()->deleteKeyframe(m_frame);
     l_plasticTool.deformation()->setKeyframe(m_oldValues);
 
     l_suspendParamsObservation = false;
@@ -75,11 +77,7 @@ void PlasticTool::mouseMove_animate(const TPointD &pos, const TMouseEvent &me) {
   m_svHigh = m_seHigh = -1;  // Reset highlighted primitives
 
   if (m_sd) {
-    double d, highlightRadius = getPixelSize() * HIGHLIGHT_DISTANCE;
-
-    // Look for nearest vertex
-    int v = deformedSkeleton().closestVertex(pos, &d);
-    if (v >= 0 && d < highlightRadius) m_svHigh = v;
+    m_svHigh = closestRigJoint(deformedSkeleton(), pos);
 
     invalidate();
   }
@@ -92,13 +90,16 @@ void PlasticTool::leftButtonDown_animate(const TPointD &pos,
   // Track mouse position
   m_pressedPos = m_pos = pos;
 
+  if (isAMTarget()) mouseMove_animate(pos, me);
   setSkeletonSelection(m_svHigh);
 
   if (m_svSel.hasSingleObject()) {
     // Store original vertex position and keyframe values
-    m_pressedVxsPos =
-        std::vector<TPointD>(1, deformedSkeleton().vertex(m_svSel).P());
-    m_sd->getKeyframeAt(frame(), m_pressedSkDF);
+    if (isAMTarget()) {
+      m_amDragAnchor = deformedSkeleton().vertex(m_svSel).position3D();
+      m_amMouseStart = pos;
+    }
+    m_sd->getKeyframeAt(::sdFrame(), m_pressedSkDF);
   }
 
   invalidate();
@@ -111,13 +112,36 @@ void PlasticTool::leftButtonDrag_animate(const TPointD &pos,
   // Track mouse position
   m_pos = pos;
 
+  if (isAMTarget()) {
+    if (const auto target = amDragTarget(me)) {
+      const double time = ::sdFrame();
+      auto *vd          = m_sd->vertexDeformation(::skeletonId(), m_svSel);
+      l_suspendParamsObservation = true;
+      const bool keepDistance    = m_keepDistance.getValue();
+      if (skeleton()->vertex(m_svSel).parent() < 0) {
+        for (auto channel : {SkVD::ROOT_X, SkVD::ROOT_Y, SkVD::ROOT_Z})
+          ::setKeyframe(vd->m_params[channel], time);
+      } else {
+        ::setKeyframe(vd->m_params[SkVD::ANGLE], time);
+        ::setKeyframe(vd->m_params[SkVD::ELEVATION], time);
+        if (!keepDistance) ::setKeyframe(vd->m_params[SkVD::DISTANCE], time);
+      }
+      m_sd->updateSpatialPosition(::skeletonId(), time, m_svSel, *target,
+                                  keepDistance);
+      l_suspendParamsObservation = false;
+      m_deformedSkeleton.invalidate();
+      invalidate();
+    }
+    return;
+  }
+
   if (m_sd && m_svSel.hasSingleObject() &&
       m_svSel > 0)  // Avoid move if vertex is root
   {
     l_suspendParamsObservation = true;  // Automatic params notification happen
     // twice (1 x param) - dealing with it manually
 
-    double frame = ::frame();
+    double frame = ::sdFrame();
 
     // First, retrieve selected vertex's deformation
     SkVD *vd = m_sd->vertexDeformation(::skeletonId(), m_svSel);
@@ -157,10 +181,13 @@ void PlasticTool::leftButtonUp_animate(const TPointD &pos,
   // Track mouse position
   m_pos = pos;
 
-  if (m_svSel.hasSingleObject() && m_dragged) {
+  const bool native = isAMTarget();
+  if (m_svSel.hasSingleObject() && m_dragged &&
+      (native ? bool(m_amDragAnchor) : m_svSel > 0)) {
+    if (native) leftButtonDrag_animate(pos, me);
     // Set a keyframe to each skeleton vertex, if that was requested
     if (m_globalKey.getValue())
-      ::setKeyframe(m_sd, ::frame());  // Already invokes keyframes rebuild
+      ::setKeyframe(m_sd, ::sdFrame());  // Already invokes keyframes rebuild
     else
       stageObject()->updateKeyframes();  // Otherwise, must be explicit
 
@@ -168,12 +195,13 @@ void PlasticTool::leftButtonUp_animate(const TPointD &pos,
     AnimateValuesUndo *undo = new AnimateValuesUndo(m_svSel);
 
     undo->m_oldValues = m_pressedSkDF;
-    m_sd->getKeyframeAt(frame(), undo->m_newValues);
+    m_sd->getKeyframeAt(::sdFrame(), undo->m_newValues);
 
     TUndoManager::manager()->add(undo);
 
     // This is needed to refresh the xsheet (there may be new keyframes)
     TTool::getApplication()->getCurrentObject()->notifyObjectIdChanged(false);
+    if (native) TTool::getApplication()->getCurrentScene()->setDirtyFlag(true);
   }
 
   // In case one of the vertices is attached (as a hook) to an external
@@ -217,7 +245,7 @@ void PlasticTool::addContextMenuActions_animate(QMenu *menu) {
 void PlasticTool::keyFunc_undo(void (PlasticTool::*keyFunc)()) {
   assert(m_svSel.objects().size() <= 1);
 
-  double frame = ::frame();
+  double frame = ::sdFrame();
 
   AnimateValuesUndo *undo = new AnimateValuesUndo(m_svSel);
   m_sd->getKeyframeAt(frame, undo->m_oldValues);
@@ -241,7 +269,7 @@ void PlasticTool::draw_animate() {
     drawOnionSkinSkeletons_animate(pixelSize);
     drawSkeleton(deformedSkeleton, pixelSize);
     drawSelections(m_sd, deformedSkeleton, pixelSize);
-    drawAngleLimits(m_sd, m_skelId, m_svSel, pixelSize);
+    if (!isAMTarget()) drawAngleLimits(m_sd, m_skelId, m_svSel, pixelSize);
   }
 
   drawHighlights(m_sd, &deformedSkeleton, pixelSize);
