@@ -61,15 +61,20 @@ struct Model {
 };
 struct PlasticBone {
   Vec3 restStart, restEnd, posedStart, posedEnd;
+  bool spatial = false;
+  Vec3 restSide{0, 1, 0}, posedSide{0, 1, 0};
+  Vec3 posedAxis{1, 0, 0};
 
   bool operator==(const PlasticBone &other) const {
     return restStart == other.restStart && restEnd == other.restEnd &&
-           posedStart == other.posedStart && posedEnd == other.posedEnd;
+           posedStart == other.posedStart && posedEnd == other.posedEnd &&
+           spatial == other.spatial && restSide == other.restSide &&
+           posedSide == other.posedSide && posedAxis == other.posedAxis;
   }
 };
 
-// Bind attachment heads by their rest XY positions. Apply Plastic's planar
-// pose to the current point positions, retaining model-space depth.
+// Bind attachment heads by their rest positions and deform their current
+// positions. Planar rigs use the XY plane for binding and deformation.
 bool applyPlasticBones(const Model &rest, Model &pose,
                        const std::vector<PlasticBone> &bones);
 

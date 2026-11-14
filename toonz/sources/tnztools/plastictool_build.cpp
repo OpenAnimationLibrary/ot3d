@@ -11,6 +11,7 @@
 #include "toonz/txshsimplelevel.h"
 #include "toonz/txsheethandle.h"
 #include "toonz/stage.h"
+#include "toonz/tscenehandle.h"
 
 // tcg includes
 #include "tcg/tcg_point_ops.h"
@@ -30,27 +31,6 @@ namespace {
 
 TPointD closestRigVertexPos(const TPointD &pos, double *distance = 0) {
   const TXshCell &imageCell = TTool::getImageCell();
-
-  if (auto *level =
-          imageCell.m_level ? imageCell.m_level->getAMLevel() : nullptr) {
-    const auto model   = level->editableModel();
-    const double units = Stage::inch / 2.54;
-    double best        = std::numeric_limits<double>::infinity();
-    TPointD nearest    = pos;
-    if (model)
-      for (std::size_t i = 0; i < model->points.size(); ++i) {
-        const auto &point = model->points[i];
-        if (point.head != i) continue;
-        const TPointD p(point.position[0] * units, point.position[1] * units);
-        const double d = norm2(p - pos);
-        if (d < best) {
-          best    = d;
-          nearest = p;
-        }
-      }
-    if (distance) *distance = std::sqrt(best);
-    return nearest;
-  }
 
   TXshSimpleLevel *sl = imageCell.getSimpleLevel();
   const TMeshImageP mi(TTool::getImage(false));
@@ -197,6 +177,7 @@ public:
 
       m_vParent = vx.parent();
       m_vx      = PlasticSkeletonVertex(vx.P());
+      m_vx.m_depth = vx.m_depth;
 
       storeChildren(*skeleton, vx);
     }
@@ -446,13 +427,13 @@ class MoveVertexUndo_Build final : public TUndo {
   int m_row, m_col;  //!< Xsheet coordinates
 
   std::vector<int> m_vIdxs;           //!< Moved vertices
-  std::vector<TPointD> m_origVxsPos;  //!< Original vertex positions
-  TPointD m_posShift;                 //!< Vertex positions shift
+  std::vector<T3DPointD> m_origVxsPos;  //!< Original vertex positions
+  T3DPointD m_posShift;                 //!< Vertex positions shift
 
 public:
   MoveVertexUndo_Build(const std::vector<int> &vIdxs,
-                       const std::vector<TPointD> &origVxsPos,
-                       const TPointD &posShift)
+                       const std::vector<T3DPointD> &origVxsPos,
+                       const T3DPointD &posShift)
       : m_row(::row())
       , m_col(::column())
       , m_vIdxs(vIdxs)
@@ -463,7 +444,7 @@ public:
 
   int getSize() const override {
     return int(sizeof(*this) +
-               m_vIdxs.size() * (sizeof(int) + 2 * sizeof(TPointD)));
+               m_vIdxs.size() * (sizeof(int) + sizeof(T3DPointD)));
   }
 
   void redo() const override {
@@ -481,7 +462,7 @@ public:
     PlasticTool::TemporaryActivation tempActivate(m_row, m_col);
 
     l_plasticTool.setSkeletonSelection(m_vIdxs);
-    l_plasticTool.moveVertex_build(m_origVxsPos, TPointD());
+    l_plasticTool.moveVertex_build(m_origVxsPos, T3DPointD());
 
     ::stageObject()
         ->invalidate();  // Should be a TStageObject's implementation detail ...
@@ -495,6 +476,37 @@ public:
 //    PlasticTool  functions
 //****************************************************************************************
 
+std::optional<T3DPointD> PlasticTool::amSnapPoint(const TPointD &pixel) const {
+  if (!m_snapToMesh.getValue()) return {};
+  const auto level = getImageCell().m_level;
+  auto *native     = level ? level->getAMLevel() : nullptr;
+  const auto model = native ? native->editableModel() : nullptr;
+  if (!model) return {};
+
+  const double units  = Stage::inch / 2.54;
+  const double radius = HIGHLIGHT_DISTANCE * getPixelSize();
+  double best         = radius * radius;
+  double front        = -std::numeric_limits<double>::infinity();
+  std::optional<T3DPointD> result;
+  for (std::size_t i = 0; i < model->points.size(); ++i) {
+    const auto &point = model->points[i];
+    if (point.head != i) continue;
+    const auto screen = m_amProjection->project({point.position[0] * units,
+                                                 point.position[1] * units,
+                                                 point.position[2] * units});
+    if (!screen) continue;
+    const double distance = norm2(TPointD((*screen)[0], (*screen)[1]) - pixel);
+    if (distance < best ||
+        (distance == best && result && (*screen)[2] > front)) {
+      best   = distance;
+      front  = (*screen)[2];
+      result = T3DPointD(point.position[0] * units, point.position[1] * units,
+                         point.position[2] * units);
+    }
+  }
+  return result;
+}
+
 void PlasticTool::mouseMove_build(const TPointD &pos, const TMouseEvent &me) {
   // Track mouse position
   m_pos = pos;  // Needs to be done now - ensures m_pos is valid
@@ -502,8 +514,52 @@ void PlasticTool::mouseMove_build(const TPointD &pos, const TMouseEvent &me) {
   m_svHigh = m_seHigh = -1;  // Reset highlighted primitives
 
   double d, highlightRadius = getPixelSize() * HIGHLIGHT_DISTANCE;
-
   const PlasticSkeletonP &skeleton = this->skeleton();
+  if (isAMTarget()) {
+    m_amBuildPoint.reset();
+    if (skeleton) m_svHigh = closestRigJoint(*skeleton, pos);
+    if (m_svHigh < 0 && skeleton) {
+      double best        = highlightRadius * highlightRadius;
+      const auto project = [&](const T3DPointD &p) {
+        return m_amProjection->project({p.x, p.y, p.z});
+      };
+      for (auto edge = skeleton->edges().begin();
+           edge != skeleton->edges().end(); ++edge) {
+        const auto a  = skeleton->vertex(edge->vertex(0)).position3D();
+        const auto b  = skeleton->vertex(edge->vertex(1)).position3D();
+        const auto pa = project(a), pb = project(b);
+        if (!pa || !pb) continue;
+        const TPointD start((*pa)[0], (*pa)[1]), end((*pb)[0], (*pb)[1]);
+        const auto delta    = end - start;
+        const double length = norm2(delta);
+        if (length < 1e-8) continue;
+        const double t = std::clamp(((pos - start) * delta) / length, 0.0, 1.0);
+        const double distance = norm2(pos - (start + t * delta));
+        if (distance >= best) continue;
+        // Screen interpolation is perspective-corrected back into model space.
+        const double modelT =
+            m_amProjection->perspective
+                ? t * (*pa)[2] / ((1 - t) * (*pb)[2] + t * (*pa)[2])
+                : t;
+        best           = distance;
+        m_seHigh       = edge.m_idx;
+        m_amBuildPoint = a + modelT * (b - a);
+      }
+    }
+    if (m_svHigh < 0 && m_seHigh < 0) {
+      m_amBuildPoint = amSnapPoint(pos);
+      if (!m_amBuildPoint) {
+        const auto anchor = skeleton && m_svSel.hasSingleObject()
+                                ? skeleton->vertex(m_svSel).position3D()
+                                : T3DPointD();
+        const auto screen =
+            m_amProjection->project({anchor.x, anchor.y, anchor.z});
+        if (screen) m_amBuildPoint = amPointAt(pos, (*screen)[2]);
+      }
+    }
+    invalidate();
+    return;
+  }
   if (skeleton) {
     // Search nearest skeleton entities
 
@@ -537,7 +593,8 @@ void PlasticTool::mouseMove_build(const TPointD &pos, const TMouseEvent &me) {
 
 void PlasticTool::leftButtonDown_build(const TPointD &pos,
                                        const TMouseEvent &me) {
-  // Track mouse position
+  const bool native = isAMTarget();
+  if (native) mouseMove_build(pos, me);
   m_pressedPos = m_pos = pos;
 
   // Update selections
@@ -556,14 +613,16 @@ void PlasticTool::leftButtonDown_build(const TPointD &pos,
         setSkeletonSelection(vSel);
     } else if (m_seHigh >= 0) {
       // Insert a vertex in the edge
-      TUndo *op = new InsertVertexUndo(
-          m_seHigh, PlasticSkeletonVertex(projection(*skel, m_seHigh, m_pos)));
+      PlasticSkeletonVertex vertex(native ? TPointD(*m_amBuildPoint)
+                                          : projection(*skel, m_seHigh, m_pos));
+      if (native) vertex.m_depth = m_amBuildPoint->z;
+      TUndo *op = new InsertVertexUndo(m_seHigh, vertex);
       TUndoManager::manager()->add(op);
 
       op->redo();
     } else if (!skel || skel->empty() || m_svSel.hasSingleObject()) {
       // Snap to mesh if required
-      if (m_snapToMesh.getValue()) {
+      if (!native && m_snapToMesh.getValue()) {
         double d, highlightRadius = getPixelSize() * HIGHLIGHT_DISTANCE;
 
         const TPointD &mvPos =
@@ -573,7 +632,10 @@ void PlasticTool::leftButtonDown_build(const TPointD &pos,
       }
 
       // Add a new vertex
-      TUndo *op = new AddVertexUndo(m_svSel, PlasticSkeletonVertex(m_pos));
+      if (native && !m_amBuildPoint) return;
+      PlasticSkeletonVertex vertex(native ? TPointD(*m_amBuildPoint) : m_pos);
+      if (native) vertex.m_depth = m_amBuildPoint->z;
+      TUndo *op = new AddVertexUndo(m_svSel, vertex);
       TUndoManager::manager()->add(op);
 
       op->redo();
@@ -588,15 +650,19 @@ void PlasticTool::leftButtonDown_build(const TPointD &pos,
     const PlasticSkeletonP &skel = skeleton();
     assert(skel);
 
-    // Adjust mouse press to the selected skeleton vertex, if necessary
-    if (m_svSel.hasSingleObject()) m_pressedPos = skel->vertex(m_svSel).P();
+    m_pressedRestPositions.clear();
+    for (int joint : m_svSel.objects())
+      m_pressedRestPositions.push_back(skel->vertex(joint).position3D());
 
-    // Store original vertex positions
-    std::vector<TPointD> v;
-    for (auto const &e : m_svSel.objects()) {
-      v.push_back(skel->vertex(e).P());
+    if (native) {
+      const int joint =
+          m_svSel.contains(m_svHigh) ? m_svHigh : m_svSel.objects().front();
+      m_amDragAnchor = skel->vertex(joint).position3D();
+      m_amMouseStart = pos;
+      m_amBuildShift = {};
+    } else if (m_svSel.hasSingleObject()) {
+      m_pressedPos = skel->vertex(m_svSel).P();
     }
-    m_pressedVxsPos = std::move(v);
   }
 
   invalidate();
@@ -606,6 +672,19 @@ void PlasticTool::leftButtonDown_build(const TPointD &pos,
 
 void PlasticTool::leftButtonDrag_build(const TPointD &pos,
                                        const TMouseEvent &me) {
+  if (isAMTarget()) {
+    if (auto target = amDragTarget(me)) {
+      if (m_amDragAxis.getIndex() == 0 && !me.isAltPressed()) {
+        if (const auto pixel = drawPosition(*target))
+          if (const auto snap = amSnapPoint(*pixel)) target = snap;
+      }
+      m_amBuildShift = *target - *m_amDragAnchor;
+      moveVertex_build(m_pressedRestPositions, m_amBuildShift);
+      invalidate();
+    }
+    return;
+  }
+
   // Track mouse position
   if (m_snapToMesh.getValue()) {
     const TPointD &mvPos = ::closestRigVertexPos(pos),
@@ -618,7 +697,8 @@ void PlasticTool::leftButtonDrag_build(const TPointD &pos,
   else                //    (not how m_pressedPos is subtracted), so !=
     m_pos = pos;      //    is not a choice.
 
-  moveVertex_build(m_pressedVxsPos, m_pos - m_pressedPos);
+  const auto shift = m_pos - m_pressedPos;
+  moveVertex_build(m_pressedRestPositions, {shift.x, shift.y, 0});
   invalidate();
 }
 
@@ -626,6 +706,20 @@ void PlasticTool::leftButtonDrag_build(const TPointD &pos,
 
 void PlasticTool::leftButtonUp_build(const TPointD &pos,
                                      const TMouseEvent &me) {
+  if (isAMTarget()) {
+    if (m_dragged && m_amDragAnchor) {
+      leftButtonDrag_build(pos, me);
+      if (norm2(m_amBuildShift) > 0.0) {
+        TUndoManager::manager()->add(new MoveVertexUndo_Build(
+            m_svSel.objects(), m_pressedRestPositions, m_amBuildShift));
+        ::stageObject()->invalidate();
+        ::invalidateXsheet();
+        getApplication()->getCurrentScene()->setDirtyFlag(true);
+      }
+    }
+    return;
+  }
+
   // Track mouse position
   if (m_snapToMesh.getValue()) {
     const TPointD &mvPos = ::closestRigVertexPos(pos),
@@ -637,8 +731,9 @@ void PlasticTool::leftButtonUp_build(const TPointD &pos,
     m_pos = pos;
 
   if (!m_svSel.isEmpty() && m_dragged) {
+    const auto shift = m_pos - m_pressedPos;
     TUndoManager::manager()->add(new MoveVertexUndo_Build(
-        m_svSel.objects(), m_pressedVxsPos, m_pos - m_pressedPos));
+        m_svSel.objects(), m_pressedRestPositions, {shift.x, shift.y, 0}));
 
     ::stageObject()
         ->invalidate();  // Should be a TStageObject's implementation detail ...
@@ -664,15 +759,19 @@ void PlasticTool::addContextMenuActions_build(QMenu *menu) {
 
 //------------------------------------------------------------------------
 
-void PlasticTool::moveVertex_build(const std::vector<TPointD> &origVxsPos,
-                                   const TPointD &posShift) {
+void PlasticTool::moveVertex_build(const std::vector<T3DPointD> &origVxsPos,
+                                   const T3DPointD &posShift) {
   if (!m_svSel.isEmpty()) {
     const PlasticSkeletonP &skeleton = this->skeleton();
 
     // Move selected vertices
     int v, vCount = int(m_svSel.objects().size());
-    for (v = 0; v != vCount; ++v)
-      skeleton->moveVertex(m_svSel.objects()[v], origVxsPos[v] + posShift);
+    for (v = 0; v != vCount; ++v) {
+      const int index                 = m_svSel.objects()[v];
+      const auto position             = origVxsPos[v] + posShift;
+      skeleton->vertex(index).m_depth = position.z;
+      skeleton->moveVertex(index, TPointD(position));
+    }
 
     // Deformation must be recompiled
     PlasticDeformerStorage::instance()->invalidateSkeleton(
@@ -958,6 +1057,10 @@ void PlasticTool::draw_build() {
   if (!skeleton || skeleton->vertices().empty() ||
       (m_svSel.hasSingleObject() && m_svHigh < 0 && m_seHigh < 0)) {
     // Draw a handle at current mouse pos (will add a vertex)
-    drawSquare(m_pos, HANDLE_SIZE * pixelSize);
+    if (!isAMTarget())
+      drawSquare(m_pos, HANDLE_SIZE * pixelSize);
+    else if (m_amBuildPoint)
+      if (const auto position = drawPosition(*m_amBuildPoint))
+        drawSquare(*position, HANDLE_SIZE * pixelSize);
   }
 }
