@@ -248,8 +248,12 @@ void testDistortionCage(const QTemporaryDir &temp) {
       }
   state->setValue(QString::fromStdString(otam::writeCage(grid)).toStdWString());
   const auto deformed = cage.get3DRenderGeometry(8, nullptr);
-  require(deformed && deformed->bounds[0] > rest->bounds[0] + 1,
-          "animated bone cage did not move the projected mesh");
+  require(deformed && !deformed->triangles.empty() &&
+              deformed->bounds[2] > rest->bounds[2] + 1,
+          "animated bone cage did not move the bound right edge");
+  // CP 6 is unbound and still anchors the left edge at its rest position.
+  require(std::abs(deformed->bounds[0] - rest->bounds[0]) < 1e-6,
+          "animated bone cage moved the unbound left edge");
 
   TRenderSettings info;
   require(cage.getAlias(0, info) != cage.getAlias(8, info),
