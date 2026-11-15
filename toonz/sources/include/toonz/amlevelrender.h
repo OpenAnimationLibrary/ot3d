@@ -65,4 +65,5 @@ prepareNativeModelColumnRenderScene(
     const std::vector<otglb::ModelTransform> *transforms = nullptr,
     const TRenderSettings *settings                      = nullptr,
     const otam::MaterialBindings *materials              = nullptr,
-    const otam::InkBindings *ink                         = nullptr);
+    const otam::InkBindings *ink                         = nullptr,
+    const otam::NormalSmoothingStack *smoothing          = nullptr);

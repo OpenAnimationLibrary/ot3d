@@ -274,3 +274,17 @@ The native `amfx` regression covers both direct connections, a transform/light
 chain, out-of-plane X/Y rotation, unsupported connection preservation, pixels,
 lighting, clone/opacity behavior, render-tree construction, cancellation and
 empty exposures. Interactive acceptance is still required in a platform build.
+
+## Smooth patch seams in Preview and renders
+
+Connect the model column to **3D Surface Smoothing** in the **3D** FX
+category. The node also works with native GLB levels. Add **Three Point
+Lighting** after it for scene lights, or use its built-in headlight to
+inspect the result directly in Preview.
+
+**Strength** blends the corner normals. **Crease Angle** controls which
+edges can share normals. Lower it to keep mechanical edges sharp. A:M patch
+smoothing follows welded control-point boundaries. Material colors, splines,
+silhouettes, and geometry stay in their authored positions. The node acts on
+shading, so geometry gaps and unmatched patch tessellation still need a
+model or tessellation edit. Flat Render bypasses the effect.

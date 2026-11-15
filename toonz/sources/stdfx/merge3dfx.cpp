@@ -42,8 +42,9 @@ class Merge3DFx final : public TStandardRasterFx,
       double frame, const int *canceled, const otglb::LightingRig *lighting,
       const std::vector<otglb::ModelTransform> *transforms,
       const TRenderSettings *settings, bool geometryOnly,
-      const otam::MaterialBindings *materials = nullptr,
-      const otam::InkBindings *ink            = nullptr) const {
+      const otam::MaterialBindings *materials     = nullptr,
+      const otam::InkBindings *ink                = nullptr,
+      const otam::NormalSmoothingStack *smoothing = nullptr) const {
     auto result                  = std::make_shared<otglb::RenderScene>();
     const T3DSourcePort *ports[] = {&m_foreground, &m_background};
     TRectD bounds;
@@ -56,7 +57,7 @@ class Merge3DFx final : public TStandardRasterFx,
               ? source->get3DRenderGeometry(frame, canceled, transforms,
                                             settings, ink)
               : source->get3DRenderScene(frame, canceled, lighting, transforms,
-                                         settings, materials, ink);
+                                         settings, materials, ink, smoothing);
       if (!child) continue;
       for (const auto &group : child->splineGroups)
         if (std::find(result->splineGroups.begin(), result->splineGroups.end(),
@@ -111,9 +112,10 @@ public:
       const std::vector<otglb::ModelTransform> *transforms = nullptr,
       const TRenderSettings *settings                      = nullptr,
       const otam::MaterialBindings *materials              = nullptr,
-      const otam::InkBindings *ink = nullptr) const override {
+      const otam::InkBindings *ink                         = nullptr,
+      const otam::NormalSmoothingStack *smoothing = nullptr) const override {
     return scene(frame, canceled, lighting, transforms, settings, false,
-                 materials, ink);
+                 materials, ink, smoothing);
   }
   std::shared_ptr<const otglb::RenderScene> get3DRenderGeometry(
       double frame, const int *canceled,

@@ -7,6 +7,7 @@ else()
 endif()
 add_library(otam STATIC
     ammodel.cpp ammodel.h
+    amnormals.cpp
     ammaterial.cpp ammaterial.h
     amaction.cpp amaction.h
     ambones.cpp ambones.h

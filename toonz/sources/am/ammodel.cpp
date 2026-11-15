@@ -659,6 +659,7 @@ Mesh previewMesh(const Model &m, const std::vector<std::string> &warnings,
     const auto &p = m.points[a].position, &q = m.points[b].position;
     return std::array<Vec3, 4>{{p, mix(p, q, 1.0 / 3), mix(p, q, 2.0 / 3), q}};
   };
+  std::map<Edge, std::vector<std::size_t>> boundaryOwners;
   for (std::size_t p = 0; p < m.patches.size(); ++p) {
     const auto &patch = m.patches[p];
     std::vector<std::size_t> heads;
@@ -676,6 +677,10 @@ Mesh previewMesh(const Model &m, const std::vector<std::string> &warnings,
     if (std::set<std::size_t>(heads.begin(), heads.end()).size() !=
         heads.size())
       fail("degenerate patch control topology");
+    for (std::size_t i = 0; i < heads.size(); ++i) {
+      const auto next = heads[(i + 1) % heads.size()];
+      boundaryOwners[std::minmax(heads[i], next)].push_back(p);
+    }
     if (patch.flags != 24)
       warn(out.warnings,
            "Patch orientation/special flags are retained; preview uses "
@@ -806,6 +811,13 @@ Mesh previewMesh(const Model &m, const std::vector<std::string> &warnings,
             {{{a, c, e}}, color, p, colorGroup, {{na, nc, ne}}, true});
       }
   }
+  for (const auto &[edge, patches] : boundaryOwners)
+    if (patches.size() == 2)
+      out.adjoiningPatches.emplace_back(patches[0], patches[1]);
+  std::sort(out.adjoiningPatches.begin(), out.adjoiningPatches.end());
+  out.adjoiningPatches.erase(
+      std::unique(out.adjoiningPatches.begin(), out.adjoiningPatches.end()),
+      out.adjoiningPatches.end());
   return out;
 }
 

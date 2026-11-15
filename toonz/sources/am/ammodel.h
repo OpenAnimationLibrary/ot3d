@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 // Native, read-only A:M data. No Hash SDK runtime, Qt, MFC, or graphics
@@ -139,11 +140,27 @@ struct Mesh {
   // All containing groups, independent of the palette color winner.
   std::vector<std::vector<std::string>> patchGroups;
   bool amMaterials = true;
+  // Sorted tessellated patch pairs sharing an authored welded CP edge.
+  std::vector<std::pair<std::size_t, std::size_t>> adjoiningPatches;
   std::vector<Triangle> triangles;
   std::vector<InkSpline> splines;
   std::vector<std::string> splineGroups;
   std::vector<std::string> warnings;
 };
+
+struct NormalSmoothing {
+  double strength, creaseDegrees;
+
+  bool operator==(const NormalSmoothing &rhs) const {
+    return strength == rhs.strength && creaseDegrees == rhs.creaseDegrees;
+  }
+};
+using NormalSmoothingStack = std::vector<NormalSmoothing>;
+
+// Angle-weighted corner normals across smooth shared edges. Returns false on
+// cancellation. Vertex positions and per-patch data are untouched.
+bool smoothNormals(Mesh &mesh, const NormalSmoothing &options,
+                   const int *canceled = nullptr);
 
 // Bounded native tagged-source reader shared by model and material documents.
 Document parseSource(std::string source, const std::string &root,

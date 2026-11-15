@@ -152,12 +152,13 @@ public:
       const std::vector<otglb::ModelTransform> *transforms = nullptr,
       const TRenderSettings *settings                      = nullptr,
       const otam::MaterialBindings *materials              = nullptr,
-      const otam::InkBindings *ink = nullptr) const override {
+      const otam::InkBindings *ink                         = nullptr,
+      const otam::NormalSmoothingStack *smoothing = nullptr) const override {
     auto *source = m_source.source();
     if (!source || (canceled && *canceled)) return {};
     if (!m_environment.isConnected() || (settings && settings->m_flatRender))
       return source->get3DRenderScene(frame, canceled, downstream, transforms,
-                                      settings, materials, ink);
+                                      settings, materials, ink, smoothing);
     auto map = environment(frame, canceled, settings);
     if (!map) return {};
     auto rig = downstream ? *downstream : otglb::LightingRig();
@@ -169,7 +170,7 @@ public:
     rig.environments.insert(rig.environments.begin(),
                             layer(frame, std::move(map)));
     return source->get3DRenderScene(frame, canceled, &rig, transforms, settings,
-                                    materials, ink);
+                                    materials, ink, smoothing);
   }
   std::shared_ptr<const otglb::RenderScene> get3DRenderGeometry(
       double frame, const int *canceled,

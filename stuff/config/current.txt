@@ -67,6 +67,9 @@
   <item>"STD_transform3DFx.scaleY" "Scale Y (%)" </item>
   <item>"STD_transform3DFx.scaleZ" "Scale Z (%)" </item>
   <item>"STD_transform3DFx.gizmoMode" "Canvas Gizmo" </item>
+  <item>"STD_surfaceSmoothing3DFx" "3D Surface Smoothing" </item>
+  <item>"STD_surfaceSmoothing3DFx.strength" "Strength (%)" </item>
+  <item>"STD_surfaceSmoothing3DFx.creaseAngle" "Crease Angle" </item>
   <item>"STD_amMaterialFx" "A:M Material" </item>
   <item>"STD_amMaterialFx.overrideSpecular" "Override Specular" </item>
   <item>"STD_amMaterialFx.specularSize" "Specular Size (%)" </item>

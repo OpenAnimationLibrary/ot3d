@@ -174,6 +174,7 @@ set(SOURCES
     imagebasedlightingfx.cpp
     environmentreflectionfx.cpp
     environmentfx.h
+    surfacesmoothing3dfx.cpp
     threepointlightfx.cpp
     merge3dfx.cpp
     tilefx.cpp
