@@ -3,8 +3,8 @@
 The current delivery is the **direct-light material/shine workflow**: choose a
 constant A:M material, choose its target group, inspect the evaluated settings,
 and render or key its specular response to lights. The shipped sample materials
-provide a starting point for visual testing. Environment and inter-object
-reflections are deferred until there is a reflection scene.
+provide a starting point for visual testing. Add [Environment Reflections FX](../environment_reflections_fx.md) downstream to use the material's reflectivity
+with a panorama.
 
 This delivery does not claim exact A:M renderer parity or support for every
 surface feature. The coverage table and later fidelity gates state those limits;
@@ -42,8 +42,8 @@ the cache after external edits, including edits that preserve size/timestamps.
 There is an 8 MiB file limit and 64-assignment chain limit.
 
 **Inspect** displays the evaluated specular values, diffuse source, ambiance,
-transparency (or inherited-surface status), deferred reflections and unsupported attributes at the current
-frame. **Clear** removes the reference without deleting its source file.
+transparency (or inherited-surface status), reflection settings, and
+unsupported attributes at the current frame. **Clear** removes the reference without deleting its source file.
 
 ## Working on shine
 
@@ -70,9 +70,9 @@ independent highlights; moving the camera's eye changes the view-dependent
 response. Reflections are not required for any of these controls.
 
 Imported Reflectivity, Reflectivity Falloff and Reflective Blend remain stored.
-Active reflections add a **Deferred A:M scene reflections** diagnostic, rather
-than blocking the material. This is independent of Unsupported Attributes mode;
-other unavailable active effects still follow that mode.
+Environment Reflections FX uses these values in **A:M Material** mode. A finite
+falloff distance excludes the infinitely distant panorama. Active reflection
+values do not block material rendering.
 
 ## Surface coverage
 
@@ -84,7 +84,7 @@ other unavailable active effects still follow that mode.
 | Specular Color / Size / Intensity | Per-sample view-dependent Blinn preview with direct-light incidence; keyable node overrides; zero size/intensity disables highlights |
 | Transparency | Constant surface alpha; depth-ordered, premultiplied compositing in linear light within one native source |
 | Roughness / Roughness Scale | Parsed and retained; A:M turbulence/normal perturbation is not implemented |
-| Reflectivity / Falloff / Reflective Blend | Parsed and retained; explicitly deferred without blocking direct-light shine |
+| Reflectivity / Falloff / Reflective Blend | Used by Environment Reflections FX in A:M Material mode |
 | Index of Refraction | Parsed and retained; refracted rays are not implemented |
 | Density | Parsed and retained; thickness-dependent absorption is not implemented |
 | Translucency | Parsed and retained; raytraced back lighting and occlusion are not implemented |
@@ -92,7 +92,7 @@ other unavailable active effects still follow that mode.
 | Glow | Parsed and retained; choreography-dependent glow post processing is not implemented |
 
 **Unsupported Attributes: Report Error** is the default. An active unsupported
-effect blocks rendering with the attribute name, except explicitly deferred scene reflections. **Supported Attributes Preview**
+effect blocks rendering with the attribute name, except reflection settings that the Environment Reflections node evaluates. **Supported Attributes Preview**
 explicitly omits those effects and adds diagnostics to the render snapshot.
 Neither setting promises A:M renderer parity: in particular, Hash's exact
 specular lobe has not been validated. Roughness is never mapped to a PBR
