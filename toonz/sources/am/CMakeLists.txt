@@ -10,6 +10,7 @@ add_library(otam STATIC
     ammaterial.cpp ammaterial.h
     amaction.cpp amaction.h
     ambones.cpp ambones.h
+    amcage.cpp amcage.h
     amink.cpp amink.h
 )
 target_compile_features(otam PUBLIC cxx_std_17)
@@ -27,6 +28,9 @@ if(BUILD_AM_TESTS)
     add_executable(amaction_test tests/amaction_test.cpp)
     target_link_libraries(amaction_test PRIVATE otam)
     add_test(NAME amaction COMMAND amaction_test)
+    add_executable(amcage_test tests/amcage_test.cpp)
+    target_link_libraries(amcage_test PRIVATE otam)
+    add_test(NAME amcage COMMAND amcage_test)
     add_executable(am_inspect am_inspect.cpp)
     target_link_libraries(am_inspect PRIVATE otam)
 endif()

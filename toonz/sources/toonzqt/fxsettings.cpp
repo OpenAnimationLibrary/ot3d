@@ -170,6 +170,10 @@ void ParamsPage::setPageField(TIStream &is, const TFxP &fx, bool isVertical) {
           if (auto stringField = dynamic_cast<StringParamField *>(field))
             stringField->enableGlbFileControls();
         }
+        if (paramName == "STD_amDistortionCageFx.cage") {
+          if (auto stringField = dynamic_cast<StringParamField *>(field))
+            stringField->enableAMDistortionCageControls();
+        }
         if (paramName == "STD_amMaterialFx.materialFile") {
           if (auto stringField = dynamic_cast<StringParamField *>(field))
             stringField->enableAMMaterialFileControls();
