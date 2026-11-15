@@ -1,6 +1,8 @@
 
 
 #include "toonzqt/paramfield.h"
+#include "amcageeditor.h"
+#include "toonz/amlevelrender.h"
 #include "toonzqt/gutil.h"
 #include "toonzqt/dvdialog.h"
 #include "toonzqt/fxsettings.h"
@@ -429,11 +431,14 @@ public:
 class StringParamFieldUndo final : public FxSettingsUndo {
   TStringParamP m_param;
   std::wstring m_oldValue, m_newValue;
+  bool m_showValues;
 
 public:
   StringParamFieldUndo(const TStringParamP param, QString name,
-                       TFxHandle *fxHandle)
-      : FxSettingsUndo(name, fxHandle), m_param(param) {
+                       TFxHandle *fxHandle, bool showValues)
+      : FxSettingsUndo(name, fxHandle)
+      , m_param(param)
+      , m_showValues(showValues) {
     m_oldValue = param->getValue();
     m_newValue = m_oldValue;
   }
@@ -450,7 +455,13 @@ public:
     if (m_fxHandle) m_fxHandle->notifyFxChanged();
   }
 
+  int getSize() const override {
+    return sizeof(*this) +
+           int((m_oldValue.size() + m_newValue.size()) * sizeof(wchar_t));
+  }
+
   QString getHistoryString() override {
+    if (!m_showValues) return QObject::tr("Modify Fx Param : %1").arg(m_name);
     QString str = QObject::tr("Modify Fx Param : %1 : %2 -> %3")
                       .arg(m_name)
                       .arg(QString::fromStdWString(m_oldValue))
@@ -1741,6 +1752,30 @@ void StringParamField::enableAMMaterialGroupControls() {
 
 //-----------------------------------------------------------------------------
 
+void StringParamField::enableAMDistortionCageControls() {
+  if (!m_textFld || m_amDistortionCageControls) return;
+  m_amDistortionCageControls = true;
+  m_textFld->hide();
+  auto *edit = new QPushButton(tr("Edit Cage..."), this);
+  m_layout->addWidget(edit);
+  connect(edit, &QPushButton::clicked, this, [this] {
+    if (!m_actualFx || !m_actualParam) return;
+    const TFxP fx   = m_actualFx;
+    const int frame = m_frame;
+    try {
+      editAMDistortionCage(
+          this, QString::fromStdWString(m_actualParam->getValue()),
+          amCageSourceModel(fx->getInputPort(0)->getFx(), frame), frame,
+          [this, fx](const QString &value) {
+            if (m_actualFx == fx) setStringValue(value.toStdWString());
+          });
+    } catch (const std::exception &error) {
+      DVGui::warning(tr("Cannot open Distortion Cage: %1")
+                         .arg(QString::fromUtf8(error.what())));
+    }
+  });
+}
+
 void StringParamField::enableExrFileControls() {
   if (!m_textFld || m_exrFileControls) return;
   m_exrFileControls = true;
@@ -1857,26 +1892,21 @@ void StringParamField::setFx(const TFxP &, const TFxP &actual) {
 //-----------------------------------------------------------------------------
 
 void StringParamField::onChange() {
-  std::wstring value;
-  if (m_multiTextFld)
-    value = m_multiTextFld->toPlainText().toStdWString();
-  else
-    value = m_textFld->text().toStdWString();
-  TUndo *undo = 0;
+  if (m_amDistortionCageControls) return;
+  setStringValue(m_multiTextFld ? m_multiTextFld->toPlainText().toStdWString()
+                                : m_textFld->text().toStdWString());
+}
 
+void StringParamField::setStringValue(const std::wstring &value) {
   if (!m_actualParam || m_actualParam->getValue() == value) return;
-
-  if (m_actualParam->getValue() != value)
-    undo = new StringParamFieldUndo(m_actualParam, m_interfaceName,
-                                    ParamField::m_fxHandleStat);
-
+  auto *undo = new StringParamFieldUndo(m_actualParam, m_interfaceName,
+                                        ParamField::m_fxHandleStat,
+                                        !m_amDistortionCageControls);
   m_actualParam->setValue(value);
   m_currentParam->setValue(value);
-
   emit currentParamChanged();
   emit actualParamChanged();
-
-  if (undo) TUndoManager::manager()->add(undo);
+  TUndoManager::manager()->add(undo);
 }
 
 //-----------------------------------------------------------------------------
@@ -1895,7 +1925,7 @@ void StringParamField::setParam(const TParamP &current, const TParamP &actual,
 
 void StringParamField::update(int frame) {
   m_frame = frame;
-  if (!m_actualParam || !m_currentParam) return;
+  if (m_amDistortionCageControls || !m_actualParam || !m_currentParam) return;
   QString str;
   QString strValue = str.fromStdWString(m_actualParam->getValue());
 

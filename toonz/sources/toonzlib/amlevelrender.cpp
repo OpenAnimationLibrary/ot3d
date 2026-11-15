@@ -1,4 +1,5 @@
 #include "toonz/amlevelrender.h"
+#include "ambones.h"
 #include "ext/plasticskeletondeformation.h"
 #include "toonz/sceneproperties.h"
 #include "toonz/toonzscene.h"
@@ -25,6 +26,7 @@
 #include <cmath>
 #include <limits>
 #include <map>
+#include <mutex>
 #include <set>
 #include <stdexcept>
 
@@ -195,7 +197,7 @@ std::shared_ptr<const otam::Model> amModelAt(TXsheet *xsheet, int column,
 static std::shared_ptr<const otam::Mesh> prepareModelGeometryImpl(
     TXsheet *xsheet, int column, double frame, bool projectToCamera,
     bool previewCamera, bool allowGlb, bool applyPlastic = true,
-    bool applyNativeBones = true) {
+    bool applyNativeBones = true, AMLevelCagePose *cagePose = nullptr) {
   if (!xsheet || column < 0 || !validModelFrame(frame)) return {};
   const int row   = int(std::floor(frame));
   const auto cell = xsheet->getCell(row, column);
@@ -210,9 +212,10 @@ static std::shared_ptr<const otam::Mesh> prepareModelGeometryImpl(
     auto *levelColumn  = xcol ? xcol->getLevelColumn() : nullptr;
     const auto rig = applyNativeBones && levelColumn ? levelColumn->getAMBones()
                                                      : AMBoneBinding{};
-    mesh           = am->renderMesh(
-                  row, binding.action, amActionTime(xsheet, binding.startRow, frame),
-                  bones, rig.level == cell.m_level ? rig.animation : nullptr, frame);
+    mesh               = am->renderMesh(row, binding.action,
+                                        amActionTime(xsheet, binding.startRow, frame), bones,
+                          rig.level == cell.m_level ? rig.animation : nullptr,
+                                        frame, cagePose);
     if (!mesh)
       throw std::runtime_error(
           am->error().empty() ? "A:M model source is not loaded" : am->error());
@@ -350,6 +353,28 @@ otam::Vec3 nativeModelDropPosition(TXsheet *xsheet, int frame,
 // Render-tree snapshots own world-space preview geometry and the camera state.
 // Neither downstream FX nor worker threads retain mutable A:M
 // documents, GLB assets or columns.
+TAMCageRenderData::TAMCageRenderData(const std::string &source, double frame,
+                                     double strength)
+    : m_cage(otam::readCage(source)), m_frame(frame), m_strength(strength) {
+  QCryptographicHash hash(QCryptographicHash::Sha256);
+  hash.addData(source.data(), int(source.size()));
+  hash.addData(reinterpret_cast<const char *>(&m_frame), sizeof(m_frame));
+  hash.addData(reinterpret_cast<const char *>(&m_strength), sizeof(m_strength));
+  m_alias = "amCage[" + hash.result().toHex().toStdString() + "]";
+}
+
+TAMCageRenderData::~TAMCageRenderData() = default;
+
+bool TAMCageRenderData::operator==(const TRasterFxRenderData &other) const {
+  const auto *cage = dynamic_cast<const TAMCageRenderData *>(&other);
+  return cage && cage->m_alias == m_alias;
+}
+
+bool TAMCageRenderData::apply(const otam::Model &rest,
+                              otam::Model &pose) const {
+  return otam::applyCage(m_cage, rest, pose, m_frame, m_strength);
+}
+
 class NativeModelRenderFx final : public TRasterFx, public T3DRenderSource {
   FX_DECLARATION(NativeModelRenderFx)
   std::shared_ptr<const otam::Mesh> m_geometry;
@@ -357,6 +382,61 @@ class NativeModelRenderFx final : public TRasterFx, public T3DRenderSource {
   bool m_project         = false;
   TPixel32 m_colorFilter = TPixel32::Black;
   std::string m_key;
+
+  struct CageSource {
+    AMLevelCagePose pose;
+    otam::Matrix placement;
+    mutable std::mutex mutex;
+    mutable std::string lastKey;
+    mutable std::shared_ptr<const otam::Mesh> lastMesh;
+  };
+  std::shared_ptr<CageSource> m_cageSource;
+
+  std::shared_ptr<const otam::Mesh> cageGeometry(
+      const TRenderSettings *settings, const int *canceled) const {
+    if (!settings || !m_cageSource || settings->m_data.empty())
+      return m_geometry;
+    std::vector<const TAMCageRenderData *> cages;
+    std::string key;
+    for (auto it = settings->m_data.rbegin(); it != settings->m_data.rend();
+         ++it)
+      if (auto *cage =
+              dynamic_cast<const TAMCageRenderData *>(it->getPointer())) {
+        cages.push_back(cage);
+        key += cage->toString();
+      }
+    if (cages.empty()) return m_geometry;
+
+    auto &source = *m_cageSource;
+    std::lock_guard<std::mutex> lock(source.mutex);
+    if (canceled && *canceled) return {};
+    if (source.lastKey == key) return source.lastMesh;
+    const auto &input = source.pose;
+    auto posed        = *input.actionPose;
+    bool moved        = false;
+    for (const auto *cage : cages) {
+      if (canceled && *canceled) return {};
+      moved |= cage->apply(*input.rest, posed);
+    }
+    auto result = m_geometry;
+    if (moved) {
+      if (input.animation)
+        otam::applyBoneAnimation(posed, *input.animation, input.boneFrame);
+      otam::applyPlasticBones(*input.rest, posed, input.plasticBones);
+      auto mesh     = otam::previewMesh(posed, {});
+      mesh.warnings = m_geometry->warnings;
+      for (auto &triangle : mesh.triangles) {
+        const auto color = input.paletteColors.find(triangle.colorGroup);
+        if (color != input.paletteColors.end()) triangle.color = color->second;
+      }
+      result = std::make_shared<otam::Mesh>(
+          otam::transformed(mesh, source.placement));
+    }
+    if (canceled && *canceled) return {};
+    source.lastMesh = result;
+    source.lastKey  = std::move(key);
+    return result;
+  }
 
 public:
   NativeModelRenderFx() { enableComputeInFloat(true); }
@@ -416,11 +496,61 @@ public:
     hash.addData(m_project ? "world" : "projected");
     m_key = hash.result().toHex().toStdString();
   }
+  void setCageSource(AMLevelCagePose pose, const otam::Matrix &placement) {
+    if (!pose.rest) return;
+    m_cageSource            = std::make_shared<CageSource>();
+    m_cageSource->pose      = std::move(pose);
+    m_cageSource->placement = placement;
+
+    // Two visually identical base poses may have different rest bounds,
+    // skinning, or bone assignments. Include these in the render alias.
+    const auto &input = m_cageSource->pose;
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    const auto add = [&](const auto &value) {
+      hash.addData(reinterpret_cast<const char *>(&value), sizeof(value));
+    };
+    add(placement);
+    add(input.rest->points.size());
+    for (const auto &point : input.rest->points) {
+      add(point.head);
+      add(point.position);
+    }
+    for (const auto &point : input.actionPose->points) add(point.position);
+    for (int bone : input.rest->boneByHead) add(bone);
+    for (const auto &bone : input.rest->bones) {
+      add(bone.path.size());
+      hash.addData(bone.path.data(), int(bone.path.size()));
+      add(bone.parent);
+      add(bone.inverseBind);
+    }
+    if (input.animation)
+      for (const auto &bone : otam::poseBones(
+               *input.rest, input.animation.get(), input.boneFrame)) {
+        add(bone.frame);
+        add(bone.animated);
+      }
+    for (const auto &[group, color] : input.paletteColors) {
+      add(group);
+      add(color);
+    }
+    for (const auto &bone : input.plasticBones) {
+      add(bone.restStart);
+      add(bone.restEnd);
+      add(bone.posedStart);
+      add(bone.posedEnd);
+      add(bone.spatial);
+      add(bone.restSide);
+      add(bone.posedSide);
+      add(bone.posedAxis);
+    }
+    m_key += hash.result().toHex().toStdString();
+  }
   void setColorFilter(const TPixel32 &color) { m_colorFilter = color; }
   TFx *clone(bool recursive = true) const override {
     auto *fx       = static_cast<NativeModelRenderFx *>(TFx::clone(recursive));
     fx->m_geometry = m_geometry;
     fx->m_camera   = m_camera;
+    fx->m_cageSource  = m_cageSource;
     fx->m_project  = m_project;
     fx->m_colorFilter = m_colorFilter;
     fx->m_key         = m_key;
@@ -439,13 +569,14 @@ public:
       const TRenderSettings *settings                      = nullptr,
       const otam::MaterialBindings *materials              = nullptr,
       const otam::InkBindings *ink = nullptr) const override {
-    if (!m_geometry || (canceled && *canceled)) return {};
+    const auto geometry = cageGeometry(settings, canceled);
+    if (!geometry || (canceled && *canceled)) return {};
     const otglb::LightingRig dark;
     if (settings && settings->m_flatRender)
       lighting = nullptr;
     else if (settings && settings->m_disableDefaultLighting && !lighting)
       lighting = &dark;
-    if (materials && !materials->empty() && !m_geometry->amMaterials)
+    if (materials && !materials->empty() && !geometry->amMaterials)
       throw std::runtime_error(
           "A:M Material requires a native A:M model source");
     // Resolve assignments against all patch memberships, including groups with
@@ -470,10 +601,10 @@ public:
         surfaces.push_back({binding.material.surface, binding.paletteColor});
         bool matched = false;
         std::set<std::size_t> visited;
-        for (const auto &triangle : m_geometry->triangles) {
+        for (const auto &triangle : geometry->triangles) {
           const auto p = triangle.patch;
           if (!visited.insert(p).second) continue;
-          const auto &groups = m_geometry->patchGroups;
+          const auto &groups = geometry->patchGroups;
           if (binding.group.empty() ||
               (p < groups.size() &&
                std::find(groups[p].begin(), groups[p].end(), binding.group) !=
@@ -501,11 +632,11 @@ public:
             matched     = true;
           }
         }
-        if (!matched && !m_geometry->triangles.empty())
+        if (!matched && !geometry->triangles.empty())
           throw std::runtime_error(
               "A:M Material group has no renderable patches: " + binding.group);
       }
-    otam::Mesh mesh = *m_geometry;
+    otam::Mesh mesh = *geometry;
     auto cameraPose = m_camera.pose;
     if (transforms)
       for (const auto &t : *transforms) {
@@ -579,7 +710,7 @@ public:
       groups.insert(patch.begin(), patch.end());
     groups.erase("");
     scene->materialGroups.assign(groups.begin(), groups.end());
-    groups = {m_geometry->splineGroups.begin(), m_geometry->splineGroups.end()};
+    groups = {geometry->splineGroups.begin(), geometry->splineGroups.end()};
     groups.erase("");
     scene->splineGroups.assign(groups.begin(), groups.end());
     scene->colorScale = {{m_colorFilter.r / 255.f, m_colorFilter.g / 255.f,
@@ -831,12 +962,17 @@ TRasterFx *makeAMLevelRenderFx(std::shared_ptr<const otam::Mesh> geometry) {
 }
 static TRasterFx *makeModelSnapshot(TXsheet *xsheet, int column, double frame,
                                     bool previewCamera, bool allowGlb) {
-  auto geometry = prepareModelGeometryImpl(xsheet, column, frame, false,
-                                           previewCamera, allowGlb);
+  AMLevelCagePose cagePose;
+  auto geometry =
+      prepareModelGeometryImpl(xsheet, column, frame, false, previewCamera,
+                               allowGlb, true, true, &cagePose);
   if (!geometry) return nullptr;
   auto fx = std::make_unique<NativeModelRenderFx>();
   fx->setGeometry(std::move(geometry), true,
                   amModelCamera(xsheet, frame, previewCamera));
+  if (cagePose.rest)
+    fx->setCageSource(std::move(cagePose),
+                      amModelPlacement(xsheet, column, frame));
   return fx.release();
 }
 TRasterFx *makeAMLevelRenderFx(TXsheet *xsheet, int column, double frame,
@@ -860,6 +996,19 @@ static TXshLevel *firstColumnLevel(TFx *fx) {
   if (!column || column->getRange(first, last) <= 0) return nullptr;
   return column->getCell(first).m_level.getPointer();
 }
+std::shared_ptr<const otam::Model> amCageSourceModel(TFx *fx, int row) {
+  while (fx && fx->getFxType() == "STD_amDistortionCageFx")
+    fx = fx->getInputPort(0)->getFx();
+  auto *levelFx = dynamic_cast<TLevelColumnFx *>(fx);
+  auto *column  = levelFx ? levelFx->getColumn() : nullptr;
+  if (!column) return {};
+  const auto cell = column->getCell(row);
+  auto *level =
+      cell.isEmpty() ? firstColumnLevel(fx) : cell.m_level.getPointer();
+  const auto *am = level ? level->getAMLevel() : nullptr;
+  return am ? am->editableModel() : nullptr;
+}
+
 bool isAMModelColumn(TFx *fx) {
   auto *level = firstColumnLevel(fx);
   return level && level->getAMLevel();

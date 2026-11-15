@@ -67,6 +67,9 @@
   <item>"STD_transform3DFx.scaleY" "Scale Y (%)" </item>
   <item>"STD_transform3DFx.scaleZ" "Scale Z (%)" </item>
   <item>"STD_transform3DFx.gizmoMode" "Canvas Gizmo" </item>
+  <item>"STD_amDistortionCageFx" "A:M Distortion Cage" </item>
+  <item>"STD_amDistortionCageFx.cage" "Cage" </item>
+  <item>"STD_amDistortionCageFx.strength" "Strength (%)" </item>
   <item>"STD_amMaterialFx" "A:M Material" </item>
   <item>"STD_amMaterialFx.overrideSpecular" "Override Specular" </item>
   <item>"STD_amMaterialFx.specularSize" "Specular Size (%)" </item>

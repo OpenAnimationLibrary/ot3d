@@ -14,9 +14,9 @@
 // The schematic connects a zerary column, whereas the render tree connects the
 // underlying FX. Keep the original column connection for ownership, exposure
 // and scene persistence; unwrap it only when checking/accessing the 3D source.
-class T3DSourcePort final : public TRasterFxPort,
-                            public TFxPortConnectionPolicy,
-                            private T3DRenderSource {
+class T3DSourcePort : public TRasterFxPort,
+                      public TFxPortConnectionPolicy,
+                      private T3DRenderSource {
   bool m_allowVector;
 
   static T3DRenderSource *resolve(TFx *fx) {

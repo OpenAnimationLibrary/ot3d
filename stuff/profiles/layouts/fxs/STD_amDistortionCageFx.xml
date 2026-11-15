@@ -1,0 +1,6 @@
+<fxlayout>
+  <page name="Distortion Cage">
+    <control>cage</control>
+    <control>strength</control>
+  </page>
+</fxlayout>

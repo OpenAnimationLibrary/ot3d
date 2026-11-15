@@ -1,6 +1,7 @@
 // Production FX and native-column regression, without an application or GL
 // context.
 #include "../../stdfx/ammaterialfx.cpp"
+#include "../../stdfx/amdistortioncagefx.cpp"
 #include "../../stdfx/inklinefx.cpp"
 #include "../../stdfx/transform3dfx.cpp"
 #include "../../stdfx/threepointlightfx.cpp"
@@ -203,6 +204,91 @@ void testVectorInkLine(const QTemporaryDir &temp) {
   require(line->getStyle() == red && loop->getStyle() == red,
           "rendering Ink Line changed the source drawing");
 }
+void testDistortionCage(const QTemporaryDir &temp) {
+  const auto path = temp.filePath("cage.mdl");
+  {
+    QFile file(path);
+    const auto source = amtest::rigidBoneSource();
+    require(
+        file.open(QIODevice::WriteOnly) &&
+            file.write(source.data(), source.size()) == qint64(source.size()),
+        "write distortion cage model fixture");
+  }
+  ToonzScene scene;
+  scene.setScenePath(TFilePath(temp.filePath("cage.tnz")));
+  auto *level = scene.loadLevel(TFilePath(path));
+  require(level && level->getAMLevel(), "load distortion cage model");
+  auto *xsheet = scene.getXsheet();
+  require(xsheet->setCell(0, 0, TXshCell(level, TFrameId(1))) &&
+              xsheet->setCell(8, 0, TXshCell(level, TFrameId(1))),
+          "expose cage model at its two keyframes");
+  auto *column     = xsheet->getColumn(0)->getFx();
+  const auto model = amCageSourceModel(column, 0);
+  require(model && model->bones.size() == 2, "missing source bone choices");
+  TFxP owner = new AMDistortionCageFx;
+  auto &cage = *static_cast<AMDistortionCageFx *>(owner.getPointer());
+  require(canConnectFxPort(cage.getInputPort(0), column),
+          "distortion cage rejects native source");
+  cage.getInputPort(0)->setFx(column);
+  const auto rest = cage.get3DRenderGeometry(0, nullptr);
+  require(rest && !rest->triangles.empty(), "cage bypass lost native geometry");
+
+  auto *state =
+      dynamic_cast<TStringParam *>(cage.getParams()->getParam("cage"));
+  require(state, "missing persistent cage settings");
+  otam::DistortionCage grid;
+  grid.sections = {1, 1, 1};
+  grid.bonePath = model->bones.front().path;
+  for (int x = 0; x <= 1; ++x)
+    for (int y = 0; y <= 1; ++y)
+      for (int z = 0; z <= 1; ++z) {
+        auto &points = grid.points[{x, y, z}];
+        points[0]    = {};
+        points[8]    = {0.5, 0, 0};
+      }
+  state->setValue(QString::fromStdString(otam::writeCage(grid)).toStdWString());
+  const auto deformed = cage.get3DRenderGeometry(8, nullptr);
+  require(deformed && deformed->bounds[0] > rest->bounds[0] + 1,
+          "animated bone cage did not move the projected mesh");
+
+  TRenderSettings info;
+  require(cage.getAlias(0, info) != cage.getAlias(8, info),
+          "cage keys share a render cache alias");
+  auto *terminals = xsheet->getFxDag()->getTerminalFxs();
+  terminals->removeFx(column);
+  xsheet->getFxDag()->getInternalFxs()->addFx(owner.getPointer());
+  terminals->addFx(owner.getPointer());
+  const auto from = render(scene, info, 0);
+  const auto to   = render(scene, info, 8);
+  require(coverage(from) > 0 && coverage(to) > 0, "cage output is empty");
+  bool changed = false;
+  for (int y = 0; y < from->getLy() && !changed; ++y)
+    for (int x = 0; x < from->getLx() && !changed; ++x)
+      changed = from->pixels(y)[x] != to->pixels(y)[x];
+  require(changed, "scene render ignored the cage deformation");
+
+  const TFilePath saved(temp.filePath("cage-settings.xml"));
+  {
+    TOStream out(saved);
+    out << owner.getPointer();
+  }
+  TPersist *persist = nullptr;
+  {
+    TIStream in(saved);
+    in >> persist;
+  }
+  TFxP recovered(dynamic_cast<TFx *>(persist));
+  require(recovered, "reload saved cage FX");
+  auto *savedState =
+      dynamic_cast<TStringParam *>(recovered->getParams()->getParam("cage"));
+  require(savedState && savedState->getValue() == state->getValue(),
+          "serialized FX lost cage edits or bone path");
+
+  set(cage, "strength", 0);
+  require(cage.get3DRenderGeometry(8, nullptr)->bounds == rest->bounds,
+          "zero strength changed input geometry");
+}
+
 void testInkLine(const QString &path) {
   {
     QFile file(path);
@@ -652,6 +738,7 @@ int main(int argc, char **argv) {
     require(isAMModelColumn(column), "native column classification");
     testMaterials(scene, level, column, temp.filePath("surface.mat"));
     testInkLine(temp.filePath("ink-lines.mdl"));
+    testDistortionCage(temp);
     testVectorInkLine(temp);
     testShine(scene, temp.filePath("shine.mat"));
     const auto original = level->getAMLevel()->mesh();

@@ -638,11 +638,13 @@ class DVAPI StringParamField final : public ParamField {
   component::MyTextEdit *m_multiTextFld = nullptr;
   bool m_glbFileControls                = false;
   bool m_amMaterialFileControls = false, m_amMaterialGroupControls = false;
+  bool m_amDistortionCageControls       = false;
   bool m_exrFileControls                = false;
   bool m_exrChoiceControls              = false;
   TFxAovChoiceKind m_exrChoiceKind      = TFxAovChoiceKind::Channel;
   TFxP m_actualFx;
   int m_frame = 0;
+  void setStringValue(const std::wstring &value);
 
 public:
   StringParamField(QWidget *parent, QString name, const TStringParamP &param);
@@ -651,6 +653,7 @@ public:
   void enableGlbFileControls();
   void enableAMMaterialFileControls();
   void enableAMMaterialGroupControls();
+  void enableAMDistortionCageControls();
 
   // Select/inspect an EXR, or choose a stable part/layer/channel value
   // discovered from the current EXR AOV source.
@@ -664,6 +667,7 @@ public:
   void update(int frame) override;
 
   QSize getPreferredSize() override {
+    if (m_amDistortionCageControls) return sizeHint();
     if (m_glbFileControls || m_amMaterialFileControls ||
         m_amMaterialGroupControls || m_exrFileControls || m_exrChoiceControls)
       return sizeHint().expandedTo(QSize(260, 54));

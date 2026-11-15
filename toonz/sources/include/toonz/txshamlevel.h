@@ -23,6 +23,15 @@ struct Action;
 struct BoneAnimation;
 }
 
+// Immutable inputs a Distortion Cage needs before skinning.
+struct AMLevelCagePose {
+  std::shared_ptr<const otam::Model> rest, actionPose;
+  std::shared_ptr<const otam::BoneAnimation> animation;
+  std::vector<otam::PlasticBone> plasticBones;
+  std::map<int, otam::Color> paletteColors;  // Group index, or -1.
+  double boneFrame = 0;
+};
+
 // Native A:M source with scene-local edits. Column/stage objects
 // own placement and animation. No conversion to a TXshSimpleLevel or GLB.
 class DVAPI TXshAMLevel final : public TXshLevel {
@@ -119,7 +128,7 @@ public:
       int frame, const std::shared_ptr<const otam::Action> &action,
       double seconds, const std::vector<otam::PlasticBone> &bones = {},
       const std::shared_ptr<const otam::BoneAnimation> &animation = {},
-      double boneFrame                                            = 0) const;
+      double boneFrame = 0, AMLevelCagePose *cagePose = nullptr) const;
   TPalette *getPalette() const { return m_palette.getPointer(); }
   // Called on the UI thread after palette edits. Renderers use the snapshot.
   bool updatePaletteColors();
