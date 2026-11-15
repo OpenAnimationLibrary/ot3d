@@ -151,12 +151,13 @@ public:
       const otglb::LightingRig *downstream                 = nullptr,
       const std::vector<otglb::ModelTransform> *transforms = nullptr,
       const TRenderSettings *settings                      = nullptr,
-      const otam::MaterialBindings *materials = nullptr) const override {
+      const otam::MaterialBindings *materials              = nullptr,
+      const otam::InkBindings *ink = nullptr) const override {
     auto *source = m_source.source();
     if (!source || (canceled && *canceled)) return {};
     if (!m_environment.isConnected() || (settings && settings->m_flatRender))
       return source->get3DRenderScene(frame, canceled, downstream, transforms,
-                                      settings, materials);
+                                      settings, materials, ink);
     auto map = environment(frame, canceled, settings);
     if (!map) return {};
     auto rig = downstream ? *downstream : otglb::LightingRig();
@@ -168,15 +169,16 @@ public:
     rig.environments.insert(rig.environments.begin(),
                             layer(frame, std::move(map)));
     return source->get3DRenderScene(frame, canceled, &rig, transforms, settings,
-                                    materials);
+                                    materials, ink);
   }
   std::shared_ptr<const otglb::RenderScene> get3DRenderGeometry(
       double frame, const int *canceled,
       const std::vector<otglb::ModelTransform> *transforms = nullptr,
-      const TRenderSettings *settings = nullptr) const override {
+      const TRenderSettings *settings                      = nullptr,
+      const otam::InkBindings *ink = nullptr) const override {
     auto *source = m_source.source();
     return source ? source->get3DRenderGeometry(frame, canceled, transforms,
-                                                settings)
+                                                settings, ink)
                   : nullptr;
   }
   bool doGetBBox(double frame, TRectD &bbox,

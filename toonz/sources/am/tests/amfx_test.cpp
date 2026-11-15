@@ -236,6 +236,9 @@ void testVectorInkLine(const QTemporaryDir &temp) {
   require(line->getStyle() == red && loop->getStyle() == red,
           "rendering Ink Line changed the source drawing");
 }
+std::shared_ptr<const otglb::RenderScene> evaluateEnvironment(
+    T3DRenderSource &fx, double frame, const TRenderSettings &settings);
+
 void testInkLine(const QString &path) {
   {
     QFile file(path);
@@ -313,6 +316,25 @@ void testInkLine(const QString &path) {
   require(before && moved && !before->empty() && !moved->empty() &&
               std::abs(moved->bounds[0] - before->bounds[0] - 20) < 1e-6,
           "downstream transform lost or failed to move ink bounds");
+
+  TFxP image       = new EnvironmentTestImageFx;
+  TFxP environment = new EnvironmentReflectionFx;
+  environment->getInputPort(0)->setFx(column);
+  ink.getInputPort(0)->setFx(environment.getPointer());
+  const auto bypassed = ink.get3DRenderScene(0, nullptr);
+  require(bypassed && !bypassed->empty(),
+          "disconnected environment dropped downstream ink");
+
+  environment->getInputPort(1)->setFx(image.getPointer());
+  const int computes = EnvironmentTestImageFx::computes;
+  TRectD inkBounds;
+  require(ink.doGetBBox(0, inkBounds, info) && !inkBounds.isEmpty() &&
+              EnvironmentTestImageFx::computes == computes,
+          "environment bounds dropped downstream ink or evaluated pixels");
+  const auto reflected = evaluateEnvironment(ink, 0, info);
+  require(reflected && !reflected->empty() &&
+              EnvironmentTestImageFx::computes > computes,
+          "active environment dropped downstream ink");
 }
 
 std::shared_ptr<const otglb::RenderScene> evaluateEnvironment(
