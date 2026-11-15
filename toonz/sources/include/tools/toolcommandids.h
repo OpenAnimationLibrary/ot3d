@@ -14,6 +14,7 @@
 #define T_Tape "T_Tape"
 #define T_StylePicker "T_StylePicker"
 #define T_RGBPicker "T_RGBPicker"
+#define T_AMBones "T_AMBones"
 #define T_ControlPointEditor "T_ControlPointEditor"
 #define T_Pinch "T_Pinch"
 #define T_Pump "T_Pump"

@@ -3070,6 +3070,7 @@ void MainWindow::defineActions() {
                    QT_TR_NOOP("Style Picker Tool"), "I");
   createToolAction(T_RGBPicker, "rgbpicker", QT_TR_NOOP("RGB Picker Tool"),
                    "Shift+I");
+  createToolAction(T_AMBones, "skeleton", QT_TR_NOOP("A:M Bones Tool"), "");
   createToolAction(T_ControlPointEditor, "controlpointeditor",
                    QT_TR_NOOP("Control Point Editor Tool"), "C");
   createToolAction(T_Pinch, "pinch", QT_TR_NOOP("Pinch Tool"), "M");
