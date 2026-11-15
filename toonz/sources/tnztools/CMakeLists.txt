@@ -23,6 +23,7 @@ set(HEADERS
     ${MOC_HEADERS}
     amtoolprojection.h
     autofill.h
+    typetooltext.h
     bluredbrush.h
     hookselection.h
     mypainttoonzbrush.h
@@ -118,6 +119,7 @@ set(SOURCES
     stylepickertool.cpp
     trackertool.cpp
     typetool.cpp
+    typetooltext.cpp
     tooloptionscontrols.cpp
     tooloptions.cpp
     vectorerasertool.cpp
