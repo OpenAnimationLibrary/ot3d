@@ -194,7 +194,8 @@ std::shared_ptr<const otam::Model> amModelAt(TXsheet *xsheet, int column,
 
 static std::shared_ptr<const otam::Mesh> prepareModelGeometryImpl(
     TXsheet *xsheet, int column, double frame, bool projectToCamera,
-    bool previewCamera, bool allowGlb, bool applyPlastic = true) {
+    bool previewCamera, bool allowGlb, bool applyPlastic = true,
+    bool applyNativeBones = true) {
   if (!xsheet || column < 0 || !validModelFrame(frame)) return {};
   const int row   = int(std::floor(frame));
   const auto cell = xsheet->getCell(row, column);
@@ -205,8 +206,13 @@ static std::shared_ptr<const otam::Mesh> prepareModelGeometryImpl(
     const auto binding = matchingAction(xsheet, column, cell.m_level);
     const auto bones   = applyPlastic ? amPlasticBones(xsheet, column, frame)
                                       : std::vector<otam::PlasticBone>();
-    mesh               = am->renderMesh(row, binding.action,
-                                        amActionTime(xsheet, binding.startRow, frame), bones);
+    auto *xcol         = xsheet->getColumn(column);
+    auto *levelColumn  = xcol ? xcol->getLevelColumn() : nullptr;
+    const auto rig = applyNativeBones && levelColumn ? levelColumn->getAMBones()
+                                                     : AMBoneBinding{};
+    mesh           = am->renderMesh(
+                  row, binding.action, amActionTime(xsheet, binding.startRow, frame),
+                  bones, rig.level == cell.m_level ? rig.animation : nullptr, frame);
     if (!mesh)
       throw std::runtime_error(
           am->error().empty() ? "A:M model source is not loaded" : am->error());
@@ -249,9 +255,9 @@ std::shared_ptr<const otam::Mesh> prepareAMLevelGeometry(TXsheet *xsheet,
 
 std::shared_ptr<const otam::Mesh> prepareNativeModelGeometry(
     TXsheet *xsheet, int column, double frame, bool projectToCamera,
-    bool applyPlastic) {
+    bool applyPlastic, bool applyNativeBones) {
   return prepareModelGeometryImpl(xsheet, column, frame, projectToCamera, false,
-                                  true, applyPlastic);
+                                  true, applyPlastic, applyNativeBones);
 }
 
 namespace {

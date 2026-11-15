@@ -2,6 +2,7 @@
 
 #include "toonz/txshlevelcolumn.h"
 #include "amaction.h"
+#include "ambones.h"
 #include "historytypes.h"
 #include "tundo.h"
 #include "toonz/tscenehandle.h"
@@ -124,6 +125,23 @@ void TXshLevelColumn::setAMAction(const AMActionBinding &binding) {
   if (binding.action)
     replacement = std::make_shared<const AMActionBinding>(binding);
   std::atomic_store(&m_amAction, std::move(replacement));
+}
+
+//-----------------------------------------------------------------------------
+
+AMBoneBinding TXshLevelColumn::getAMBones() const {
+  const auto binding = std::atomic_load(&m_amBones);
+  return binding ? *binding : AMBoneBinding{};
+}
+
+void TXshLevelColumn::setAMBones(const AMBoneBinding &binding) {
+  std::shared_ptr<const AMBoneBinding> replacement;
+  if (binding.animation && !binding.animation->tracks.empty()) {
+    if (!binding.level || !binding.level->getAMLevel())
+      throw TException("A:M bones: invalid column attachment");
+    replacement = std::make_shared<const AMBoneBinding>(binding);
+  }
+  std::atomic_store(&m_amBones, std::move(replacement));
 }
 
 //-----------------------------------------------------------------------------
@@ -257,6 +275,7 @@ TXshColumn *TXshLevelColumn::clone() const {
   column->setColorTag(getColorTag());
   column->setColorFilterId(getColorFilterId());
   column->setAMAction(getAMAction());
+  column->setAMBones(getAMBones());
   column->setVectorAction(getVectorAction());
 
   return column;
@@ -329,6 +348,26 @@ void TXshLevelColumn::loadData(TIStream &is) {
       binding.action =
           std::make_shared<const VectorAction>(VectorAction::read(bytes));
       setVectorAction(binding);
+    } else if (tagName == "amBoneAnimation") {
+      if (getAMBones().animation)
+        throw TException("A:M bones: duplicate column attachment");
+      TPersist *persist = nullptr;
+      std::string encoded;
+      is >> persist >> encoded;
+      auto *level = dynamic_cast<TXshLevel *>(persist);
+      if (!level || !level->getAMLevel() ||
+          encoded.size() > (otam::Limits().bytes + 2) / 3 * 4)
+        throw TException("A:M bones: invalid column attachment");
+      const auto bytes =
+          QByteArray::fromBase64(QByteArray::fromStdString(encoded),
+                                 QByteArray::AbortOnBase64DecodingErrors);
+      try {
+        setAMBones({TXshLevelP(level),
+                    std::make_shared<const otam::BoneAnimation>(
+                        otam::readBoneAnimation(bytes.toStdString()))});
+      } catch (const std::runtime_error &e) {
+        throw TException(e.what());
+      }
     } else if (tagName == "amAction") {
       if (getAMAction().action)
         throw TException("A:M action: duplicate column attachment");
@@ -441,6 +480,14 @@ void TXshLevelColumn::saveData(TOStream &os) {
     // Keep the native ACTIONFILE payload separate from the scene's tags.
     os.child("amAction") << binding.level.getPointer() << binding.path
                          << binding.startRow << bytes.toBase64().toStdString();
+  }
+
+  const auto bones = getAMBones();
+  if (bones.animation) {
+    const auto bytes =
+        QByteArray::fromStdString(otam::writeBoneAnimation(*bones.animation));
+    os.child("amBoneAnimation")
+        << bones.level.getPointer() << bytes.toBase64().toStdString();
   }
 
   const auto vectorBinding = getVectorAction();

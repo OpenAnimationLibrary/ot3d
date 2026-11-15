@@ -126,8 +126,10 @@ void HybridSceneViewer::drawScene() {
         const bool applyPlastic = plastic.m_applyPlasticDeformation &&
                                   plastic.m_showOriginalColumn != column &&
                                   i != editingPoints;
-        auto snapshot =
-            prepareNativeModelGeometry(xsheet, i, frame, !view3D, applyPlastic);
+        const bool applyNativeBones =
+            i != editingPoints && plastic.m_showOriginalColumn != column;
+        auto snapshot = prepareNativeModelGeometry(
+            xsheet, i, frame, !view3D, applyPlastic, applyNativeBones);
         if (!snapshot) continue;
         for (const auto &warning : snapshot->warnings)
           reportDiagnostic(QString::fromStdString(warning));

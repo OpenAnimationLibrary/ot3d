@@ -31,6 +31,7 @@ struct VectorActionPreview;
 
 namespace otam {
 struct Action;
+struct BoneAnimation;
 }
 
 struct AMActionBinding {
@@ -38,6 +39,11 @@ struct AMActionBinding {
   TFilePath path{};
   int startRow = 0;
   std::shared_ptr<const otam::Action> action;
+};
+
+struct AMBoneBinding {
+  TXshLevelP level;
+  std::shared_ptr<const otam::BoneAnimation> animation;
 };
 
 struct VectorActionBinding {
@@ -77,6 +83,7 @@ class DVAPI TXshLevelColumn final : public TXshCellColumn {
   TLevelColumnFx *m_fx;
   bool m_iconVisible;
   std::shared_ptr<const AMActionBinding> m_amAction;
+  std::shared_ptr<const AMBoneBinding> m_amBones;
   std::shared_ptr<const VectorActionBinding> m_vectorAction;
   std::shared_ptr<const VectorActionPreview> m_vectorActionPreview;
 
@@ -100,6 +107,8 @@ public:
 
   AMActionBinding getAMAction() const;
   void setAMAction(const AMActionBinding &binding);
+  AMBoneBinding getAMBones() const;
+  void setAMBones(const AMBoneBinding &binding);
 
   VectorActionBinding getVectorAction() const;
   void setVectorAction(const VectorActionBinding &binding);

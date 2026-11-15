@@ -9,6 +9,7 @@ add_library(otam STATIC
     ammodel.cpp ammodel.h
     ammaterial.cpp ammaterial.h
     amaction.cpp amaction.h
+    ambones.cpp ambones.h
     amink.cpp amink.h
 )
 target_compile_features(otam PUBLIC cxx_std_17)
