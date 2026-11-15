@@ -37,6 +37,11 @@ int main() {
         "110"));
     check(m.name == "Fixture" && m.version == "19.5", "material identity");
     near((*m.surface.diffuse)[0], 64.0 / 255);
+    const auto reflection = otam::parseMaterial(material(
+        "Reflectivity=75\nReflectivityFalloff=250\nReflectiveBlend=40"));
+    near(reflection.surface.reflectivity, .75);
+    near(reflection.surface.reflectivityFalloff, 250);
+    near(reflection.surface.reflectiveBlend, .4);
     near(m.surface.specularSize, 1.5);
     near(m.surface.transparency, .6);
     near(m.surface.refraction, 1.5);
