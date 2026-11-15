@@ -2,6 +2,7 @@
 // context.
 #include "../../stdfx/ammaterialfx.cpp"
 #include "../../stdfx/inklinefx.cpp"
+#include "../../stdfx/surfacesmoothing3dfx.cpp"
 #include "../../stdfx/transform3dfx.cpp"
 #include "../../stdfx/threepointlightfx.cpp"
 #include "../../stdfx/merge3dfx.cpp"
@@ -536,6 +537,68 @@ void testShine(ToonzScene &scene, const QString &path) {
   require(sample(0, rig).r < .001,
           "zero-intensity override did not suppress imported shine");
 }
+void testSurfaceSmoothing() {
+  auto mesh = std::make_shared<otam::Mesh>();
+  mesh->triangles.push_back(
+      {{{{-8, 0, 0}, {8, 0, 0}, {-8, 8, 0}}}, {.7f, .7f, .7f}, 0});
+  mesh->triangles.push_back(
+      {{{{8, 0, 0}, {-8, 0, 0}, {-8, -8, 4}}}, {.7f, .7f, .7f}, 1});
+  mesh->adjoiningPatches = {{0, 1}};
+  TRasterFxP native(makeAMLevelRenderFx(mesh));
+  ThreePointLightFx light;
+  // Use owned FX so the downstream ports hold and release references normally.
+  TFxP smoothingOwner = new SurfaceSmoothing3DFx;
+  auto &node =
+      *static_cast<SurfaceSmoothing3DFx *>(smoothingOwner.getPointer());
+  TFxP transformOwner = new Transform3DFx;
+  auto &middle = *static_cast<Transform3DFx *>(transformOwner.getPointer());
+  node.getInputPort(0)->setFx(native.getPointer());
+  middle.getInputPort(0)->setFx(&node);
+  light.getInputPort(0)->setFx(&middle);
+  set(light, "ambient", 0);
+  set(light, "fillIntensity", 0);
+  set(light, "rimIntensity", 0);
+  set(light, "keyAzimuth", 0);
+  set(light, "keyElevation", 30);
+  const auto result =
+      light.get3DRenderScene(0, nullptr, nullptr, nullptr, nullptr);
+  require(result && result->triangles.size() == 2 && bool(result->sampleShader),
+          "surface smoothing did not reach the native lighting path");
+  const auto seam = [&](const otglb::RenderScene &scene) {
+    return std::abs(scene.sampleShader(0, {1, 0, 0}).r -
+                    scene.sampleShader(1, {0, 1, 0}).r);
+  };
+  require(seam(*result) < 1e-6, "smoothed shading did not meet at the edge");
+  const auto baked = node.get3DRenderScene(0, nullptr);
+  require(baked && bool(baked->sampleShader), "standalone smoothing is unlit");
+  TRenderSettings info;
+  TRectD bounds;
+  require(node.doGetBBox(0, bounds, info) && bounds.getLx() == 16 &&
+              bounds.getLy() == 16,
+          "smoothing changed native model bounds");
+  const auto alias = node.getAlias(0, info);
+  set(node, "creaseAngle", 5);
+  const auto sharp =
+      light.get3DRenderScene(0, nullptr, nullptr, nullptr, nullptr);
+  require(sharp && seam(*sharp) > 0.01 && sharp->bounds == result->bounds,
+          "crease limit did not preserve hard shading");
+  set(node, "strength", 0);
+  const auto bypass = node.get3DRenderScene(0, nullptr);
+  require(bypass && !bypass->sampleShader &&
+              bypass->triangles[0].color == mesh->triangles[0].color &&
+              node.getAlias(0, info) != alias && !mesh->triangles[0].hasNormals,
+          "smoothing bypass changed source data or reused the active alias");
+  set(node, "strength", 100);
+  info.m_flatRender = true;
+  const auto flat = node.get3DRenderScene(0, nullptr, nullptr, nullptr, &info);
+  require(flat && !flat->sampleShader &&
+              flat->triangles[0].color == mesh->triangles[0].color,
+          "Flat Render did not bypass surface smoothing");
+  const int canceled = 1;
+  require(!node.get3DRenderScene(0, &canceled),
+          "smoothing FX ignored cancellation");
+}
+
 void testRenderModes(ToonzScene &scene, TXshLevel *level, const QString &path) {
   auto *sheet  = scene.getXsheet();
   auto *column = sheet->getColumn(0)->getFx();
@@ -654,6 +717,7 @@ int main(int argc, char **argv) {
     testInkLine(temp.filePath("ink-lines.mdl"));
     testVectorInkLine(temp);
     testShine(scene, temp.filePath("shine.mat"));
+    testSurfaceSmoothing();
     const auto original = level->getAMLevel()->mesh();
     TFxP transformOwner = new Transform3DFx;
     auto &transform =

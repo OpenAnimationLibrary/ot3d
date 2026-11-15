@@ -186,12 +186,13 @@ public:
       const std::vector<otglb::ModelTransform> *transforms = nullptr,
       const TRenderSettings *settings                      = nullptr,
       const otam::MaterialBindings *materials              = nullptr,
-      const otam::InkBindings *downstream = nullptr) const override {
+      const otam::InkBindings *downstream                  = nullptr,
+      const otam::NormalSmoothingStack *smoothing = nullptr) const override {
     const auto *source = m_source.source();
     if (!source || (canceled && *canceled)) return {};
     const auto ink = bindings(frame, downstream);
     return source->get3DRenderScene(frame, canceled, lighting, transforms,
-                                    settings, materials, &ink);
+                                    settings, materials, &ink, smoothing);
   }
 
   std::shared_ptr<const otglb::RenderScene> get3DRenderGeometry(

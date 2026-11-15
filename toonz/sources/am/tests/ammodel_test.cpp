@@ -172,6 +172,62 @@ void testInk(const otam::Mesh &filled) {
   check(otam::strokeSplines(mesh, {ink}, nullptr, identity, &canceled).empty(),
         "ink ignored cancellation");
 }
+void testSurfaceSmoothing() {
+  otam::Mesh original;
+  const double depth = std::sqrt(1.0 / 3.0);
+  original.triangles.push_back(
+      {{{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}}}, {1, 0, 0}, 0});
+  // Round-off in the shared vertices is representative of patch boundaries.
+  original.triangles.push_back(
+      {{{{1, 0, 0}, {0, 6e-16, 0}, {0, -1, depth}}}, {0, 1, 0}, 1});
+  original.triangles.push_back(
+      {{{{0, 0, 0}, {2, 0, 0}, {2, 0, 1}}}, {0, 0, 1}, 2});
+  original.adjoiningPatches = {{0, 1}};
+
+  auto smooth = original;
+  check(otam::smoothNormals(smooth, {1, 55}), "normal smoothing failed");
+  const auto &left  = smooth.triangles[0].normals;
+  const auto &right = smooth.triangles[1].normals;
+  check(left[0] == right[1] && left[1] == right[0] && left[0][1] > 0.2,
+        "smooth boundary has discontinuous normals");
+  check(left[2] == otam::Vec3{0, 0, 1} &&
+            smooth.triangles[2].normals[0] == otam::Vec3{0, -1, 0},
+        "normals crossed a vertex-only join");
+  for (std::size_t i = 0; i < smooth.triangles.size(); ++i) {
+    check(smooth.triangles[i].vertices == original.triangles[i].vertices &&
+              smooth.triangles[i].color == original.triangles[i].color &&
+              smooth.triangles[i].patch == original.triangles[i].patch,
+          "normal smoothing changed source geometry or patch metadata");
+  }
+
+  auto half = original;
+  otam::smoothNormals(half, {0.5, 55});
+  check(half.triangles[0].normals[0][1] > 0.05 &&
+            half.triangles[0].normals[0][1] < left[0][1],
+        "strength did not blend smoothly");
+  auto sharp = original;
+  otam::smoothNormals(sharp, {1, 10});
+  check(sharp.triangles[0].normals[0] == otam::Vec3{0, 0, 1},
+        "crease threshold changed a hard edge");
+  auto disconnected = original;
+  disconnected.adjoiningPatches.clear();
+  otam::smoothNormals(disconnected, {1, 55});
+  check(disconnected.triangles[0].normals[0] == otam::Vec3{0, 0, 1},
+        "coincident A:M patches without a shared CP edge were smoothed");
+  disconnected.amMaterials = false;
+  otam::smoothNormals(disconnected, {1, 55});
+  check(disconnected.triangles[0].normals[0] == left[0],
+        "native GLB mesh did not smooth across a shared edge");
+
+  auto bypass = original;
+  otam::smoothNormals(bypass, {0, 55});
+  check(!bypass.triangles[0].hasNormals,
+        "zero strength changed source normals");
+  const int canceled = 1;
+  check(!otam::smoothNormals(bypass, {1, 55}, &canceled),
+        "normal smoothing ignored cancellation");
+}
+
 void testSplineProfile() {
   otam::Mesh mesh;
   mesh.splineGroups     = {"Middle"};
@@ -290,6 +346,7 @@ int main() {
     testPlasticBones();
     testSpatialPlasticBones();
     testSplineProfile();
+    testSurfaceSmoothing();
     near(mesh.triangles[0].color[0], 1);
     near(mesh.triangles[0].color[1], 0);
     for (const auto &t : mesh.triangles)

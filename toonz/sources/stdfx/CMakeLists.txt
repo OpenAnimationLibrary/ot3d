@@ -171,6 +171,7 @@ set(SOURCES
     texturefx.cpp
     ammaterialfx.cpp
     inklinefx.cpp
+    surfacesmoothing3dfx.cpp
     threepointlightfx.cpp
     merge3dfx.cpp
     tilefx.cpp

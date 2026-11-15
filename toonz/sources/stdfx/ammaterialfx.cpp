@@ -198,7 +198,8 @@ public:
       const std::vector<otglb::ModelTransform> *transforms = nullptr,
       const TRenderSettings *settings                      = nullptr,
       const otam::MaterialBindings *downstream             = nullptr,
-      const otam::InkBindings *ink = nullptr) const override {
+      const otam::InkBindings *ink                         = nullptr,
+      const otam::NormalSmoothingStack *smoothing = nullptr) const override {
     auto *source = m_source.source();
     if (!source || (canceled && *canceled)) return {};
     otam::MaterialBindings materials;
@@ -210,7 +211,7 @@ public:
       throw std::runtime_error("A:M material chain exceeds 64 assignments");
     return source->get3DRenderScene(
         frame, canceled, lighting, transforms, settings,
-        materials.empty() ? nullptr : &materials, ink);
+        materials.empty() ? nullptr : &materials, ink, smoothing);
   }
   std::shared_ptr<const otglb::RenderScene> get3DRenderGeometry(
       double frame, const int *canceled,
