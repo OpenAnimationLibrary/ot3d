@@ -204,6 +204,7 @@ class ArrowToolOptionsBox final : public ToolOptionsBox {
   ToolOptionCombo *m_pickCombo;
   // enable to choose the target pegbar from the combobox
   QComboBox *m_currentStageObjectCombo;
+  QToolButton *m_amBonesButton;
 
   // Position
   PegbarChannelField *m_motionPathPosField;
@@ -286,6 +287,7 @@ protected:
 
   void setSplined(bool on);
   bool isCurrentObjectSplined() const;
+  bool canPoseAMBones() const;
 
 protected slots:
   void onFrameSwitched() { updateStatus(); }
