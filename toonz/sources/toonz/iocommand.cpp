@@ -1058,7 +1058,7 @@ TFilePath saveRepairedAMModel(const TFilePath &source,
                                 QMessageBox::AcceptRole);
   prompt.setDefaultButton(QMessageBox::Cancel);
   prompt.exec();
-  if (prompt.clickedButton() != save) return {};
+  if (prompt.clickedButton() != save) return TFilePath();
 
   QString suggested = info.dir().filePath(info.completeBaseName() +
                                           QStringLiteral("_repaired.mdl"));
@@ -1067,7 +1067,7 @@ TFilePath saveRepairedAMModel(const TFilePath &source,
         parent, QObject::tr("Save Repaired A:M Model"), suggested,
         QObject::tr("Animation:Master Models (*.mdl)"), nullptr,
         QFileDialog::DontConfirmOverwrite);
-    if (path.isEmpty()) return {};
+    if (path.isEmpty()) return TFilePath();
     if (QFileInfo(path).suffix().isEmpty()) path += QStringLiteral(".mdl");
     const QFileInfo destination(path);
     if (destination.suffix().compare(QStringLiteral("mdl"),
