@@ -405,6 +405,41 @@ int main(int argc, char **argv) {
       check(scene.getLevelSet()->getLevelCount() == castCount,
             "failed model load left a phantom Scene Cast resource");
     }
+    {
+      auto mixed = QByteArray::fromStdString(amtest::source);
+      mixed.replace("262145 1 3 2 . .", "262145 1 3 2 . 0 0 1.02");
+      QFile original(temp.filePath("mixed.MDL"));
+      check(original.open(QIODevice::WriteOnly) &&
+                original.write(mixed) == mixed.size(),
+            "write mixed tangent fixture");
+      original.close();
+
+      bool offered = false;
+      QFile repaired(temp.filePath("mixed_repaired.mdl"));
+      try {
+        scene.loadLevel(TFilePath(original.fileName()));
+      } catch (const AMModelRepairNeeded &e) {
+        offered = true;
+        check(e.repair.count == 1 && e.repair.firstPoint == 3 &&
+                  scene.getLevelSet()->getLevelCount() == castCount,
+              "repairable model was added to the cast or misdiagnosed");
+        check(original.open(QIODevice::ReadOnly) && original.readAll() == mixed,
+              "checking the model changed the original source");
+        const auto size = qint64(e.repair.source.size());
+        check(repaired.open(QIODevice::WriteOnly) &&
+                  repaired.write(e.repair.source.data(), size) == size,
+              "write repaired fixture");
+        repaired.close();
+      }
+      check(offered, "scene loader did not expose the repair proposal");
+      ToonzScene repairScene;
+      repairScene.setScenePath(scene.getScenePath());
+      auto *copy = repairScene.loadLevel(TFilePath(repaired.fileName()));
+      check(copy && copy->getAMLevel() && copy->getAMLevel()->mesh() &&
+                repairScene.decodeFilePath(copy->getPath()) ==
+                    TFilePath(repaired.fileName()),
+            "repaired copy did not load as a separate model source");
+    }
     auto sourceMesh = level->mesh();
     auto *xsheet    = scene.getXsheet();
     check(xsheet->setCell(0, 0, TXshCell(level, TFrameId(1))), "expose model");

@@ -546,6 +546,65 @@ int main() {
         replace(source, "262145 1 3 2 . .", "262145 0 3 1 -1 0 . ."));
     check(duplicate.models[0].points[2].head == 2, "coincident CPs welded");
     check(!mesh.warnings.empty(), "approximation not diagnosed");
+    {
+      const std::string incoming = "262145 1 3 2\t. 0 0 1.02";
+      const std::string outgoing = "262145 0 4 1 1 0 10 -20 0.95\t.";
+      auto mixed = replace(source, "262145 1 3 2 . .", incoming);
+      mixed      = replace(mixed, "262145 0 4 1 1 0 . .", outgoing);
+      for (std::size_t pos = 0;
+           (pos = mixed.find('\n', pos)) != std::string::npos; pos += 2)
+        mixed.insert(pos, 1, '\r');
+      mixed                = replace(mixed, "</MODELFILE>",
+                                     "\r\n<FileInfo>Preserved</FileInfo>\r\n</MODELFILE>");
+      const auto oldOffset = mixed.find("<FileInfo>");
+      mixed                = replace(
+                         mixed, "</MODELFILE>",
+                         "FileInfoPos=" + std::to_string(oldOffset) + "\r\n</MODELFILE>");
+      bool offered = false;
+      try {
+        otam::parse(mixed);
+      } catch (const otam::MixedBiasError &e) {
+        offered            = true;
+        const auto &repair = e.repair;
+        check(repair.count == 2 && repair.firstPoint == 3 &&
+                  repair.firstLine == 11,
+              "missing mixed tangent diagnosis");
+        auto expected =
+            replace(mixed, incoming, "262145 1 3 2\t0 0 1 0 0 1.02");
+        expected =
+            replace(expected, outgoing, "262145 0 4 1 1 0 10 -20 0.95\t0 0 1");
+        expected = replace(expected, "FileInfoPos=" + std::to_string(oldOffset),
+                           "FileInfoPos=" + std::to_string(oldOffset + 8));
+        check(repair.source == expected,
+              "repair changed unrelated source bytes");
+        const auto repaired = otam::parse(repair.source);
+        const auto &points  = repaired.models.front().points;
+        check(points[2].bias == std::array<double, 6>{{0, 0, 1, 0, 0, 1.02}} &&
+                  points[3].bias ==
+                      std::array<double, 6>{{10, -20, 0.95, 0, 0, 1}},
+              "repaired source lost the incoming or outgoing tangent");
+      }
+      check(offered, "mixed tangents did not produce a repair proposal");
+
+      try {
+        otam::parse(replace(mixed, "24 1 2 4 6", "24 1 2 4 99"));
+        throw std::logic_error("a model with invalid topology was accepted");
+      } catch (const otam::MixedBiasError &) {
+        throw std::logic_error(
+            "repair offered for a model with invalid topology");
+      } catch (const std::runtime_error &) {
+      }
+    }
+    {
+      bool identified = false;
+      try {
+        otam::parse(replace(source, "262145 1 3 2 . .", "262161 1 3 0.5 2"));
+      } catch (const std::runtime_error &e) {
+        identified = std::string(e.what()).find(
+                         "spline hook at CP 3 (line 11)") != std::string::npos;
+      }
+      check(identified, "spline hook was not diagnosed as unsupported");
+    }
     rejects(
         [&] { otam::parse(replace(source, "262145 1 3 2", "262145 1 3 9")); });
     rejects([&] {

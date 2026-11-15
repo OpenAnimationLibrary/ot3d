@@ -3,6 +3,7 @@
 #include <array>
 #include <cstdint>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -116,6 +117,20 @@ struct Document {
   std::vector<Model> models;
   std::vector<std::string> warnings;
   std::string version;
+};
+
+struct MixedBiasRepair {
+  std::string source;
+  std::size_t count, firstLine;
+  Id firstPoint;
+};
+
+// The model was otherwise parsed successfully. The source in the repair
+// expands compact defaults without changing the authored tangent values.
+class MixedBiasError : public std::runtime_error {
+public:
+  MixedBiasRepair repair;
+  explicit MixedBiasError(MixedBiasRepair repair);
 };
 struct Triangle {
   std::array<Vec3, 3> vertices;
