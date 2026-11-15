@@ -52,6 +52,11 @@ bool validPointValue(const TXshAMLevel::PointValue &value) {
 }
 }  // namespace
 
+AMModelRepairNeeded::AMModelRepairNeeded(const std::string &message,
+                                         otam::MixedBiasRepair repair)
+    : TException(message), repair(std::move(repair)) {}
+AMModelRepairNeeded::~AMModelRepairNeeded() = default;
+
 TXshAMLevel::TXshAMLevel(std::wstring name)
     : TXshLevel(m_classCode, name), m_palette(new TPalette) {
   m_type = AM_XSHLEVEL;
@@ -243,7 +248,7 @@ void TXshAMLevel::load() {
     updatePaletteColorsLocked();
     m_revision = revision;
     m_error.clear();
-  } catch (const std::exception &e) {
+  } catch (std::exception &e) {
     std::lock_guard<std::mutex> lock(m_mutex);
     // Do not silently render stale geometry after a failed explicit reload.
     m_document.reset();
@@ -256,6 +261,8 @@ void TXshAMLevel::load() {
     m_plasticSample = {};
     m_revision.clear();
     m_error = "A:M model " + path.getQString().toStdString() + ": " + e.what();
+    if (auto *mixedBias = dynamic_cast<otam::MixedBiasError *>(&e))
+      throw AMModelRepairNeeded(m_error, std::move(mixedBias->repair));
     throw TException(m_error);
   }
 }

@@ -2,6 +2,7 @@
 
 #include "toonz/txshlevel.h"
 #include "ammodel.h"
+#include "texception.h"
 #include "tpalette.h"
 #include <map>
 #include <mutex>
@@ -21,6 +22,13 @@
 namespace otam {
 struct Action;
 }
+
+class DVAPI AMModelRepairNeeded final : public TException {
+public:
+  const otam::MixedBiasRepair repair;
+  AMModelRepairNeeded(const std::string &message, otam::MixedBiasRepair repair);
+  ~AMModelRepairNeeded() override;
+};
 
 // Native A:M source with scene-local edits. Column/stage objects
 // own placement and animation. No conversion to a TXshSimpleLevel or GLB.

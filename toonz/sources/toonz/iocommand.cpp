@@ -102,7 +102,11 @@
 #include <QPushButton>
 #include <QApplication>
 #include <QClipboard>
+#include <QDir>
 #include <QDirIterator>
+#include <QFileDialog>
+#include <QFileInfo>
+#include <QTemporaryFile>
 
 // boost includes
 #include <boost/optional.hpp>
@@ -450,7 +454,8 @@ int getLevelType(const TFilePath &actualPath) {
 //---------------------------------------------------------------------------
 
 void removeSameNamedUnusedLevel(ToonzScene *scene, const TFilePath actualPath,
-                                std::wstring levelName) {
+                                std::wstring levelName,
+                                TXshLevel *replacement = nullptr) {
   if (QString::fromStdWString(levelName).isEmpty()) {
     // if the option is set in the preferences,
     // remove the scene numbers("c####_") from the file name
@@ -463,10 +468,11 @@ void removeSameNamedUnusedLevel(ToonzScene *scene, const TFilePath actualPath,
   while (1) {
     TXshLevel *existingLevel = levelSet->getLevel(levelName);
     // if the level name is not used in the cast, nothing to do
-    if (!existingLevel) return;
+    if (!existingLevel || existingLevel == replacement) return;
     // try if the existing level is unused in the xsheet and remove from the
     // cast
     else if (LevelCmd::removeLevelFromCast(existingLevel, scene, false)) {
+      if (replacement) levelSet->renameLevel(replacement, levelName);
       DVGui::info(QObject::tr("Removed unused level %1 from the scene cast. "
                               "(This behavior can be disabled in Preferences.)")
                       .arg(QString::fromStdWString(levelName)));
@@ -1029,6 +1035,68 @@ TXshLevel *loadChildLevel(ToonzScene *parentScene, TFilePath actualPath,
 // for loading the all types of level other than scene/palette/sound
 //---------------------------------------------------------------------------
 
+TFilePath saveRepairedAMModel(const TFilePath &source,
+                              const otam::MixedBiasRepair &repair) {
+  const QFileInfo info(source.getQString());
+  QWidget *parent = QApplication::activeModalWidget();
+  if (!parent) parent = TApp::instance()->getMainWindow();
+  QMessageBox prompt(
+      QMessageBox::Warning, QObject::tr("Repair A:M Model"),
+      QObject::tr("'%1' contains %n control point record(s) that mix a "
+                  "default spline tangent with a custom one.",
+                  nullptr, int(repair.count))
+          .arg(info.fileName()),
+      QMessageBox::Cancel, parent);
+  prompt.setTextFormat(Qt::PlainText);
+  prompt.setInformativeText(
+      QObject::tr("The first affected control point is %1 on line %2. "
+                  "OT3D can expand the default values and load a corrected "
+                  "copy while keeping the original file intact.")
+          .arg(qlonglong(repair.firstPoint))
+          .arg(qulonglong(repair.firstLine)));
+  auto *save = prompt.addButton(QObject::tr("Save Repaired Copy…"),
+                                QMessageBox::AcceptRole);
+  prompt.setDefaultButton(QMessageBox::Cancel);
+  prompt.exec();
+  if (prompt.clickedButton() != save) return {};
+
+  QString suggested = info.dir().filePath(info.completeBaseName() +
+                                          QStringLiteral("_repaired.mdl"));
+  while (true) {
+    QString path = QFileDialog::getSaveFileName(
+        parent, QObject::tr("Save Repaired A:M Model"), suggested,
+        QObject::tr("Animation:Master Models (*.mdl)"), nullptr,
+        QFileDialog::DontConfirmOverwrite);
+    if (path.isEmpty()) return {};
+    if (QFileInfo(path).suffix().isEmpty()) path += QStringLiteral(".mdl");
+    const QFileInfo destination(path);
+    if (destination.suffix().compare(QStringLiteral("mdl"),
+                                     Qt::CaseInsensitive) != 0 ||
+        destination.exists() || destination.isSymLink()) {
+      DVGui::warning(
+          QObject::tr("Choose a new file name with the .mdl extension."));
+      suggested = path;
+      continue;
+    }
+
+    QTemporaryFile file(
+        destination.dir().filePath(QStringLiteral(".ot3d-am-repair-XXXXXX")));
+    const auto size = qint64(repair.source.size());
+    path            = destination.absoluteFilePath();
+    // Publish the complete copy with a rename that cannot replace a file.
+    if (!file.open() || file.write(repair.source.data(), size) != size ||
+        !file.flush() || !file.rename(path))
+      throw TException(
+          QObject::tr("Could not save the repaired model to %1.\n%2")
+              .arg(path, file.errorString())
+              .toStdWString());
+    file.setAutoRemove(false);
+    const TFilePath repaired(path.toStdWString());
+    FileBrowser::refreshFolder(repaired.getParentDir());
+    return repaired;
+  }
+}
+
 TXshLevel *loadLevel(
     ToonzScene *scene, const IoCmd::LoadResourceArguments::ResourceData &rd,
     const TFilePath &castFolder, int row0, int &col0, int row1, int &col1,
@@ -1050,8 +1118,11 @@ TXshLevel *loadLevel(
   bool isFirstTime  = !xl;
   std::wstring name = actualPath.getWideName();
 
-  if (isFirstTime && expose && !modelPosition &&
-      Preferences::instance()->isAutoRemoveUnusedLevelsEnabled()) {
+  const bool removeUnused =
+      isFirstTime && expose && !modelPosition &&
+      Preferences::instance()->isAutoRemoveUnusedLevelsEnabled();
+  const bool isAM = actualPath.getType() == "mdl";
+  if (removeUnused && !isAM) {
     removeSameNamedUnusedLevel(scene, actualPath, levelName);
   }
 
@@ -1067,17 +1138,28 @@ TXshLevel *loadLevel(
       std::string format = actualPath.getType();
       if (format == "tzp" || format == "tzu") convertingPopup->show();
 
-      // SVGs are treated as PLI. Ignore the fIds lists
-      if (format != "svg" && fIds.size() != 0 && doesFileActuallyExist)
-        xl = scene->loadLevel(actualPath, rd.m_options ? &*rd.m_options : 0,
-                              levelName, fIds);
-      else
-        xl = scene->loadLevel(actualPath, rd.m_options ? &*rd.m_options : 0);
+      auto readLevel = [&] {
+        const auto *options = rd.m_options ? &*rd.m_options : nullptr;
+        // SVGs are treated as PLI. Ignore the fIds lists.
+        if (format != "svg" && !fIds.empty() && doesFileActuallyExist)
+          return scene->loadLevel(actualPath, options, levelName, fIds);
+        return scene->loadLevel(actualPath, options);
+      };
+      try {
+        xl = readLevel();
+      } catch (const AMModelRepairNeeded &e) {
+        actualPath = saveRepairedAMModel(actualPath, e.repair);
+        if (actualPath.isEmpty()) return nullptr;
+        xl = readLevel();
+      }
       if (!xl) {
         error("Failed to create level " + toQString(actualPath) +
               " : this filetype is not supported.");
         return 0;
       }
+
+      if (removeUnused && isAM)
+        removeSameNamedUnusedLevel(scene, actualPath, levelName, xl);
 
       TXshSimpleLevel *sl = xl->getSimpleLevel();
       if (sl && sl->isReadOnly() &&
@@ -3086,9 +3168,11 @@ int IoCmd::loadResources(LoadResourceArguments &args, bool updateRecentFile,
                          args.expose, rds[i].m_frameIdSet, args.xFrom, args.xTo,
                          args.levelName, args.step, args.inc, args.frameCount,
                          args.doesFileActuallyExist, args.modelPosition);
-      if (updateRecentFile) {
+      if (updateRecentFile && (path.getType() != "mdl" || xl)) {
         RecentFiles::instance()->addFilePath(
-            toQString(scene->decodeFilePath(path)), RecentFiles::Level);
+            toQString(scene->decodeFilePath(
+                xl && xl->getAMLevel() ? xl->getPath() : path)),
+            RecentFiles::Level);
       }
     } catch (TException &e) {
       error(QString::fromStdWString(e.getMessage()));
@@ -3765,6 +3849,10 @@ public:
     args.cachingBehavior = (IoCmd::LoadResourceArguments::CacheRasterBehavior)
                                Preferences::instance()
                                    ->getRasterLevelCachingBehavior();
+    if (TFilePath(path.toStdWString()).getType() == "mdl") {
+      IoCmd::loadResources(args);
+      return;
+    }
     IoCmd::loadResources(args, false);
 
     RecentFiles::instance()->moveFilePath(index, 0, RecentFiles::Level);

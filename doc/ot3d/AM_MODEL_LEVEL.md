@@ -17,6 +17,11 @@ separate Import A:M command or plugin is needed. Numeric filename suffixes and
 Unicode paths are retained. Loading still follows the Auto Expose preference:
 when it is off, use Scene Cast **Expose** to place the loaded model in the Xsheet.
 Missing or unsupported models report an error rather than creating empty levels.
+If a control point mixes a compact default tangent with a custom tangent,
+OT3D reports the first affected control point and the number of affected
+records. Choose **Save Repaired Copy…** to expand the defaults and load the
+new `.mdl` while keeping the original file intact. Spline hooks are reported
+with their control point and line number. They require native hook evaluation.
 
 Select its column and choose the **Animate Tool**. Position uses existing X/Y/Z.
 Rotation adds **Rx/Ry**, with existing Angle presented as **Rz**. Scale adds **Z**
