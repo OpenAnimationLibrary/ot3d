@@ -33,6 +33,7 @@
 #include "../toonz/menubarcommandids.h"
 
 // TnzLib includes
+#include "toonz/tcolumnhandle.h"
 #include "toonz/tobjecthandle.h"
 #include "toonz/tstageobject.h"
 #include "toonz/txsheethandle.h"
@@ -531,6 +532,20 @@ ArrowToolOptionsBox::ArrowToolOptionsBox(
   }
   m_amRotationButton->hide();
 
+  m_amBonesButton = new QToolButton(this);
+  m_amBonesButton->setText(tr("A:M Bones"));
+  m_amBonesButton->setToolTip(
+      tr("Switch to the A:M Bones Tool for this model."));
+  m_amBonesButton->hide();
+  connect(m_amBonesButton, &QToolButton::clicked, this, [this] {
+    if (!canPoseAMBones()) return;
+    auto *action = CommandManager::instance()->getAction(T_AMBones);
+    if (!action) return;
+    const int column = m_objHandle->getObjectId().getIndex();
+    TTool::getApplication()->getCurrentColumn()->setColumnIndex(column);
+    action->trigger();
+  });
+
   /* --- Scale --- */
   m_globalScaleField =
       new PegbarChannelField(m_tool, TStageObject::T_Scale, "field",
@@ -665,6 +680,7 @@ ArrowToolOptionsBox::ArrowToolOptionsBox(
   {
     mainLay->addWidget(m_currentStageObjectCombo, 0);
     mainLay->addWidget(m_amRotationButton, 0);
+    mainLay->addWidget(m_amBonesButton, 0);
     mainLay->addWidget(m_chooseActiveAxisCombo, 0);
 
     // Pick combobox only available on "All" axis mode
@@ -1002,6 +1018,15 @@ bool ArrowToolOptionsBox::isCurrentObjectSplined() const {
 
 //-----------------------------------------------------------------------------
 
+bool ArrowToolOptionsBox::canPoseAMBones() const {
+  const auto id = m_objHandle->getObjectId();
+  if (!id.isColumn() || !m_frameHandle->isEditingScene()) return false;
+  auto *tool = TTool::getTool(T_AMBones, TTool::AMModel);
+  if (!tool || tool->getName() != T_AMBones) return false;
+  tool->updateEnabled(m_frameHandle->getFrame(), id.getIndex());
+  return tool->isEnabled();
+}
+
 void ArrowToolOptionsBox::updateStatus() {
   auto *object =
       m_xshHandle->getXsheet()->getStageObject(m_objHandle->getObjectId());
@@ -1020,6 +1045,7 @@ void ArrowToolOptionsBox::updateStatus() {
   if (object && objectId.isColumn()) object->enableAMTransform(model);
   const bool spatial = model || objectId.isCamera();
   m_amRotationButton->setVisible(spatial);
+  m_amBonesButton->setVisible(model && canPoseAMBones());
   m_amRotationXLabel->setVisible(spatial);
   m_amRotationXField->setVisible(spatial);
   m_amRotationXField->setEnabled(spatial);

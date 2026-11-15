@@ -76,8 +76,8 @@ public:
     return !bbox.isEmpty();
   }
   bool canHandle(const TRenderSettings &, double) override { return true; }
-  bool toBeComputedInLinearColorSpace(bool, bool) const override {
-    return false;
+  bool toBeComputedInLinearColorSpace(bool, bool tileIsLinear) const override {
+    return tileIsLinear;
   }
   int getMemoryRequirement(const TRectD &rect, double,
                            const TRenderSettings &) override {

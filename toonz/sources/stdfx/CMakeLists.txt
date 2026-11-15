@@ -171,6 +171,9 @@ set(SOURCES
     texturefx.cpp
     ammaterialfx.cpp
     inklinefx.cpp
+    imagebasedlightingfx.cpp
+    environmentreflectionfx.cpp
+    environmentfx.h
     surfacesmoothing3dfx.cpp
     threepointlightfx.cpp
     merge3dfx.cpp

@@ -1,4 +1,5 @@
 #include "ammodel.h"
+#include "ambones.h"
 #include "amink.h"
 #include "amfixture.h"
 #include <algorithm>
@@ -30,6 +31,86 @@ std::string replace(std::string s, const std::string &a, const std::string &b) {
   s.replace(pos, a.size(), b);
   return s;
 }
+void testNativeBones() {
+  const auto fixture = amtest::rigidBoneSource();
+  const auto doc     = otam::parse(fixture);
+  const auto &rest   = doc.models.front();
+  check(doc.source == fixture && rest.bones.size() == 2 &&
+            rest.bones[1].parent == 0,
+        "native bone hierarchy missing");
+  check(rest.boneByHead[0] == 0 && rest.boneByHead[1] == 1 &&
+            rest.points[2].head == 1 && rest.boneByHead[5] == -1 &&
+            rest.bones[1].color == otam::Color{0, 1, 1},
+        "native CP ownership, weld or color lost");
+  auto pose = rest;
+  const auto pivot =
+      otam::transform(otam::poseBones(rest, nullptr, 0)[1].frame, {});
+  near(pivot[0], 0);
+  near(pivot[1], 1);
+  near(pivot[2], 1);
+
+  const double rightAngle = std::acos(-1.0) / 2;
+  otam::BoneAnimation animation;
+  auto &childKeys = animation.tracks[rest.bones[1].path];
+  childKeys[0]    = {};
+  otam::rotateBone(childKeys[10], 2, rightAngle);
+  check(!otam::applyBoneAnimation(pose, animation, 0) &&
+            pose.points[1].position == rest.points[1].position,
+        "rest key moved control points");
+  check(otam::applyBoneAnimation(pose, animation, 10),
+        "child key did not move control points");
+  near(pose.points[1].position[0], 2);
+  near(pose.points[1].position[1], 2);
+  near(pose.points[1].position[2], 0);
+  check(pose.points[0].position == rest.points[0].position &&
+            pose.points[2].position == rest.points[2].position,
+        "child changed a parent position or moved the alias separately");
+  const auto segment = otam::splineSegment(pose, pose.splines[1], 0);
+  check(segment.outgoing.origin == pose.points[1].position,
+        "weld did not follow the deformed position owner");
+
+  const auto middle = otam::sampleBone(animation, rest.bones[1].path, 5);
+  const auto halfway =
+      otam::transform(otam::rotation(middle.rotation), {1, 0, 0});
+  near(halfway[0], std::sqrt(0.5));
+  near(halfway[1], std::sqrt(0.5));
+
+  auto &parentKey = animation.tracks[rest.bones[0].path][10];
+  otam::rotateBone(parentKey, 1, rightAngle);
+  otam::translateBone(childKeys[10], 2, 2);
+  pose = rest;
+  pose.points[1].position[0] += 1;  // An upstream CP Action offset.
+  otam::applyBoneAnimation(pose, animation, 10);
+  near(pose.points[1].position[0], 3);
+  near(pose.points[1].position[1], 3);
+  near(pose.points[1].position[2], -1);
+  near(pose.points[0].position[0], 1);
+  near(pose.points[0].position[2], 2);
+  check(pose.points[5].position == rest.points[5].position,
+        "unassigned position moved with the authored root");
+
+  const auto payload  = otam::writeBoneAnimation(animation);
+  const auto restored = otam::readBoneAnimation(payload);
+  auto reopened       = rest;
+  reopened.points[1].position[0] += 1;
+  otam::applyBoneAnimation(reopened, restored, 10);
+  for (int i = 0; i < 3; ++i)
+    near(reopened.points[1].position[i], pose.points[1].position[i]);
+  rejects(
+      [&] { otam::readBoneAnimation(payload + R"("bad" 3 0 0 0 0 0 0 0)"); });
+
+  const auto conflict = otam::parse(replace(fixture, ">2 3<", ">2 3 8<"));
+  check(conflict.models.front().bones.empty() &&
+            !conflict.models.front().points.empty(),
+        "ambiguous welded assignment did not leave drawable geometry");
+  const auto weighted =
+      otam::parse(replace(fixture, "<NONSKINNEDCPS>2 3</NONSKINNEDCPS>",
+                          "<WEIGHTEDCPS>2 0.5</WEIGHTEDCPS>"));
+  check(weighted.models.front().bones.empty() &&
+            !weighted.models.front().patches.empty(),
+        "unsupported weighted rig did not leave drawable geometry");
+}
+
 void testPlasticBones() {
   otam::Model rest;
   rest.points.resize(3);
@@ -343,6 +424,7 @@ int main() {
     auto mesh = otam::previewMesh(d, 0, 2);
     check(mesh.triangles.size() == 8, "quad tessellation");
     testInk(mesh);
+    testNativeBones();
     testPlasticBones();
     testSpatialPlasticBones();
     testSplineProfile();

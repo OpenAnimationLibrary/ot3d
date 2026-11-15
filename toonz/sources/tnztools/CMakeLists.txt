@@ -81,6 +81,7 @@ set(SOURCES
     bluredbrush.cpp
     alignmentselection.cpp
     actionpointselection.cpp
+    ambonestool.cpp
     amcontrolpointeditortool.cpp
     controlpointeditortool.cpp
     vectoractioneditor.cpp

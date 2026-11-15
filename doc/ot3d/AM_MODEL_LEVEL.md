@@ -105,6 +105,32 @@ Mixed bone, bias, stride and other unsupported action data is rejected during
 load. Reopening and exporting this subset have automated coverage. Visual
 comparison in A:M remains part of interchange validation.
 
+## Pose native A:M bones
+
+1. Load a rigged `.mdl` as a native level and expose it over the frames you
+   want to animate. Select a cell in the top Xsheet and turn off Preview.
+   With the Animate Tool active, click **A:M Bones** in its Tool Options bar.
+   You can also right-click in the Viewer and choose **A:M Bones Tool**.
+2. Click a bone at its pivot or tip. Drag a colored ring in **Rotate** mode,
+   or a labeled axis handle in **Move** mode. Red, green, and blue correspond
+   to the selected bone's local X, Y, and Z axes. Hold **Shift** for
+   15-degree rotation increments or press **Esc** to cancel a drag.
+3. At the first frame, right-click in the Viewer and choose **Set Bone Key**
+   to hold the starting pose. Move to a later frame and drag a handle to
+   key a new pose. The tool interpolates translation and rotation between
+   keys, and holds the first and last key outside that range. The Viewer
+   menu also provides **Set Bone Key at Rest Pose** and **Remove Bone Key**.
+4. Save the scene to store the keys. Expose the model in a separate column
+   for an independent pose. The native model remains the source of the
+   rest rig and assignments.
+
+This pass supports rigid control-point ownership from `NONSKINNEDCPS`.
+Weighted rigs display their base geometry with an unsupported-rig diagnostic.
+A:M relationships, constraints, IK, and bone `.act` files are outside the
+first pass. Control-point Action offsets feed the bone pose before Plastic
+deformation. The Control Point Editor displays the pre-rig geometry while
+editing, and Preview and final rendering evaluate the animated pose.
+
 ## Ownership and implementation
 
 `TXshAMLevel` / `AM_XSHLEVEL` is a distinct `TXshLevel` subclass. The Scene Cast

@@ -142,7 +142,8 @@ Material parseMaterial(std::string source, const Limits &limits) {
   read("Refraction", s.refraction, 2, 1, 1);
   read("Translucency", s.translucency, 100);
   read("Reflectivity", s.reflectivity, 100);
-  read("ReflectivityFalloff", s.reflectivityFalloff, 100000);
+  // This is a distance, not a percentage.
+  read("ReflectivityFalloff", s.reflectivityFalloff, 100000, 1, 0);
   read("ReflectiveBlend", s.reflectiveBlend, 100);
   read("Radiance", s.radiance, 100000);
   if (auto value = take("Glow")) {

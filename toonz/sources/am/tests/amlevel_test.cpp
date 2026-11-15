@@ -2,6 +2,7 @@
 // context.
 #include "amfixture.h"
 #include "amaction.h"
+#include "ambones.h"
 #include "ext/plasticskeletondeformation.h"
 #include "../../glb/tests/glbfixture.h"
 #include "toonz/txshglblevel.h"
@@ -50,6 +51,84 @@ void nearlyEqual(double a, double b,
                  const char *message = "coordinate/parameter mismatch") {
   check(std::abs(a - b) < 1e-7, message);
 }
+void checkNativeBones(const QTemporaryDir &temp) {
+  const QString path = temp.filePath("bone-model.mdl");
+  {
+    QFile file(path);
+    const auto source = amtest::rigidBoneSource();
+    check(file.open(QIODevice::WriteOnly) &&
+              file.write(source.data(), qint64(source.size())) ==
+                  qint64(source.size()),
+          "write rigid bone fixture");
+  }
+  ToonzScene scene;
+  scene.setScenePath(TFilePath(temp.filePath("bone-scene.tnz")));
+  auto *sheet  = scene.getTopXsheet();
+  auto *loaded = scene.loadLevel(TFilePath(path));
+  auto *level  = loaded ? loaded->getAMLevel() : nullptr;
+  check(level && level->editableModel() &&
+            level->editableModel()->bones.size() == 2,
+        "native level lost its imported rig");
+  const TXshCell cell(level, TFrameId(1));
+  for (int row : {0, 5, 10}) {
+    check(sheet->setCell(row, 0, cell), "expose bone animation");
+    check(sheet->setCell(row, 1, cell), "expose independent model instance");
+  }
+
+  auto animation = std::make_shared<otam::BoneAnimation>();
+  auto &keys     = animation->tracks[level->editableModel()->bones[1].path];
+  keys[0]        = {};
+  otam::rotateBone(keys[10], 2, std::acos(-1.0) / 2);
+  auto *column = sheet->getColumn(0)->getLevelColumn();
+  column->setAMBones({TXshLevelP(level), animation});
+  const auto rest  = prepareNativeModelGeometry(sheet, 0, 0, false);
+  const auto mid   = prepareNativeModelGeometry(sheet, 0, 5, false);
+  const auto posed = prepareNativeModelGeometry(sheet, 0, 10, false);
+  const auto other = prepareNativeModelGeometry(sheet, 1, 10, false);
+  const auto editing =
+      prepareNativeModelGeometry(sheet, 0, 10, false, false, false);
+  check(rest && mid && posed && other && editing,
+        "native bone render snapshot missing");
+  const auto curve = [](const otam::Mesh &mesh) -> const otam::InkCurve & {
+    return mesh.splines.front().curves.front();
+  };
+  check(
+      curve(*rest).points != curve(*mid).points &&
+          curve(*mid).points != curve(*posed).points &&
+          curve(*rest).points == curve(*other).points &&
+          curve(*rest).points == curve(*editing).points,
+      "bone animation leaked between instances or skipped spline deformation");
+
+  const auto finalPose = prepareAMLevelGeometry(sheet, 0, 10, false);
+  check(finalPose && curve(*finalPose).points == curve(*posed).points &&
+            finalPose->triangles.front().vertices ==
+                posed->triangles.front().vertices,
+        "native bones differ between Viewer and render geometry");
+  TRasterFxP restFx(makeNativeModelRenderFx(sheet, 0, 0, false));
+  TRasterFxP posedFx(makeNativeModelRenderFx(sheet, 0, 10, false));
+  check(restFx->getAlias(0, TRenderSettings()) !=
+            posedFx->getAlias(10, TRenderSettings()),
+        "native bone motion reused the rest render cache identity");
+
+  const auto savedPath = scene.getScenePath();
+  scene.save(savedPath, nullptr, false);
+  ToonzScene restored;
+  restored.loadTnzFile(savedPath);
+  auto *reopened      = restored.getTopXsheet();
+  auto *reopenedLevel = reopened->getCell(0, 0).m_level->getAMLevel();
+  check(reopenedLevel, "native bone level did not reopen");
+  reopenedLevel->load();
+  auto reopenedRig = reopened->getColumn(0)->getLevelColumn()->getAMBones();
+  check(reopenedRig.level.getPointer() == reopenedLevel &&
+            reopenedRig.animation &&
+            reopenedRig.animation->tracks.begin()->second.size() == 2,
+        "scene did not round-trip per-column bone keys");
+  const auto reopenedMesh = prepareNativeModelGeometry(reopened, 0, 10, false);
+  check(reopenedMesh && curve(*reopenedMesh).points == curve(*posed).points &&
+            !reopened->getColumn(1)->getLevelColumn()->getAMBones().animation,
+        "native bone pose or instance isolation was lost on reopen");
+}
+
 void checkVectorAction(const QTemporaryDir &temp) {
   ToonzScene scene;
   auto *sheet = scene.getTopXsheet();
@@ -255,6 +334,7 @@ int main(int argc, char **argv) {
   try {
     QTemporaryDir temp;
     check(temp.isValid(), "temporary directory");
+    checkNativeBones(temp);
     const QString source =
         temp.path() + QString::fromUtf8("/model-\xc3\xa9.001.MDL");
     {

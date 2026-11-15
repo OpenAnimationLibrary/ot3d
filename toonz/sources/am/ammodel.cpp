@@ -6,6 +6,7 @@
 #include <limits>
 #include <locale>
 #include <map>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -122,6 +123,94 @@ void resolve(Model &m) {
     for (auto cp : p.points)
       if (!ids.count(cp)) fail("patch references a missing CP");
 }
+void readBoneSegment(const Document &d, const SourceNode &node, Model &model,
+                     const std::map<Id, std::size_t> &ids,
+                     std::set<std::string> &paths, int parent,
+                     std::size_t &records, const Limits &limits) {
+  if (++records > limits.records) fail("too many bone records");
+
+  NativeBone bone;
+  std::optional<Vec3> start, end;
+  std::optional<Quaternion> orientation;
+  std::optional<double> boneLength;
+  for (const auto &line : lines(d, node)) {
+    const auto sep = line.find('=');
+    if (sep == std::string::npos) continue;
+    const auto property = line.substr(0, sep);
+    const auto value    = line.substr(sep + 1);
+    if (property == "Name") bone.name = value;
+    if (property == "Length") boneLength = number<double>(value);
+    if (property == "Start" || property == "End") {
+      const auto fields = words(value);
+      if (fields.size() != 3) fail("invalid bone endpoint");
+      Vec3 point;
+      for (int i = 0; i < 3; ++i) {
+        point[i] = number<double>(fields[i]);
+        if (std::abs(point[i]) > 1e9) fail("bone coordinate exceeds limit");
+      }
+      (property == "Start" ? start : end) = point;
+    }
+    if (property == "Rotate") {
+      const auto fields = words(value);
+      if (fields.size() != 4) fail("invalid bone rotation");
+      orientation.emplace();
+      for (int i = 0; i < 4; ++i) (*orientation)[i] = number<double>(fields[i]);
+    }
+    if (property == "BoneColor") {
+      const auto fields = words(value);
+      if (fields.size() != 3 && fields.size() != 4) fail("invalid bone color");
+      for (int i = 0; i < 3; ++i)
+        bone.color[i] =
+            float(std::clamp(number<double>(fields[i]), 0.0, 255.0) / 255.0);
+    }
+  }
+
+  bone.parent = parent;
+  if (parent >= 0) {
+    const auto &parentBone = model.bones[parent];
+    bone.path              = parentBone.path;
+    if (!start)
+      start = transform(inverse(parentBone.inverseBind), parentBone.tip);
+  }
+  if (bone.name.empty() || !start || !orientation || (!end && !boneLength))
+    fail("incomplete bone rest transform");
+  if (boneLength && (*boneLength < 0 || *boneLength > 2e9))
+    fail("bone length exceeds limit");
+  // A length prefix keeps sibling paths distinct even with slashes in names.
+  bone.path += std::to_string(bone.name.size()) + ":" + bone.name;
+  if (!paths.insert(bone.path).second) fail("duplicate bone path");
+
+  const auto bind = multiply(translation((*start)[0], (*start)[1], (*start)[2]),
+                             rotation(*orientation));
+  bone.inverseBind = inverse(bind);
+  bone.restLocal =
+      parent < 0 ? bind : multiply(model.bones[parent].inverseBind, bind);
+  bone.tip = end ? transform(bone.inverseBind, *end) : Vec3{0, 0, *boneLength};
+  const int current = int(model.bones.size());
+  model.bones.push_back(std::move(bone));
+
+  for (auto i : node.children) {
+    const auto &child = d.nodes[i];
+    if (child.name == "SEGMENT") {
+      readBoneSegment(d, child, model, ids, paths, current, records, limits);
+    } else if (child.name == "NONSKINNEDCPS") {
+      for (const auto &line : lines(d, child))
+        for (const auto &word : words(line)) {
+          if (++records > limits.records) fail("too many bone assignments");
+          const auto cp = ids.find(number<Id>(word));
+          if (cp == ids.end()) fail("bone references a missing CP");
+          auto &owner = model.boneByHead[model.points[cp->second].head];
+          if (owner >= 0 && owner != current)
+            fail("conflicting bone assignments for a welded position");
+          owner = current;
+        }
+    } else if (child.name == "WEIGHTEDCPS" &&
+               (!child.children.empty() || !lines(d, child).empty())) {
+      fail("weighted bone assignments are unsupported");
+    }
+  }
+}
+
 }  // namespace
 
 Document parseSource(std::string source, const std::string &root,
@@ -291,15 +380,31 @@ Document parse(std::string source, const Limits &limits) {
                 g.points.push_back(number<Id>(w));
               }
         m.groups.push_back(std::move(g));
-      } else if ((n.name == "BONES" || n.name == "RELATIONSHIPS") &&
+      } else if (n.name == "RELATIONSHIPS" &&
                  (!n.children.empty() || !lines(d, n).empty())) {
-        warn(d.warnings,
-             "Rig/relationship data is preserved in the source, not evaluated; "
-             "showing model-space geometry.");
+        warn(d.warnings, "A:M relationships are preserved but not evaluated.");
       }
     }
     if (m.points.empty()) fail("model has no supported spline geometry");
     resolve(m);
+    try {
+      std::set<std::string> paths;
+      for (auto i : d.nodes[ni].children) {
+        const auto &rig = d.nodes[i];
+        if (rig.name != "BONES" || rig.children.empty()) continue;
+        m.boneByHead.resize(m.points.size(), -1);
+        const auto ids = index(m);
+        for (auto j : rig.children) {
+          const auto &segment = d.nodes[j];
+          if (segment.name != "SEGMENT") fail("unsupported bone record");
+          readBoneSegment(d, segment, m, ids, paths, -1, records, limits);
+        }
+      }
+    } catch (const std::runtime_error &e) {
+      m.bones.clear();
+      m.boneByHead.clear();
+      warn(d.warnings, std::string("Native bone rig skipped: ") + e.what());
+    }
     if (m.patches.empty())
       warn(d.warnings,
            "No explicit patches: native patch discovery is not implemented.");

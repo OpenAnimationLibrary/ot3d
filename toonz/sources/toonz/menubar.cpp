@@ -672,6 +672,7 @@ QMenuBar *StackedMenuBar::createPltEditMenuBar() {
     addMenuItem(moreToolsMenu, T_Tracker);
     addMenuItem(moreToolsMenu, T_Hook);
     addMenuItem(moreToolsMenu, T_Plastic);
+    addMenuItem(moreToolsMenu, T_AMBones);
     moreToolsMenu->addSeparator();
     addMenuItem(moreToolsMenu, T_Zoom);
     addMenuItem(moreToolsMenu, T_Rotate);
@@ -851,6 +852,7 @@ QMenuBar *StackedMenuBar::createInknPaintMenuBar() {
     addMenuItem(moreToolsMenu, T_Tracker);
     addMenuItem(moreToolsMenu, T_Hook);
     addMenuItem(moreToolsMenu, T_Plastic);
+    addMenuItem(moreToolsMenu, T_AMBones);
     moreToolsMenu->addSeparator();
     addMenuItem(moreToolsMenu, T_Zoom);
     addMenuItem(moreToolsMenu, T_Rotate);

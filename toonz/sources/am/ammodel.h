@@ -14,6 +14,7 @@
 namespace otam {
 using Id     = std::int64_t;
 using Vec3   = std::array<double, 3>;
+using Quaternion = std::array<double, 4>;  // x, y, z, w.
 using Bias   = std::array<double, 3>;  // Alpha, gamma, magnitude.
 using Color  = std::array<float, 3>;
 using Matrix = std::array<double, 16>;  // Row major; column vectors.
@@ -53,12 +54,21 @@ struct Group {
   Color color{{0.65f, 0.65f, 0.65f}};
   bool hasColor = false;
 };
+struct NativeBone {
+  std::string name, path;
+  int parent = -1;
+  Matrix restLocal, inverseBind;
+  Vec3 tip;  // In the bone's rest frame.
+  Color color{0.9f, 0.8f, 0.3f};
+};
 struct Model {
   std::string name;
   std::vector<ControlPoint> points;
   std::vector<Spline> splines;
   std::vector<Patch> patches;
   std::vector<Group> groups;
+  std::vector<NativeBone> bones;
+  std::vector<int> boneByHead;  // -1 for an unassigned position.
 };
 struct PlasticBone {
   Vec3 restStart, restEnd, posedStart, posedEnd;
@@ -167,6 +177,7 @@ Matrix inverse(const Matrix &matrix);
 Matrix translation(double x, double y, double z);
 Matrix scaling(double x, double y, double z);
 Matrix rotation(double xDegrees, double yDegrees, double zDegrees);
+Matrix rotation(const Quaternion &quaternion);
 Vec3 transform(const Matrix &matrix, const Vec3 &point);
 Mesh transformed(const Mesh &mesh, const Matrix &matrix);
 // Clip to z < cameraZ + focus - nearPlane before perspective projection.

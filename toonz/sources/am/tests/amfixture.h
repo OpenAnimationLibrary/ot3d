@@ -34,6 +34,30 @@ DiffuseColor=255 0 0
 <BONES><BONE>Name=Retained</BONE></BONES>
 <UNKNOWN>Preserve me</UNKNOWN>
 </MODEL></OBJECTS></MODELFILE>)AM";
+inline std::string rigidBoneSource() {
+  const std::string placeholder = "<BONES><BONE>Name=Retained</BONE></BONES>";
+  auto result                   = source;
+  result.replace(result.find(placeholder), placeholder.size(), R"AM(<BONES>
+<SEGMENT>
+Name=main
+Start=1 0 0
+End=1 0 10
+Rotate=0 0 0 1
+BoneColor=255 0 0 255
+<NONSKINNEDCPS>1 4 5 8</NONSKINNEDCPS>
+<SEGMENT>
+Name=central
+Start=0 1 1
+End=0 1 6
+Rotate=0 0 0.7071067811865476 0.7071067811865476
+Length=5
+BoneColor=0 255 255 255
+<NONSKINNEDCPS>2 3</NONSKINNEDCPS>
+</SEGMENT>
+</SEGMENT>
+</BONES>)AM");
+  return result;
+}
 inline const std::string splineSource = R"AM(<MODELFILE>
 ProductVersion=19.5
 <OBJECTS><MODEL>
