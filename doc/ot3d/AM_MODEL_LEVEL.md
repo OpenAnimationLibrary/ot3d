@@ -108,8 +108,8 @@ comparison in A:M remains part of interchange validation.
 ## Pose native A:M bones
 
 1. Load a rigged `.mdl` as a native level and expose it over the frames you
-   want to animate. Select a cell and choose **Tools > More Tools > A:M Bones
-   Tool** in the top Xsheet. Turn off Preview while editing.
+   want to animate. Select a cell in the top Xsheet, turn off Preview, then
+   right-click in the Viewer and choose **A:M Bones Tool**.
 2. Click a bone at its pivot or tip. Drag a colored ring in **Rotate** mode,
    or a labeled axis handle in **Move** mode. Red, green, and blue correspond
    to the selected bone's local X, Y, and Z axes. Hold **Shift** for

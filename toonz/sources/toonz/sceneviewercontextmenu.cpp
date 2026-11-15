@@ -23,6 +23,9 @@
 #include "toonzqt/imageutils.h"
 
 // TnzLib includes
+#include "toonz/toonzscene.h"
+#include "toonz/txshamlevel.h"
+#include "toonz/txsheet.h"
 #include "toonz/txsheethandle.h"
 #include "toonz/tcolumnhandle.h"
 #include "toonz/tframehandle.h"
@@ -65,6 +68,21 @@ SceneViewerContextMenu::SceneViewerContextMenu(SceneViewer *parent)
     auto *xsheet     = app->getCurrentXsheet()->getXsheet();
     const int row    = app->getCurrentFrame()->getFrame();
     const int column = app->getCurrentColumn()->getColumnIndex();
+    const auto *scene = app->getCurrentScene()->getScene();
+    if (scene && xsheet == scene->getTopXsheet() && column >= 0 &&
+        !parent->isPreviewEnabled() && !app->getCurrentFrame()->isPlaying() &&
+        (!tool || tool->getName() != T_AMBones)) {
+      const auto *xcol = xsheet->getColumn(column);
+      if (xcol && !xcol->isLocked() && xcol->isCamstandVisible() &&
+          xcol->getOpacity()) {
+        const auto cell = xsheet->getCell(row, column);
+        const auto *level =
+            cell.isEmpty() ? nullptr : cell.m_level->getAMLevel();
+        const auto model = level ? level->editableModel() : nullptr;
+        if (model && !model->bones.empty())
+          addAction(commandManager->getAction(T_AMBones));
+      }
+    }
     addAMActionMenu(*this, xsheet, row, column);
     addVectorActionMenu(*this, xsheet, row, column);
   }
