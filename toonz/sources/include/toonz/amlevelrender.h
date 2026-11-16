@@ -1,5 +1,6 @@
 #pragma once
 #include "ammodel.h"
+#include "amcage.h"
 #include "ammaterial.h"
 #include "amink.h"
 #include "glbrenderer.h"
@@ -57,6 +58,24 @@ DVAPI TRasterFx *makeNativeModelRenderFx(TXsheet *xsheet, int column,
 DVAPI TRasterFx *makeAMLevelRenderFx(TXsheet *xsheet, int column, double frame,
                                      bool previewCamera = false);
 DVAPI bool setAMLevelColorFilter(TRasterFx *fx, const TPixel32 &color);
+// Passed upstream with the existing native 3D scene request.
+class DVAPI TAMCageRenderData final : public TRasterFxRenderData {
+  otam::DistortionCage m_cage;
+  double m_frame, m_strength;
+  std::string m_alias;
+
+public:
+  TAMCageRenderData(const std::string &source, double frame, double strength);
+  ~TAMCageRenderData() override;
+  bool apply(const otam::Model &rest, otam::Model &pose) const;
+  bool operator==(const TRasterFxRenderData &other) const override;
+  std::string toString() const override { return m_alias; }
+  float typeIndex() const override { return 5.f; }
+};
+
+// The FX settings can query the live column for its stable native bone paths.
+DVAPI std::shared_ptr<const otam::Model> amCageSourceModel(TFx *fx, int row);
+
 class TLevelColumnFx;
 DVAPI std::shared_ptr<const otglb::RenderScene>
 prepareNativeModelColumnRenderScene(

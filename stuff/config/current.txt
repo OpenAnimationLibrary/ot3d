@@ -70,6 +70,9 @@
   <item>"STD_surfaceSmoothing3DFx" "3D Surface Smoothing" </item>
   <item>"STD_surfaceSmoothing3DFx.strength" "Strength (%)" </item>
   <item>"STD_surfaceSmoothing3DFx.creaseAngle" "Crease Angle" </item>
+  <item>"STD_amDistortionCageFx" "A:M Distortion Cage" </item>
+  <item>"STD_amDistortionCageFx.cage" "Cage" </item>
+  <item>"STD_amDistortionCageFx.strength" "Strength (%)" </item>
   <item>"STD_amMaterialFx" "A:M Material" </item>
   <item>"STD_amMaterialFx.overrideSpecular" "Override Specular" </item>
   <item>"STD_amMaterialFx.specularSize" "Specular Size (%)" </item>

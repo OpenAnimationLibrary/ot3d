@@ -170,6 +170,7 @@ set(SOURCES
     targetspotfx.cpp
     texturefx.cpp
     ammaterialfx.cpp
+    amdistortioncagefx.cpp
     inklinefx.cpp
     imagebasedlightingfx.cpp
     environmentreflectionfx.cpp

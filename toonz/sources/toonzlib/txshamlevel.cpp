@@ -540,7 +540,7 @@ std::shared_ptr<const otam::Mesh> TXshAMLevel::renderMesh(
     int frame, const std::shared_ptr<const otam::Action> &action,
     double seconds, const std::vector<otam::PlasticBone> &bones,
     const std::shared_ptr<const otam::BoneAnimation> &animation,
-    double boneFrame) const {
+    double boneFrame, AMLevelCagePose *cagePose) const {
   std::lock_guard<std::mutex> lock(m_mutex);
   if (m_renderPalette && m_renderPalette->getFrame() != frame) {
     m_renderPalette->setFrame(frame);
@@ -550,10 +550,27 @@ std::shared_ptr<const otam::Mesh> TXshAMLevel::renderMesh(
 
   const bool sampleAction = action && !action->channels.empty() && seconds >= 0;
   if (sampleAction) sampleActionLocked(action, seconds);
+  const auto pose = sampleAction && m_actionSample.model ? m_actionSample.model
+                                                         : m_editableModel;
+  if (cagePose) {
+    cagePose->rest         = m_editableModel;
+    cagePose->actionPose   = pose;
+    cagePose->animation    = animation;
+    cagePose->plasticBones = bones;
+    cagePose->boneFrame    = boneFrame;
+    const auto storeColor  = [&](int group, int style) {
+      const auto color = m_colorOverrides.find(style);
+      if (color == m_colorOverrides.end()) return;
+      const auto &p                  = color->second;
+      cagePose->paletteColors[group] = {p.r / 255.f, p.g / 255.f, p.b / 255.f};
+    };
+    if (!m_colorOverrides.empty()) {
+      storeColor(-1, DefaultStyle);
+      for (int i = 0; i < int(m_styleByGroup.size()); ++i)
+        storeColor(i, m_styleByGroup[i]);
+    }
+  }
   if (animation || !bones.empty()) {
-    const auto pose = sampleAction && m_actionSample.model
-                          ? m_actionSample.model
-                          : m_editableModel;
     const double poseFrame = animation ? boneFrame : 0;
     if (m_deformationSample.pose.lock() != pose ||
         m_deformationSample.plasticBones != bones ||

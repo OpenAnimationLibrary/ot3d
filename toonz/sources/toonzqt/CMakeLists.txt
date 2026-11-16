@@ -141,6 +141,7 @@ set(SOURCES
     paletteviewer.cpp
     paletteviewergui.cpp
     paramfield.cpp
+    amcageeditor.cpp amcageeditor.h
     planeviewer.cpp
     popupbutton.cpp
     rasterimagedata.cpp
@@ -257,4 +258,4 @@ elseif(BUILD_ENV_UNIXLIKE)
     endif()
 endif()
 
-target_link_libraries(toonzqt Qt5::Core Qt5::Gui Qt5::Widgets Qt5::Network Qt5::OpenGL Qt5::Svg ${EXTRA_LIBS} ${GL_LIB})
+target_link_libraries(toonzqt otam Qt5::Core Qt5::Gui Qt5::Widgets Qt5::Network Qt5::OpenGL Qt5::Svg ${EXTRA_LIBS} ${GL_LIB})
