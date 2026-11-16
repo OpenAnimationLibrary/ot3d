@@ -4,5 +4,6 @@
     <control>width</control>
     <control>color</control>
     <control>lightInfluence</control>
+    <control>bottomWeight</control>
   </page>
 </fxlayout>

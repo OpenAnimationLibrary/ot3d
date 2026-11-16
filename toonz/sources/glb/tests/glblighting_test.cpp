@@ -107,6 +107,23 @@ void testToonLines() {
   options.lighting.lights[0].point->position[2] = -2;
   style.lightingInfluence                       = 0;
   near(strength(draw(options, style)), 0);
+
+  options.useLightingRig = false;
+  style.bottomWeight     = 1;
+  const auto weighted    = draw(options, style);
+  require(strength(weighted) > .5f,
+          "Bottom Weight did not widen the lower silhouette");
+  for (int y = 5; y < 16; ++y)
+    for (int x = -16; x < 16; ++x) {
+      const auto i = pixel(x, y);
+      near(weighted[i].alpha, unlit[i].alpha);
+      near(weighted[i].r, unlit[i].r);
+      near(weighted[i].g, unlit[i].g);
+    }
+  options.useLightingRig  = true;
+  style.lightingInfluence = 1;
+  require(draw(options, style)[pixel(0, -13)].alpha > .5f,
+          "Bottom Weight and shadow thickness did not combine");
 }
 
 void testToonOcclusionAndTiles() {
@@ -137,6 +154,55 @@ void testToonOcclusionAndTiles() {
         const auto &b = part[y * 16 + x];
         near(a.r, b.r, 1e-6f);
         near(a.alpha, b.alpha, 1e-6f);
+      }
+  }
+}
+void testToonSpeckles() {
+  otglb::RenderScene source;
+  const auto quad = [&](int x0, int y0, int x1, int y1, double depth) {
+    const otglb::ProjectedVertex a{double(x0), double(y0), depth},
+        b{double(x1), double(y0), depth}, c{double(x1), double(y1), depth},
+        d{double(x0), double(y1), depth};
+    for (auto vertices : {std::array<otglb::ProjectedVertex, 3>{{a, b, c}},
+                          std::array<otglb::ProjectedVertex, 3>{{a, c, d}}}) {
+      otglb::RenderTriangle triangle{vertices, {}, {{1, 1, 1}}};
+      triangle.toonSurface = true;
+      source.triangles.push_back(triangle);
+    }
+  };
+  // Leave a one-pixel tessellation gap and add a tiny depth discontinuity.
+  quad(2, 2, 16, 22, 0);
+  quad(17, 2, 29, 22, 0);
+  quad(16, 2, 17, 11, 0);
+  quad(16, 12, 17, 22, 0);
+  quad(9, 8, 10, 9, 1);
+  // A narrow but continuous overlap and a tiny standalone silhouette.
+  quad(23, 6, 24, 16, 1);
+  quad(36, 15, 37, 16, 1);
+  const otglb::RenderTile tile{42, 24};
+  const auto unoutlined = otglb::renderTile(source, tile);
+  const auto pixel      = [&](int x, int y) { return y * tile.width + x; };
+  for (double width : {1.5, 5.0}) {
+    auto outlined            = source;
+    outlined.toonLine        = otglb::ToonLineStyle{};
+    outlined.toonLine->width = width;
+    const auto full          = otglb::renderTile(outlined, tile);
+    for (int y = 5; y <= 15; ++y)
+      for (int x = 7; x <= 19; ++x) {
+        const int i = pixel(x, y);
+        require(std::abs(full[i].r - unoutlined[i].r) < 1e-6f &&
+                    std::abs(full[i].alpha - unoutlined[i].alpha) < 1e-6f,
+                "a tiny depth boundary or pinhole grew into a Toon Line speck");
+      }
+    require(full[pixel(22, 10)].r < .75f,
+            "a continuous thin overlap lost its line");
+    require(full[pixel(35, 15)].alpha > .1f,
+            "a tiny exterior silhouette lost its line");
+    const auto sliced = otglb::renderTile(outlined, {17, 12, 0, 0});
+    for (int y = 0; y < 12; ++y)
+      for (int x = 0; x < 17; ++x) {
+        near(full[pixel(x, y)].r, sliced[y * 17 + x].r, 1e-6f);
+        near(full[pixel(x, y)].alpha, sliced[y * 17 + x].alpha, 1e-6f);
       }
   }
 }
@@ -204,6 +270,7 @@ int main() {
 
     testToonLines();
     testToonOcclusionAndTiles();
+    testToonSpeckles();
     std::cout << "Directional and positional diffuse lighting passed\n";
     return 0;
   } catch (const std::exception &error) {

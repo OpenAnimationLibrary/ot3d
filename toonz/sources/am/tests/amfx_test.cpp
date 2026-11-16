@@ -358,6 +358,10 @@ void testToonLine(ToonzScene &source) {
   set(*toon, "lightInfluence", 100);
   const double unlit = coverage(render(scene, info));
   require(unlit > base, "Toon Line did not extend the native silhouette");
+  set(*toon, "bottomWeight", 100);
+  require(coverage(render(scene, info)) > unlit,
+          "Bottom Weight did not reach the native renderer");
+  set(*toon, "bottomWeight", 0);
   set(*toon, "width", 0);
   require(coverage(render(scene, info)) == base,
           "Zero width altered the model");

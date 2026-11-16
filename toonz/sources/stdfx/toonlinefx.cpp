@@ -11,7 +11,7 @@
 class ToonLineFx final : public TStandardRasterFx, public T3DRenderSource {
   FX_PLUGIN_DECLARATION(ToonLineFx)
   T3DSourcePort m_source;
-  TDoubleParamP m_width{1.5}, m_lightInfluence{75.0};
+  TDoubleParamP m_width{1.5}, m_lightInfluence{75.0}, m_bottomWeight{0.0};
   TPixelParamP m_color{TPixel32::Black};
 
   std::shared_ptr<const otglb::RenderScene> withOutline(
@@ -30,6 +30,7 @@ class ToonLineFx final : public TStandardRasterFx, public T3DRenderSource {
     const TPixelD color = m_color->getValueD(frame);
     if (style.width == 0 || color.m == 0) return source;
     style.lightingInfluence = value(m_lightInfluence, 100.0) / 100;
+    style.bottomWeight      = value(m_bottomWeight, 100.0) / 100;
     style.color             = {
                     {float(color.r), float(color.g), float(color.b), float(color.m)}};
     auto scene            = std::make_shared<otglb::RenderScene>();
@@ -52,9 +53,11 @@ public:
     bindParam(this, "color", m_color);
     m_color->enableMatte(true);
     bindParam(this, "lightInfluence", m_lightInfluence);
+    bindParam(this, "bottomWeight", m_bottomWeight);
     m_width->setMeasureName("fxLength");
     m_width->setValueRange(0, 20);
     m_lightInfluence->setValueRange(0, 100);
+    m_bottomWeight->setValueRange(0, 100);
     enableComputeInFloat(true);
   }
 
@@ -105,8 +108,8 @@ public:
   int getMemoryRequirement(const TRectD &rect, double,
                            const TRenderSettings &) override {
     if (rect.isEmpty()) return 0;
-    const double width  = std::min(std::ceil(rect.getLx()), 512.0) + 100;
-    const double height = std::min(std::ceil(rect.getLy()), 128.0) + 100;
+    const double width  = std::min(std::ceil(rect.getLx()), 512.0) + 104;
+    const double height = std::min(std::ceil(rect.getLy()), 128.0) + 104;
     return int(std::ceil(width * height * 512 / (1024 * 1024)));
   }
 

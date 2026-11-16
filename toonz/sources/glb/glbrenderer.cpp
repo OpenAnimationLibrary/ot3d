@@ -799,11 +799,14 @@ float contourIllumination(const RenderScene &scene, const ContourSample &sample,
 
 // Limit the halo and the work per edge sample at extreme preview zoom.
 constexpr double MaxContourRadius = 48;
+// Contour centers use a quarter-pixel grid between the raster's sample sites.
+constexpr int MinContourSpan = 8;
 
 struct ToonLineRaster {
   const ToonLineStyle &style;
   double scaleX, scaleY, sampleScale;
   std::array<double, 4> inverse;
+  double bottom = 0, middle = 0;
 
   double radius(double requested) const {
     return std::min(requested, MaxContourRadius / std::max(scaleX, scaleY));
@@ -811,12 +814,12 @@ struct ToonLineRaster {
 };
 
 bool drawContours(const RenderScene &scene, const ToonLineRaster &toon,
-                  const std::vector<ContourSample> &hits, int width, int height,
-                  const int *canceled, std::vector<float> &coverage) {
+                  const std::vector<ContourSample> &hits,
+                  const RenderTile &tile, const int *canceled,
+                  std::vector<float> &coverage) {
   // The rasterizer already evaluates four sample sites. Detect edges on that
   // grid and spread each edge's coverage before downsampling the result.
-  width *= 2;
-  height *= 2;
+  const int width = tile.width * 2, height = tile.height * 2;
   const auto index = [width](int x, int y) {
     return (std::size_t(y / 2) * (width / 2) + x / 2) * 4 + ((y & 1) * 2) +
            (x & 1);
@@ -824,14 +827,14 @@ bool drawContours(const RenderScene &scene, const ToonLineRaster &toon,
   const bool ibl = std::any_of(
       scene.environments.begin(), scene.environments.end(),
       [](const auto &layer) { return layer.map && layer.diffuseLighting; });
-  const auto trace = [&](int x, int y, int offsetX, int offsetY) {
+  const auto isContour = [&](int x, int y, int offsetX, int offsetY) {
     const auto &a = hits[index(x, y)];
     const auto &b = hits[index(x + offsetX, y + offsetY)];
-    if (a.alpha == 0 && b.alpha == 0) return;
+    if (a.alpha == 0 && b.alpha == 0) return false;
     const auto &front = a.depth >= b.depth ? a : b;
-    if (!scene.triangles[front.triangle].toonSurface) return;
+    if (!scene.triangles[front.triangle].toonSurface) return false;
     if (a.alpha > 0 && b.alpha > 0) {
-      if (a.triangle == b.triangle) return;
+      if (a.triangle == b.triangle) return false;
       // Compare both projected depth planes at the midpoint. A sloping face
       // or a continuous tessellation edge must not create a contour.
       const double stepA = (offsetX * a.dx + offsetY * a.dy) * 0.25;
@@ -840,17 +843,27 @@ bool drawContours(const RenderScene &scene, const ToonLineRaster &toon,
       const double tolerance =
           std::abs(stepA - stepB) +
           1e-6 * std::max(std::abs(a.depth), std::abs(b.depth)) + 1e-10;
-      if (gap <= tolerance) return;
+      if (gap <= tolerance) return false;
     }
-    double radius = toon.style.width / 2;
+    return true;
+  };
+  const auto draw = [&](int x, int y, const ContourSample &front) {
+    const double centerX = x * 0.5, centerY = y * 0.5;
+    double weight = 1;
+    if (toon.middle > toon.bottom) {
+      const double sampleY = tile.y + 0.25 + centerY / 2;
+      weight +=
+          toon.style.bottomWeight *
+          std::clamp((toon.middle - sampleY) / (toon.middle - toon.bottom), 0.0,
+                     1.0);
+    }
     if (toon.style.lightingInfluence > 0) {
       const float illumination = contourIllumination(scene, front, ibl);
       if (illumination >= 0)
-        radius *= 1 + toon.style.lightingInfluence *
-                          (1 - std::min(illumination, 1.f));
+        weight +=
+            toon.style.lightingInfluence * (1 - std::min(illumination, 1.f));
     }
-    radius               = toon.radius(radius);
-    const double centerX = x + offsetX * 0.5, centerY = y + offsetY * 0.5;
+    const double radius = toon.radius(toon.style.width * weight / 2);
     const double reachX = radius * 2 * toon.scaleX + 0.5;
     const double reachY = radius * 2 * toon.scaleY + 0.5;
     const int x0        = std::max(0, int(std::ceil(centerX - reachX)));
@@ -872,11 +885,74 @@ bool drawContours(const RenderScene &scene, const ToonLineRaster &toon,
         value       = std::max(value, opacity);
       }
   };
+  const int gridWidth = 2 * width, gridHeight = 2 * height;
+  enum Edge : unsigned char { Absent, Pending, Visited };
+  std::vector<Edge> edges(std::size_t(gridWidth) * gridHeight, Absent);
   for (int y = 0; y < height; ++y) {
     if (canceled && *canceled) return false;
     for (int x = 0; x < width; ++x) {
-      if (x + 1 < width) trace(x, y, 1, 0);
-      if (y + 1 < height) trace(x, y, 0, 1);
+      const int cell = 2 * y * gridWidth + 2 * x;
+      if (x + 1 < width && isContour(x, y, 1, 0)) edges[cell + 1] = Pending;
+      if (y + 1 < height && isContour(x, y, 0, 1))
+        edges[cell + gridWidth] = Pending;
+    }
+  }
+
+  // Remove compact depth-edge islands and the rings around coverage pinholes
+  // before applying stroke width. Keep a small exterior silhouette if its
+  // transparent neighbor lies outside the component's contour bounds.
+  std::vector<int> component;
+  const auto visit = [&](int x, int y) {
+    if (x < 0 || y < 0 || x >= gridWidth || y >= gridHeight) return;
+    const int cell = y * gridWidth + x;
+    if (edges[cell] != Pending) return;
+    edges[cell] = Visited;
+    component.push_back(cell);
+  };
+  for (int y = 0; y < gridHeight; ++y) {
+    if (canceled && *canceled) return false;
+    for (int x = 0; x < gridWidth; ++x) {
+      if (edges[y * gridWidth + x] != Pending) continue;
+      component.clear();
+      visit(x, y);
+      int left = x, right = x, bottom = y, top = y;
+      int emptyLeft = gridWidth, emptyRight = -1;
+      int emptyBottom = gridHeight, emptyTop = -1;
+      for (std::size_t i = 0; i < component.size(); ++i) {
+        if ((i & 255) == 0 && canceled && *canceled) return false;
+        const int cx = component[i] % gridWidth, cy = component[i] / gridWidth;
+        left   = std::min(left, cx);
+        right  = std::max(right, cx);
+        bottom = std::min(bottom, cy);
+        top    = std::max(top, cy);
+        // Candidate segments are connected wherever they share an endpoint
+        // on the grid between the raster's four coverage samples.
+        const int dx = cx & 1, dy = cy & 1;
+        visit(cx + 2 * dy, cy + 2 * dx);
+        visit(cx - 2 * dy, cy - 2 * dx);
+        for (int turnX : {-1, 1})
+          for (int turnY : {-1, 1}) visit(cx + turnX, cy + turnY);
+        for (int side : {-1, 1}) {
+          const int sx = cx + side * dx, sy = cy + side * dy;
+          if (hits[index(sx / 2, sy / 2)].alpha != 0) continue;
+          emptyLeft   = std::min(emptyLeft, sx);
+          emptyRight  = std::max(emptyRight, sx);
+          emptyBottom = std::min(emptyBottom, sy);
+          emptyTop    = std::max(emptyTop, sy);
+        }
+      }
+      const bool exterior = emptyLeft < left || emptyRight > right ||
+                            emptyBottom < bottom || emptyTop > top;
+      if (!exterior && std::max(right - left, top - bottom) < MinContourSpan)
+        continue;
+      for (std::size_t i = 0; i < component.size(); ++i) {
+        if ((i & 255) == 0 && canceled && *canceled) return false;
+        const int cx = component[i] % gridWidth, cy = component[i] / gridWidth;
+        const int sx = cx / 2, sy = cy / 2;
+        const auto &a = hits[index(sx, sy)];
+        const auto &b = hits[index(sx + (cx & 1), sy + (cy & 1))];
+        draw(cx, cy, a.depth >= b.depth ? a : b);
+      }
     }
   }
   return true;
@@ -891,9 +967,31 @@ std::vector<ColorPixel> renderToonTile(const RenderScene &scene,
                                        const RenderTile &tile,
                                        const int *canceled, int nesting,
                                        const ToonLineRaster &toon) {
+  auto brush = toon;
+  if (brush.style.bottomWeight > 0) {
+    // Use the actual screen-space extent of the model surfaces. Ink Line
+    // splines and visible light markers must not move the weight gradient.
+    double bottom = std::numeric_limits<double>::infinity();
+    double top    = -bottom;
+    const auto &m = tile.affine;
+    for (const auto &triangle : scene.triangles) {
+      if (canceled && *canceled) return {};
+      if (!triangle.toonSurface) continue;
+      for (const auto &v : triangle.vertices) {
+        const double y = m[3] * v.x + m[4] * v.y + m[5];
+        bottom         = std::min(bottom, y);
+        top            = std::max(top, y);
+      }
+    }
+    if (top > bottom) {
+      brush.bottom = bottom;
+      brush.middle = 0.5 * bottom + 0.5 * top;
+    }
+  }
   const double scale = std::max(toon.scaleX, toon.scaleY);
   const int margin =
-      int(std::ceil(toon.radius(toon.style.maximumRadius()) * scale)) + 2;
+      int(std::ceil(toon.radius(toon.style.maximumRadius()) * scale)) + 2 +
+      MinContourSpan / 4;
   std::vector<ColorPixel> result(std::size_t(tile.width) * tile.height);
   // Bound scratch space for the depth, coverage and transparency buffers, even
   // when a caller supplies a full frame or a wide film-resolution tile.
@@ -907,7 +1005,7 @@ std::vector<ColorPixel> renderToonTile(const RenderScene &scene,
       request.width  = columns + 2 * margin;
       request.height = rows + 2 * margin;
       const auto pixels =
-          renderLayeredTile(scene, request, canceled, nesting, &toon, true);
+          renderLayeredTile(scene, request, canceled, nesting, &brush, true);
       if (pixels.empty()) return {};
       for (int row = 0; row < rows; ++row)
         std::copy_n(
@@ -964,9 +1062,13 @@ std::vector<ColorPixel> renderLayeredTile(const RenderScene &scene,
   if (toon && scene.layers.empty() && !padded)
     return renderToonTile(scene, tile, canceled, nesting, *toon);
 
+  // Four hits per pixel, a quarter-pixel edge grid and up to eight
+  // edge indices per pixel (including vector growth).
   const std::size_t contourMemory =
-      toon && scene.layers.empty() ? 4 * (sizeof(ContourSample) + sizeof(float))
-                                   : 0;
+      toon && scene.layers.empty()
+          ? 4 * (sizeof(ContourSample) + sizeof(float)) +
+                16 * (sizeof(unsigned char) + sizeof(int))
+          : 0;
   const std::size_t bytesPerPixel =
       std::size_t(nesting + 2) * sizeof(ColorPixel) + 4 * sizeof(Sample) +
       contourMemory;
@@ -1190,8 +1292,7 @@ std::vector<ColorPixel> renderLayeredTile(const RenderScene &scene,
   ColorPixel stroke;
   if (toon) {
     coverage.resize(count * 4);
-    if (!drawContours(scene, *toon, contourHits, tile.width, tile.height,
-                      canceled, coverage))
+    if (!drawContours(scene, *toon, contourHits, tile, canceled, coverage))
       return {};
     const auto &color = toon->style.color;
     stroke            = outputPixel({color[0] * color[3], color[1] * color[3],

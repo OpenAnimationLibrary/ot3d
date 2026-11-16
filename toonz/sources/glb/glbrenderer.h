@@ -152,9 +152,12 @@ inline float lightLuminance(double r, double g, double b) {
 struct ToonLineStyle {
   double width             = 1.5;  // Full stroke width in image plane units.
   double lightingInfluence = 0.75;
+  double bottomWeight      = 0;
   std::array<float, 4> color{{0, 0, 0, 1}};
 
-  double maximumRadius() const { return 0.5 * width * (1 + lightingInfluence); }
+  double maximumRadius() const {
+    return 0.5 * width * (1 + lightingInfluence + bottomWeight);
+  }
 };
 
 struct RenderScene;
