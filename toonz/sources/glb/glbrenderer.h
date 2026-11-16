@@ -178,8 +178,12 @@ struct RenderScene {
   // Results are premultiplied sRGB. Transparent hits composite in linear light.
   std::function<ColorPixel(std::size_t, const std::array<double, 3> &)>
       sampleShader;
-  std::function<SurfaceSample(std::size_t, const std::array<double, 3> &)>
-      surfaceShader;
+  using SurfaceShader =
+      std::function<SurfaceSample(std::size_t, const std::array<double, 3> &)>;
+  SurfaceShader surfaceShader;
+  // Bind both evaluators to a single immutable payload so copying a render
+  // scene for visible lights does not duplicate the per-triangle shader data.
+  void setSurfaceShader(SurfaceShader shader);
   std::size_t surfaceCount = 0;
   bool surfacePerspective  = false;
   std::vector<EnvironmentLayer> environments;
@@ -241,7 +245,8 @@ RenderScene projectImagePlane(int width, int height,
 // Existing material shaders and source geometry remain immutable.
 void appendVisibleLight(RenderScene &scene,
                         const std::array<double, 3> &position, double radius,
-                        const std::array<float, 3> &radiance);
+                        const std::array<float, 3> &radiance,
+                        const int *canceled = nullptr);
 std::optional<std::array<double, 3>> targetCenter(
     const RenderScene &scene,
     const std::array<double, 6> &affine = {{1, 0, 0, 0, 1, 0}});

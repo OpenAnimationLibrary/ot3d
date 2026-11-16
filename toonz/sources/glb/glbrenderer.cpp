@@ -237,6 +237,18 @@ ColorPixel shadeSurfaceSample(const SurfaceSample &s,
           linearToSrgbExtended(color[2]) * s.alpha, s.alpha};
 }
 
+void RenderScene::setSurfaceShader(SurfaceShader shader) {
+  auto shared   = std::make_shared<const SurfaceShader>(std::move(shader));
+  surfaceShader = [shared](std::size_t index,
+                           const std::array<double, 3> &bary) {
+    return (*shared)(index, bary);
+  };
+  sampleShader = [shared, layers = environments](
+                     std::size_t index, const std::array<double, 3> &bary) {
+    return shadeSurfaceSample((*shared)(index, bary), layers);
+  };
+}
+
 RenderScene prepareRender(const Asset &asset, const RenderOptions &o,
                           const int *canceled) {
   for (double v : o.position) require(std::isfinite(v), "Non-finite GLB position.");
@@ -560,10 +572,10 @@ RenderScene prepareRender(const Asset &asset, const RenderOptions &o,
     out.environments       = o.lighting.environments;
     out.surfaceCount       = out.triangles.size();
     out.surfacePerspective = o.perspective;
-    out.surfaceShader =
+    out.setSurfaceShader(
         [samples = std::move(environmentSamples), triangles = out.triangles,
-         layers = o.lighting.environments, rig = o.lighting, sampleLights,
-         perspective = o.perspective, eye, ortho,
+         rig = o.lighting, sampleLights, perspective = o.perspective, eye,
+         ortho,
          cameraNormals](std::size_t index, const std::array<double, 3> &bary) {
           const auto &s = samples.at(index);
           auto weights  = bary;
@@ -633,13 +645,8 @@ RenderScene prepareRender(const Asset &asset, const RenderOptions &o,
           for (auto &component : result.view) component *= l;
           result.diffuse = s.albedo;
           return result;
-        };
+        });
   }
-  if (out.surfaceShader)
-    out.sampleShader = [surface = out.surfaceShader, layers = out.environments](
-                           std::size_t i, const std::array<double, 3> &b) {
-      return shadeSurfaceSample(surface(i, b), layers);
-    };
   if (worldBounds) {
     std::array<double, 3> center{};
     for (int k = 0; k < 3; ++k)
@@ -681,7 +688,9 @@ std::optional<std::array<double, 3>> targetCenter(
 
 void appendVisibleLight(RenderScene &scene,
                         const std::array<double, 3> &position, double radius,
-                        const std::array<float, 3> &radiance) {
+                        const std::array<float, 3> &radiance,
+                        const int *canceled) {
+  if (canceled && *canceled) return;
   require(std::isfinite(radius) && radius > 0, "Invalid visible light size.");
   for (double v : position)
     require(std::isfinite(v), "Invalid visible light position.");
@@ -690,7 +699,8 @@ void appendVisibleLight(RenderScene &scene,
   for (auto &layer : scene.layers) {
     if (!layer.scene) continue;
     auto copy = std::make_shared<RenderScene>(*layer.scene);
-    appendVisibleLight(*copy, position, radius, radiance);
+    appendVisibleLight(*copy, position, radius, radiance, canceled);
+    if (canceled && *canceled) return;
     layer.scene   = copy;
     const auto &a = layer.affine;
     const auto &b = copy->bounds;
@@ -715,7 +725,9 @@ void appendVisibleLight(RenderScene &scene,
          position[1] + radius * std::sin(latitude),
          position[2] + radius * std::cos(latitude) * std::sin(longitude)}};
   };
-  for (int row = 0; row < 12; ++row)
+  std::vector<RenderTriangle> emitter;
+  for (int row = 0; row < 12; ++row) {
+    if (canceled && *canceled) return;
     for (int col = 0; col < 24; ++col) {
       const auto a = vertex(row, col), b = vertex(row, col + 1),
                  c = vertex(row + 1, col + 1), d = vertex(row + 1, col);
@@ -723,28 +735,36 @@ void appendVisibleLight(RenderScene &scene,
                                 RenderScene::WorldTriangle{{a, c, d}}})
         for (auto triangle : scene.projectTriangle(world)) {
           triangle.color = radiance;
-          for (const auto &v : triangle.vertices) {
+          for (const auto &v : triangle.vertices)
             require(std::isfinite(v.x) && std::isfinite(v.y) &&
                         std::isfinite(v.depth),
                     "Invalid light projection.");
-            if (scene.triangles.empty()) scene.bounds = {{v.x, v.y, v.x, v.y}};
-            scene.bounds[0] = std::min(scene.bounds[0], v.x);
-            scene.bounds[1] = std::min(scene.bounds[1], v.y);
-            scene.bounds[2] = std::max(scene.bounds[2], v.x);
-            scene.bounds[3] = std::max(scene.bounds[3], v.y);
-          }
-          scene.triangles.push_back(triangle);
+          emitter.push_back(triangle);
         }
     }
-  if (scene.triangles.size() == first) return;
-  const auto shader = scene.sampleShader;
+  }
+  if (emitter.empty()) return;
+  if (scene.triangles.empty()) {
+    const auto &v = emitter.front().vertices.front();
+    scene.bounds  = {{v.x, v.y, v.x, v.y}};
+  }
+  for (const auto &triangle : emitter)
+    for (const auto &v : triangle.vertices) {
+      scene.bounds[0] = std::min(scene.bounds[0], v.x);
+      scene.bounds[1] = std::min(scene.bounds[1], v.y);
+      scene.bounds[2] = std::max(scene.bounds[2], v.x);
+      scene.bounds[3] = std::max(scene.bounds[3], v.y);
+    }
+  scene.triangles.insert(scene.triangles.end(), emitter.begin(), emitter.end());
+  auto shader = std::move(scene.sampleShader);
   std::vector<std::array<float, 3>> colors;
   if (!shader) {
     colors.reserve(first);
     for (std::size_t i = 0; i < first; ++i)
       colors.push_back(scene.triangles[i].color);
   }
-  scene.sampleShader = [shader, first, colors = std::move(colors), radiance](
+  scene.sampleShader = [shader = std::move(shader), first,
+                        colors = std::move(colors), radiance](
                            std::size_t i, const std::array<double, 3> &bary) {
     if (i >= first) return ColorPixel{radiance[0], radiance[1], radiance[2], 1};
     if (shader) return shader(i, bary);

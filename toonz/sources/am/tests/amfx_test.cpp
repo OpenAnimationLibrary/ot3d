@@ -387,6 +387,47 @@ void testToonLine(ToonzScene &source) {
   terminal->addFx(light.getPointer());
   require(coverage(render(scene, info)) == shadow,
           "Downstream lighting changed the Toon Line result");
+
+  TFxP point = new PointLightFx;
+  dag->getInternalFxs()->addFx(point.getPointer());
+  point->getInputPort(1)->setFx(column);
+  set(*point, "positionZ", 100);
+  set(*point, "falloffRadius", 100);
+  set(*point, "intensity", 25);
+  set(*point, "visibleSize", 5);
+  set(*toon, "bottomWeight", 40);
+  auto *mode =
+      dynamic_cast<TIntEnumParam *>(point->getParams()->getParam("lightType"));
+  auto *visible =
+      dynamic_cast<TBoolParam *>(point->getParams()->getParam("visible"));
+  require(mode && visible, "Point Light controls missing");
+  terminal->removeFx(light.getPointer());
+  for (int type : {0, 1, 2}) {
+    mode->setValue(type);
+    double withoutEmitter = 0;
+    for (bool showEmitter : {false, true}) {
+      visible->setValue(showEmitter);
+      point->getInputPort(0)->setFx(column);
+      toon->getInputPort(0)->setFx(point.getPointer());
+      terminal->addFx(toon.getPointer());
+      const auto toonLast = render(scene, info);
+      terminal->removeFx(toon.getPointer());
+      toon->getInputPort(0)->setFx(column);
+      point->getInputPort(0)->setFx(toon.getPointer());
+      terminal->addFx(point.getPointer());
+      const auto lightLast = render(scene, info);
+      terminal->removeFx(point.getPointer());
+      require(coverage(toonLast) > base &&
+                  coverage(toonLast) == coverage(lightLast) &&
+                  brightness(toonLast) == brightness(lightLast),
+              "Point Light and Toon Line failed to render in both node orders");
+      if (showEmitter)
+        require(brightness(toonLast) > withoutEmitter,
+                "Point Light's visible source was lost in the Toon Line chain");
+      else
+        withoutEmitter = brightness(toonLast);
+    }
+  }
 }
 
 void testInkLine(const QString &path) {

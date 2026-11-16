@@ -896,15 +896,21 @@ public:
       const bool useRig      = lighting && !lighting->preserveDefaultLighting;
       const auto rig         = lighting ? *lighting : otglb::LightingRig();
       const otam::Vec3 eye{{cameraPose[3], cameraPose[7], cameraPose[11]}};
-      const auto triangles = scene->triangles;
       scene->environments       = rig.environments;
       scene->surfaceCount       = scene->triangles.size();
       scene->surfacePerspective = perspective;
-      scene->surfaceShader      = [samples = std::move(samples), surfaces,
-                              perspective, useRig, rig, eye, sampleLights,
-                              smoothLighting,
-                              triangles](std::size_t index,
-                                         const std::array<double, 3> &bary) {
+      std::vector<std::array<double, 3>> depths;
+      if (perspective) {
+        depths.reserve(scene->triangles.size());
+        for (const auto &t : scene->triangles)
+          depths.push_back({{t.vertices[0].depth, t.vertices[1].depth,
+                             t.vertices[2].depth}});
+      }
+      auto shade = [samples  = std::move(samples),
+                    surfaces = std::move(surfaces), perspective, useRig, rig,
+                    eye, sampleLights, smoothLighting,
+                    depths = std::move(depths)](
+                       std::size_t index, const std::array<double, 3> &bary) {
         const auto &sample = samples.at(index);
         if (sample.binding < 0 && rig.environments.empty() && !sampleLights &&
             !smoothLighting)
@@ -915,7 +921,7 @@ public:
         if (perspective) {
           double sum = 0;
           for (int j = 0; j < 3; ++j) {
-            weights[j] *= triangles[index].vertices[j].depth;
+            weights[j] *= depths[index][j];
             sum += weights[j];
           }
           for (double &w : weights) w /= sum;
@@ -1026,11 +1032,7 @@ public:
         }
         return result;
       };
-      scene->sampleShader = [surface = scene->surfaceShader,
-                             layers  = scene->environments](
-                                std::size_t i, const std::array<double, 3> &b) {
-        return otglb::shadeSurfaceSample(surface(i, b), layers);
-      };
+      scene->setSurfaceShader(std::move(shade));
       for (const auto &binding : bindings)
         for (const auto &attribute : binding.material.deferred)
           if (rig.environments.empty())
