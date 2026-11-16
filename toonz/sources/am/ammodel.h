@@ -39,10 +39,15 @@ struct ControlPoint {
   std::array<double, 6> bias{{0, 0, 1, 0, 0, 1}};
   std::string sourceRecord;
   std::size_t head = 0;
+  bool isSplineHook = false;
 };
 struct Spline {
   std::vector<std::size_t> points;  // CP occurrences, never welded by position.
   bool closed = false;
+};
+struct SplineHook {
+  std::size_t point, spline, segment;
+  double fraction;
 };
 struct Patch {
   std::uint32_t flags = 0;
@@ -70,7 +75,11 @@ struct Model {
   std::vector<Group> groups;
   std::vector<NativeBone> bones;
   std::vector<int> boneByHead;  // -1 for an unassigned position.
+  std::vector<SplineHook> splineHooks;  // Dependency order.
 };
+
+// Refresh derived hook positions after editing or posing the host spline.
+void updateSplineHooks(Model &model);
 struct PlasticBone {
   Vec3 restStart, restEnd, posedStart, posedEnd;
   bool spatial = false;

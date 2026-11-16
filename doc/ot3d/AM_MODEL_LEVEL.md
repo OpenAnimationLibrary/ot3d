@@ -20,8 +20,9 @@ Missing or unsupported models report an error rather than creating empty levels.
 If a control point mixes a compact default tangent with a custom tangent,
 OT3D reports the first affected control point and the number of affected
 records. Choose **Save Repaired Copy…** to expand the defaults and load the
-new `.mdl` while keeping the original file intact. Spline hooks are reported
-with their control point and line number. They require native hook evaluation.
+new `.mdl` while keeping the original file intact. A spline hook follows its
+fractional position along its host spline. Hook positions follow edits and
+poses on the host, and the Control Point Editor moves the host points.
 
 Select its column and choose the **Animate Tool**. Position uses existing X/Y/Z.
 Rotation adds **Rx/Ry**, with existing Angle presented as **Rz**. Scale adds **Z**
@@ -217,7 +218,7 @@ informed by the SDK's
 Coincident but unattached points remain separate.
 
 **Unknown/deferred:** exact modern tangent rules, interior subdivision heuristic,
-peaked/special CP flags, hooks, five-point evaluation, complete patch orientation
+peaked/special CP flags, exact Hash hook and five-point patch evaluation, patch orientation
 semantics and topology-driven patch discovery. Only explicit supported patches
 are previewed. Models without usable explicit patches are rejected with a clear
 message. Complex models can be partial and are not a compliance claim. Do not use
