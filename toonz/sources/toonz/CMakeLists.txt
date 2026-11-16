@@ -50,6 +50,7 @@ set(MOC_HEADERS
     fxparameditorpopup.h
     histogrampopup.h
     historypane.h
+    hybridsceneviewer.h
     imageviewer.h
     insertfxpopup.h
     layerfooterpanel.h
@@ -87,6 +88,7 @@ set(MOC_HEADERS
     scanpopup.h
     scenebrowser.h
     scenesettingspopup.h
+    liverendercontroller.h
     hybridsceneviewer.h
     sceneviewer.h
     sceneviewercontextmenu.h
@@ -272,6 +274,8 @@ set(SOURCES
     xshnoteviewer.cpp
     xshrowviewer.cpp
     xshtoolbar.cpp
+    liverendercontroller.cpp
+    ../glb/livegpu.cpp
     hybridsceneviewer.cpp
     sceneviewer.cpp
     sceneviewerevents.cpp

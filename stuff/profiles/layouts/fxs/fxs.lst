@@ -202,6 +202,7 @@
     STD_inkLineFx
     STD_imageBasedLightingFx
     STD_environmentReflectionFx
+    STD_pointLightFx
     STD_threePointLightFx
     STD_merge3DFx
   </3D>

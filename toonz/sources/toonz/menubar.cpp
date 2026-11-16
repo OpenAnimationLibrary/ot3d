@@ -136,6 +136,18 @@ void ensureAlignmentPanelAction(QMenu *windowsMenu) {
     windowsMenu->addAction(alignment);
 }
 
+void ensureLiveRenderAction(QMenu *renderMenu) {
+  auto *commands                 = CommandManager::instance();
+  QAction *liveRender            = commands->getAction(MI_LiveRender);
+  const QList<QAction *> actions = renderMenu->actions();
+  if (!liveRender || actions.contains(liveRender)) return;
+
+  int anchor = actions.indexOf(commands->getAction(MI_Preview));
+  if (anchor < 0) anchor = actions.indexOf(commands->getAction(MI_Render));
+  if (anchor >= 0)
+    renderMenu->insertAction(actions.value(anchor + 1), liveRender);
+}
+
 }  // namespace
 
 //=============================================================================
@@ -384,6 +396,7 @@ QMenuBar *StackedMenuBar::loadMenuBar(const TFilePath &fp) {
               if (library && !menu->actions().contains(library))
                 menu->addAction(library);
             }
+            if (title == QStringLiteral("Render")) ensureLiveRenderAction(menu);
             menuBar->addMenu(menu);
           } else {
             reader.raiseError(tr("Failed to load menu %1").arg(title));
@@ -715,6 +728,7 @@ QMenuBar *StackedMenuBar::createPltEditMenuBar() {
   QMenu *renderMenu = addMenu(tr("Render"), pltEditMenuBar);
   addMenuItem(renderMenu, MI_PreviewSettings);
   addMenuItem(renderMenu, MI_Preview);
+  addMenuItem(renderMenu, MI_LiveRender);
   addMenuItem(renderMenu, MI_SavePreviewedFrames);
   renderMenu->addSeparator();
   addMenuItem(renderMenu, MI_OutputSettings);
@@ -1084,6 +1098,7 @@ QMenuBar *StackedMenuBar::createXsheetMenuBar() {
   QMenu *renderMenu = addMenu(tr("Render"), xsheetMenuBar);
   addMenuItem(renderMenu, MI_PreviewSettings);
   addMenuItem(renderMenu, MI_Preview);
+  addMenuItem(renderMenu, MI_LiveRender);
   addMenuItem(renderMenu, MI_SavePreviewedFrames);
   renderMenu->addSeparator();
   addMenuItem(renderMenu, MI_OutputSettings);
@@ -1517,6 +1532,7 @@ QMenuBar *StackedMenuBar::createFullMenuBar() {
   QMenu *renderMenu = addMenu(tr("Render"), fullMenuBar);
   addMenuItem(renderMenu, MI_PreviewSettings);
   addMenuItem(renderMenu, MI_Preview);
+  addMenuItem(renderMenu, MI_LiveRender);
   // addMenuItem(renderMenu, MI_SavePreview);
   addMenuItem(renderMenu, MI_SavePreviewedFrames);
   renderMenu->addSeparator();

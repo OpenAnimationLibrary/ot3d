@@ -2,6 +2,7 @@
 
 #include "sceneviewer.h"
 #include "sceneviewercontextmenu.h"
+#include "hybridsceneviewer.h"
 
 #include "amactionmenu.h"
 #include "vectoractionmenu.h"
@@ -59,6 +60,14 @@ SceneViewerContextMenu::SceneViewerContextMenu(SceneViewer *parent)
 
   addAction(commandManager->getAction(MI_OpenPrimitiveLibrary));
   addSeparator();
+  if (auto *hybrid = dynamic_cast<HybridSceneViewer *>(parent)) {
+    QAction *live = addAction(tr("Live Render"));
+    live->setCheckable(true);
+    live->setChecked(hybrid->isLiveRenderEnabled());
+    connect(live, &QAction::toggled, hybrid,
+            &HybridSceneViewer::setLiveRenderEnabled);
+    addSeparator();
+  }
 
   // tool
   TTool *tool = app->getCurrentTool()->getTool();
