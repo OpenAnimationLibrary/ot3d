@@ -141,6 +141,7 @@ struct Triangle {
   // Empty/false retains flat shading for triangles and manually built meshes.
   std::array<Vec3, 3> normals{};
   bool hasNormals = false;
+  float illumination = -1;  // Optional linear diffuse energy for Toon Line.
 };
 struct InkCurve {
   std::array<Vec3, 4> points;

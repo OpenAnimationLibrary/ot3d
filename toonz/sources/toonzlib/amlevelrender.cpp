@@ -350,16 +350,27 @@ otam::Vec3 nativeModelDropPosition(TXsheet *xsheet, int frame,
           localEye[1] + t * (localFocus[1] - localEye[1]), 0};
 }
 
-static otam::Color litPaletteColor(const otam::Color &color,
-                                   const otam::Vec3 &normal,
-                                   const otam::Vec3 &position,
-                                   const otglb::LightingRig &rig) {
+static std::array<double, 3> diffuseEnergy(const otam::Vec3 &normal,
+                                           const otam::Vec3 &position,
+                                           const otglb::LightingRig &rig) {
   std::array<double, 3> energy{rig.ambient, rig.ambient, rig.ambient};
   for (const auto &light : rig.lights) {
     const double diffuse = light.diffuse(normal, position);
     for (int k = 0; k < 3; ++k)
       energy[k] += diffuse * otglb::srgbToLinear(light.color[k]);
   }
+  return energy;
+}
+
+static otam::Color litPaletteColor(const otam::Color &color,
+                                   const otam::Vec3 &normal,
+                                   const otam::Vec3 &position,
+                                   const otglb::LightingRig &rig,
+                                   float &illumination) {
+  const auto energy = diffuseEnergy(normal, position, rig);
+  if (!rig.lights.empty() || rig.ambient > 0)
+    illumination =
+        otglb::lightLuminance(energy[0], energy[1], energy[2]) * rig.master;
   otam::Color result;
   for (int k = 0; k < 3; ++k)
     result[k] = otglb::linearToSrgb(
@@ -757,7 +768,8 @@ public:
                                cameraPose[11] - center[2]}};
         const double facing = n[0] * view[0] + n[1] * view[1] + n[2] * view[2];
         for (double &v : n) v /= facing < 0 ? -length : length;
-        triangle.color = litPaletteColor(triangle.color, n, center, *lighting);
+        triangle.color = litPaletteColor(triangle.color, n, center, *lighting,
+                                         triangle.illumination);
       }
     }
     std::vector<otam::InkTriangle> strokes;
@@ -846,6 +858,8 @@ public:
     for (const auto &t : mesh.triangles) {
       if (canceled && *canceled) return {};
       appendTriangle(t.vertices, t.color);
+      scene->triangles.back().toonSurface  = true;
+      scene->triangles.back().illumination = t.illumination;
     }
     if (!assigned.empty() || smoothLighting || hasEnvironment || sampleLights) {
       struct MaterialSample {
@@ -943,16 +957,20 @@ public:
         const double headlight = 0.2 + 0.8 * std::max(0.0, dot(normal, view));
         if (sample.binding < 0 && rig.environments.empty()) {
           auto color = sample.color;
+          float illumination = -1;
           if (useRig) {
-            color = litPaletteColor(color, normal, position, rig);
+            color = litPaletteColor(color, normal, position, rig, illumination);
           } else {
             for (float &channel : color)
               channel = otglb::linearToSrgb(
                    float(otglb::srgbToLinear(channel) * headlight));
           }
-          return otglb::SurfaceSample{
-              {{otglb::srgbToLinear(color[0]), otglb::srgbToLinear(color[1]),
-                otglb::srgbToLinear(color[2])}}};
+          otglb::SurfaceSample result;
+          result.local        = {{otglb::srgbToLinear(color[0]),
+                                  otglb::srgbToLinear(color[1]),
+                                  otglb::srgbToLinear(color[2])}};
+          result.illumination = illumination;
+          return result;
         }
         const ResolvedSurface fallback{otam::Surface(), true};
         const auto &binding =
@@ -1000,6 +1018,12 @@ public:
         result.distanceFalloff = surface.reflectivityFalloff;
         result.diffuseFalloff  = surface.diffuseFalloff;
         result.alpha           = float(1 - surface.transparency);
+        if (useRig && (!rig.lights.empty() || rig.ambient > 0)) {
+          const auto energy = diffuseEnergy(normal, position, rig);
+          result.illumination =
+              otglb::lightLuminance(energy[0], energy[1], energy[2]) *
+              rig.master;
+        }
         return result;
       };
       scene->sampleShader = [surface = scene->surfaceShader,

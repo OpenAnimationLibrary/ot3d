@@ -134,6 +134,10 @@
   <item>"STD_inkLineFx.roughness" "Roughness (%)" </item>
   <item>"STD_inkLineFx.fadeIn" "Start Fade Length (%)" </item>
   <item>"STD_inkLineFx.fadeOut" "End Fade Length (%)" </item>
+  <item>"STD_toonLineFx" "Toon Line" </item>
+  <item>"STD_toonLineFx.width" "Width" </item>
+  <item>"STD_toonLineFx.color" "Line Color" </item>
+  <item>"STD_toonLineFx.lightInfluence" "Lighting Influence (%)" </item>
   <item>"STD_merge3DFx" "3D Merge" </item>
   <item>"STD_threePointLightFx.masterIntensity" "Master Intensity (%)" </item>
   <item>"STD_threePointLightFx.ambient" "Ambient (%)" </item>

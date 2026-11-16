@@ -1,0 +1,8 @@
+<fxlayout>
+  <page name="Toon Line">
+    <label>"Lighting Influence thickens contours on the shadow side when the model is lit by a 3D lighting FX."</label>
+    <control>width</control>
+    <control>color</control>
+    <control>lightInfluence</control>
+  </page>
+</fxlayout>

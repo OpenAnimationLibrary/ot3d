@@ -5,6 +5,7 @@
 #include "../../stdfx/ammaterialfx.cpp"
 #include "../../stdfx/amdistortioncagefx.cpp"
 #include "../../stdfx/inklinefx.cpp"
+#include "../../stdfx/toonlinefx.cpp"
 #include "../../stdfx/surfacesmoothing3dfx.cpp"
 #include "../../stdfx/transform3dfx.cpp"
 #include "../../stdfx/threepointlightfx.cpp"
@@ -332,6 +333,56 @@ void testDistortionCage(const QTemporaryDir &temp) {
   set(cage, "strength", 0);
   require(cage.get3DRenderGeometry(8, nullptr)->bounds == rest->bounds,
           "zero strength changed input geometry");
+}
+
+void testToonLine(ToonzScene &source) {
+  ToonzScene scene;
+  auto *sheet = scene.getXsheet();
+  require(sheet->setCell(0, 0, source.getXsheet()->getCell(0, 0)),
+          "Toon Line test model exposure");
+  auto *column = sheet->getColumn(0)->getFx();
+  TFxP toon    = new ToonLineFx;
+  TFxP light   = new ThreePointLightFx;
+  require(canConnectFxPort(toon->getInputPort(0), column),
+          "Toon Line rejected a native A:M model column");
+  auto *dag      = sheet->getFxDag();
+  auto *terminal = dag->getTerminalFxs();
+  TRenderSettings info;
+  const double base = coverage(render(scene, info));
+  require(base > 0, "Toon Line model fixture has no fill");
+  toon->getInputPort(0)->setFx(column);
+  dag->getInternalFxs()->addFx(toon.getPointer());
+  terminal->removeFx(column);
+  terminal->addFx(toon.getPointer());
+  set(*toon, "width", 6);
+  set(*toon, "lightInfluence", 100);
+  const double unlit = coverage(render(scene, info));
+  require(unlit > base, "Toon Line did not extend the native silhouette");
+  set(*toon, "width", 0);
+  require(coverage(render(scene, info)) == base,
+          "Zero width altered the model");
+  set(*toon, "width", 6);
+
+  set(*light, "ambient", 0);
+  set(*light, "fillIntensity", 0);
+  set(*light, "rimIntensity", 0);
+  set(*light, "keyElevation", 0);
+  light->getInputPort(0)->setFx(column);
+  toon->getInputPort(0)->setFx(light.getPointer());
+  dag->getInternalFxs()->addFx(light.getPointer());
+  set(*light, "keyAzimuth", 0);
+  const double bright = coverage(render(scene, info));
+  set(*light, "keyAzimuth", 180);
+  const double shadow = coverage(render(scene, info));
+  require(shadow > bright,
+          "Upstream lighting did not thicken the shadow outline");
+
+  toon->getInputPort(0)->setFx(column);
+  light->getInputPort(0)->setFx(toon.getPointer());
+  terminal->removeFx(toon.getPointer());
+  terminal->addFx(light.getPointer());
+  require(coverage(render(scene, info)) == shadow,
+          "Downstream lighting changed the Toon Line result");
 }
 
 void testInkLine(const QString &path) {
@@ -1181,6 +1232,7 @@ int main(int argc, char **argv) {
     testInkLine(temp.filePath("ink-lines.mdl"));
     testDistortionCage(temp);
     testVectorInkLine(temp);
+    testToonLine(scene);
     testShine(scene, temp.filePath("shine.mat"));
     testSurfaceSmoothing();
     const auto original = level->getAMLevel()->mesh();

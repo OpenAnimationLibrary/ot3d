@@ -23,6 +23,7 @@ void append(LiveFrame &out, const RenderScene &scene,
             const std::atomic<bool> *obsolete) {
   require(depth < 64, "Live Render group nesting exceeds 64");
   if ((canceled && *canceled) || (obsolete && obsolete->load())) return;
+  require(!scene.toonLine, "Toon Line uses the software renderer; use Preview");
   for (int k = 0; k < 3; ++k)
     scale[k] = 1 - (1 - scale[k]) * (1 - scene.colorScale[k]);
   scale[3] *= scene.colorScale[3];
