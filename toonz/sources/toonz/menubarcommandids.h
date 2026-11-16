@@ -520,6 +520,8 @@
 #define MI_PrevTaggedFrame "MI_PrevTaggedFrame"
 #define MI_ClearTags "MI_ClearTags"
 
+#define MI_LiveRender "MI_LiveRender"
+
 #define MI_OpenLocator "MI_OpenLocator"
 #define MI_OpenAlignmentPanel "MI_OpenAlignmentPanel"
 

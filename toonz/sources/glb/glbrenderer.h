@@ -23,6 +23,15 @@ struct PointPlacement {
   }
 };
 
+struct SpotCone {
+  // Axis points out of the light; angles are half angles in degrees.
+  std::array<double, 3> axis{{0, 0, -1}};
+  double inner = 20.0, outer = 30.0;
+  bool operator==(const SpotCone &b) const {
+    return axis == b.axis && inner == b.inner && outer == b.outer;
+  }
+};
+
 struct DiffuseLight {
   // Direction in the source's lighting space. Point positions are world-space.
   std::array<double, 3> direction{{0.0, 0.0, 1.0}};
@@ -30,10 +39,14 @@ struct DiffuseLight {
   std::array<float, 3> color{{1.0f, 1.0f, 1.0f}};
   double intensity = 1.0;
   std::optional<PointPlacement> point;
+  std::optional<SpotCone> spot;
+  // Existing rigs retain camera-relative directional lighting in GLB FX.
+  bool worldDirection = false;
 
   bool operator==(const DiffuseLight &other) const {
     return direction == other.direction && color == other.color &&
-           intensity == other.intensity && point == other.point;
+           intensity == other.intensity && point == other.point &&
+           spot == other.spot && worldDirection == other.worldDirection;
   }
 
   void validate() const;
@@ -96,8 +109,9 @@ struct RenderOptions {
   std::vector<ModelTransform> transforms;
 
   // NoIndex preserves the historical static/base-geometry path exactly.
-  // A valid index evaluates that embedded glTF clip at sourceSeconds and applies
-  // node animation plus skinning before projection. Time is always glTF seconds.
+  // A valid index evaluates that embedded glTF clip at sourceSeconds and
+  // applies node animation plus skinning before projection. Time is always glTF
+  // seconds.
   int animation = NoIndex;
   double sourceSeconds = 0.0;
 
@@ -117,6 +131,17 @@ struct RenderTriangle {
 struct ColorPixel {
   float r = 0, g = 0, b = 0, alpha = 0;  // Premultiplied sRGB.
 };
+// Linear-light surface evaluation shared by the software and live GPU paths.
+// Environment reflections remain unevaluated so the GPU can sample per pixel.
+struct SurfaceSample {
+  EnvironmentColor local{}, diffuse{{1, 1, 1}};
+  EnvironmentDirection normal{{0, 0, 1}}, view{{0, 0, 1}};
+  double reflectivity = 0, blend = 0, distanceFalloff = 0, diffuseFalloff = 1;
+  float alpha = 1;
+};
+ColorPixel shadeSurfaceSample(const SurfaceSample &sample,
+                              const std::vector<EnvironmentLayer> &layers);
+
 struct RenderScene;
 struct RenderLayer {
   std::shared_ptr<const RenderScene> scene;
@@ -135,11 +160,25 @@ struct RenderScene {
   // Results are premultiplied sRGB. Transparent hits composite in linear light.
   std::function<ColorPixel(std::size_t, const std::array<double, 3> &)>
       sampleShader;
+  std::function<SurfaceSample(std::size_t, const std::array<double, 3> &)>
+      surfaceShader;
+  std::size_t surfaceCount = 0;
+  bool surfacePerspective  = false;
+  std::vector<EnvironmentLayer> environments;
   std::array<double, 4> bounds{};  // x0, y0, x1, y1 in the fixed image plane.
   std::vector<std::string> warnings;
   std::vector<std::string>
       materialGroups;  // Native patch assignment discovery.
   std::vector<std::string> splineGroups;  // Native spline assignment discovery.
+  // Geometry metadata used by target-aware FX without raster evaluation.
+  std::optional<std::array<double, 3>> worldCenter;
+  using WorldTriangle = std::array<std::array<double, 3>, 3>;
+  std::function<std::vector<RenderTriangle>(const WorldTriangle &)>
+      projectTriangle;
+  // Apply a stage-image affine at the point's original camera depth.
+  std::function<std::array<double, 3>(const std::array<double, 3> &,
+                                      const std::array<double, 6> &)>
+      placeWorldPoint;
   bool wireframe = false;
   int textureWidth = 0, textureHeight = 0;
   std::shared_ptr<const std::vector<ColorPixel>> texture;
@@ -159,7 +198,8 @@ struct RenderTile {
 // the original static base-geometry path. Otherwise embedded node animation and
 // skeletal skinning are evaluated. Morph deformation remains deferred.
 // Uses the declared default scene, otherwise the first scene.
-// Throws std::runtime_error on invalid settings, animation data or resource limits.
+// Throws std::runtime_error on invalid settings, animation data or resource
+// limits.
 RenderScene prepareRender(const Asset &asset, const RenderOptions &options,
                           const int *canceled = nullptr);
 
@@ -178,6 +218,14 @@ RenderScene prepareImagePlane(
 RenderScene projectImagePlane(int width, int height,
                               const std::vector<ModelTransform> &transforms);
 
+// Append an emissive sphere in the source camera with ordinary depth testing.
+// Existing material shaders and source geometry remain immutable.
+void appendVisibleLight(RenderScene &scene,
+                        const std::array<double, 3> &position, double radius,
+                        const std::array<float, 3> &radiance);
+std::optional<std::array<double, 3>> targetCenter(
+    const RenderScene &scene,
+    const std::array<double, 6> &affine = {{1, 0, 0, 0, 1, 0}});
 // Extended transfer retains HDR for floating output; integer outputs clamp
 // here.
 float linearToSrgbExtended(float value);

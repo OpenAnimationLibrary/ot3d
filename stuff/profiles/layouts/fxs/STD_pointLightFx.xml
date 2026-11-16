@@ -1,0 +1,26 @@
+<fxlayout>
+  <page name="Light">
+    <label>"Light a native A:M/GLB Source. Chain Point Light nodes or place them after 3D Merge to add scene lights."</label>
+    <control>lightType</control>
+    <control>color</control>
+    <control>intensity</control>
+    <separator label="Position"/>
+    <control>positionX</control>
+    <control>positionY</control>
+    <control>positionZ</control>
+    <label>"Sun uses parallel rays. Bulb and Klieg use distance falloff, with authored intensity at Falloff Radius."</label>
+    <control>falloffRadius</control>
+    <separator label="Aim"/>
+    <label>"Sun and Klieg aim at these XYZ coordinates. With Target connected, XYZ offsets its animated 3D center. An empty Target falls back to XYZ."</label>
+    <control>targetX</control>
+    <control>targetY</control>
+    <control>targetZ</control>
+    <separator label="Klieg"/>
+    <control>coneAngle</control>
+    <control>coneSoftness</control>
+    <separator label="Visible Source"/>
+    <control>visible</control>
+    <control>visibleSize</control>
+    <label>"Render an emissive sphere at the light position. This size affects appearance only. Volumetric beams are separate."</label>
+  </page>
+</fxlayout>
