@@ -253,6 +253,62 @@ void testInk(const otam::Mesh &filled) {
   check(otam::strokeSplines(mesh, {ink}, nullptr, identity, &canceled).empty(),
         "ink ignored cancellation");
 }
+void testSurfaceSmoothing() {
+  otam::Mesh original;
+  const double depth = std::sqrt(1.0 / 3.0);
+  original.triangles.push_back(
+      {{{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}}}, {1, 0, 0}, 0});
+  // Round-off in the shared vertices is representative of patch boundaries.
+  original.triangles.push_back(
+      {{{{1, 0, 0}, {0, 6e-16, 0}, {0, -1, depth}}}, {0, 1, 0}, 1});
+  original.triangles.push_back(
+      {{{{0, 0, 0}, {2, 0, 0}, {2, 0, 1}}}, {0, 0, 1}, 2});
+  original.adjoiningPatches = {{0, 1}};
+
+  auto smooth = original;
+  check(otam::smoothNormals(smooth, {1, 55}), "normal smoothing failed");
+  const auto &left  = smooth.triangles[0].normals;
+  const auto &right = smooth.triangles[1].normals;
+  check(left[0] == right[1] && left[1] == right[0] && left[0][1] > 0.2,
+        "smooth boundary has discontinuous normals");
+  check(left[2] == otam::Vec3{0, 0, 1} &&
+            smooth.triangles[2].normals[0] == otam::Vec3{0, -1, 0},
+        "normals crossed a vertex-only join");
+  for (std::size_t i = 0; i < smooth.triangles.size(); ++i) {
+    check(smooth.triangles[i].vertices == original.triangles[i].vertices &&
+              smooth.triangles[i].color == original.triangles[i].color &&
+              smooth.triangles[i].patch == original.triangles[i].patch,
+          "normal smoothing changed source geometry or patch metadata");
+  }
+
+  auto half = original;
+  otam::smoothNormals(half, {0.5, 55});
+  check(half.triangles[0].normals[0][1] > 0.05 &&
+            half.triangles[0].normals[0][1] < left[0][1],
+        "strength did not blend smoothly");
+  auto sharp = original;
+  otam::smoothNormals(sharp, {1, 10});
+  check(sharp.triangles[0].normals[0] == otam::Vec3{0, 0, 1},
+        "crease threshold changed a hard edge");
+  auto disconnected = original;
+  disconnected.adjoiningPatches.clear();
+  otam::smoothNormals(disconnected, {1, 55});
+  check(disconnected.triangles[0].normals[0] == otam::Vec3{0, 0, 1},
+        "coincident A:M patches without a shared CP edge were smoothed");
+  disconnected.amMaterials = false;
+  otam::smoothNormals(disconnected, {1, 55});
+  check(disconnected.triangles[0].normals[0] == left[0],
+        "native GLB mesh did not smooth across a shared edge");
+
+  auto bypass = original;
+  otam::smoothNormals(bypass, {0, 55});
+  check(!bypass.triangles[0].hasNormals,
+        "zero strength changed source normals");
+  const int canceled = 1;
+  check(!otam::smoothNormals(bypass, {1, 55}, &canceled),
+        "normal smoothing ignored cancellation");
+}
+
 void testSplineProfile() {
   otam::Mesh mesh;
   mesh.splineGroups     = {"Middle"};
@@ -372,6 +428,7 @@ int main() {
     testPlasticBones();
     testSpatialPlasticBones();
     testSplineProfile();
+    testSurfaceSmoothing();
     near(mesh.triangles[0].color[0], 1);
     near(mesh.triangles[0].color[1], 0);
     for (const auto &t : mesh.triangles)
@@ -489,6 +546,65 @@ int main() {
         replace(source, "262145 1 3 2 . .", "262145 0 3 1 -1 0 . ."));
     check(duplicate.models[0].points[2].head == 2, "coincident CPs welded");
     check(!mesh.warnings.empty(), "approximation not diagnosed");
+    {
+      const std::string incoming = "262145 1 3 2\t. 0 0 1.02";
+      const std::string outgoing = "262145 0 4 1 1 0 10 -20 0.95\t.";
+      auto mixed = replace(source, "262145 1 3 2 . .", incoming);
+      mixed      = replace(mixed, "262145 0 4 1 1 0 . .", outgoing);
+      for (std::size_t pos = 0;
+           (pos = mixed.find('\n', pos)) != std::string::npos; pos += 2)
+        mixed.insert(pos, 1, '\r');
+      mixed                = replace(mixed, "</MODELFILE>",
+                                     "\r\n<FileInfo>Preserved</FileInfo>\r\n</MODELFILE>");
+      const auto oldOffset = mixed.find("<FileInfo>");
+      mixed                = replace(
+                         mixed, "</MODELFILE>",
+                         "FileInfoPos=" + std::to_string(oldOffset) + "\r\n</MODELFILE>");
+      bool offered = false;
+      try {
+        otam::parse(mixed);
+      } catch (const otam::MixedBiasError &e) {
+        offered            = true;
+        const auto &repair = e.repair;
+        check(repair.count == 2 && repair.firstPoint == 3 &&
+                  repair.firstLine == 11,
+              "missing mixed tangent diagnosis");
+        auto expected =
+            replace(mixed, incoming, "262145 1 3 2\t0 0 1 0 0 1.02");
+        expected =
+            replace(expected, outgoing, "262145 0 4 1 1 0 10 -20 0.95\t0 0 1");
+        expected = replace(expected, "FileInfoPos=" + std::to_string(oldOffset),
+                           "FileInfoPos=" + std::to_string(oldOffset + 8));
+        check(repair.source == expected,
+              "repair changed unrelated source bytes");
+        const auto repaired = otam::parse(repair.source);
+        const auto &points  = repaired.models.front().points;
+        check(points[2].bias == std::array<double, 6>{{0, 0, 1, 0, 0, 1.02}} &&
+                  points[3].bias ==
+                      std::array<double, 6>{{10, -20, 0.95, 0, 0, 1}},
+              "repaired source lost the incoming or outgoing tangent");
+      }
+      check(offered, "mixed tangents did not produce a repair proposal");
+
+      try {
+        otam::parse(replace(mixed, "24 1 2 4 6", "24 1 2 4 99"));
+        throw std::logic_error("a model with invalid topology was accepted");
+      } catch (const otam::MixedBiasError &) {
+        throw std::logic_error(
+            "repair offered for a model with invalid topology");
+      } catch (const std::runtime_error &) {
+      }
+    }
+    {
+      bool identified = false;
+      try {
+        otam::parse(replace(source, "262145 1 3 2 . .", "262161 1 3 0.5 2"));
+      } catch (const std::runtime_error &e) {
+        identified = std::string(e.what()).find(
+                         "spline hook at CP 3 (line 11)") != std::string::npos;
+      }
+      check(identified, "spline hook was not diagnosed as unsupported");
+    }
     rejects(
         [&] { otam::parse(replace(source, "262145 1 3 2", "262145 1 3 9")); });
     rejects([&] {

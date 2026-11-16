@@ -10,6 +10,7 @@
 #include <set>
 #include <sstream>
 #include <stdexcept>
+#include <string_view>
 #include <utility>
 
 namespace otam {
@@ -40,23 +41,95 @@ T number(const std::string &s) {
     fail("invalid numeric record: " + s.substr(0, 80));
   return v;
 }
-std::vector<std::string> lines(const Document &d, const SourceNode &n) {
+struct SourceLine {
   std::string text;
+  std::size_t offset;
+};
+std::vector<SourceLine> sourceLines(const Document &d, const SourceNode &n) {
+  std::vector<SourceLine> result;
+  const std::string_view source(d.source);
+  const auto append = [&](std::size_t begin, std::size_t end) {
+    auto remaining = source.substr(begin, end - begin);
+    while (!remaining.empty()) {
+      const auto line  = remaining.substr(0, remaining.find('\n'));
+      const auto first = line.find_first_not_of(" \t\r");
+      if (first != std::string_view::npos) {
+        const auto last = line.find_last_not_of(" \t\r");
+        result.push_back(
+            {std::string(line.substr(first, last - first + 1)), begin + first});
+      }
+      if (line.size() == remaining.size()) break;
+      remaining.remove_prefix(line.size() + 1);
+      begin += line.size() + 1;
+    }
+  };
   std::size_t offset = n.contentBegin;
   for (auto child : n.children) {
     const auto &c = d.nodes[child];
-    text.append(d.source, offset, c.begin - offset);
-    text += '\n';
+    append(offset, c.begin);
     offset = c.end;
   }
-  text.append(d.source, offset, n.contentEnd - offset);
-  std::istringstream in(text);
+  append(offset, n.contentEnd);
+  return result;
+}
+std::vector<std::string> lines(const Document &d, const SourceNode &n) {
   std::vector<std::string> result;
-  std::string line;
-  while (std::getline(in, line)) {
-    line = trim(line);
-    if (!line.empty()) result.push_back(line);
+  for (auto &line : sourceLines(d, n)) result.push_back(std::move(line.text));
+  return result;
+}
+
+std::size_t wordOffset(const std::string &line, std::size_t index) {
+  constexpr auto whitespace = " \t\r\v\f";
+  std::size_t pos           = 0;
+  for (std::size_t i = 0; i < index; ++i)
+    pos =
+        line.find_first_not_of(whitespace, line.find_first_of(whitespace, pos));
+  return pos;
+}
+
+std::size_t sourceLineNumber(const Document &d, std::size_t offset) {
+  return 1 + std::count(d.source.begin(), d.source.begin() + offset, '\n');
+}
+
+std::string expandBiasDefaults(const Document &d,
+                               const std::vector<std::size_t> &dots,
+                               const Limits &limits) {
+  constexpr std::string_view defaultBias = "0 0 1";
+  constexpr auto extraBytes              = defaultBias.size() - 1;
+  if (dots.size() > (limits.bytes - d.source.size()) / extraBytes)
+    fail("repaired model would exceed the file size limit");
+  std::string result;
+  result.reserve(d.source.size() + extraBytes * dots.size());
+  std::size_t offset = 0;
+  for (const auto dot : dots) {
+    result.append(d.source, offset, dot - offset);
+    result += defaultBias;
+    offset = dot + 1;
   }
+  result.append(d.source, offset, std::string::npos);
+
+  // A:M stores the byte offset of the FileInfo tag in the footer. Update
+  // it when it points to a real section whose position has shifted.
+  const std::string key = "FileInfoPos=";
+  for (const auto &line : sourceLines(d, d.nodes.front())) {
+    if (line.text.compare(0, key.size(), key) != 0) continue;
+    const auto value = line.text.substr(key.size());
+    const auto info  = std::find_if(
+         d.nodes.begin(), d.nodes.end(), [&](const SourceNode &node) {
+          return node.name == "FileInfo" && node.begin < line.offset &&
+                 std::to_string(node.begin) == value;
+        });
+    if (info == d.nodes.end()) continue;
+    const auto shift = [&](std::size_t pos) {
+      return extraBytes *
+             (std::lower_bound(dots.begin(), dots.end(), pos) - dots.begin());
+    };
+    result.replace(line.offset + key.size() + shift(line.offset), value.size(),
+                   std::to_string(info->begin + shift(info->begin)));
+    break;
+  }
+  if (result.size() > limits.bytes)
+    fail("repaired model would exceed the file size limit");
   return result;
 }
 void warn(std::vector<std::string> &warnings, const std::string &message) {
@@ -277,6 +350,13 @@ Document parseSource(std::string source, const std::string &root,
   return d;
 }
 
+MixedBiasError::MixedBiasError(MixedBiasRepair repair)
+    : std::runtime_error(
+          "A:M: mixed default and custom spline tangents at CP " +
+          std::to_string(repair.firstPoint) + " (line " +
+          std::to_string(repair.firstLine) + ")")
+    , repair(std::move(repair)) {}
+
 Document parse(std::string source, const Limits &limits) {
   Document d = parseSource(std::move(source), "MODELFILE", limits);
   if (d.version != "19.5")
@@ -284,6 +364,9 @@ Document parse(std::string source, const Limits &limits) {
          "File version is not the 19.5 reference dialect; compatibility is "
          "experimental.");
   std::size_t records = 0;
+  std::vector<std::size_t> mixedBiasDots;
+  std::size_t firstMixedOffset = d.source.size();
+  Id firstMixedPoint           = 0;
   for (std::size_t ni = 0; ni < d.nodes.size(); ++ni) {
     if (d.nodes[ni].name != "MODEL") continue;
     Model m;
@@ -295,7 +378,7 @@ Document parse(std::string source, const Limits &limits) {
       const auto &n = d.nodes[j];
       if (n.name == "SPLINE") {
         Spline spline;
-        for (const auto &line : lines(d, n)) {
+        for (const auto &[line, lineOffset] : sourceLines(d, n)) {
           const auto w = words(line);
           if (w.size() < 4 || ++records > limits.records)
             fail("invalid or excessive CP records");
@@ -315,6 +398,13 @@ Document parse(std::string source, const Limits &limits) {
             }
             biasOffset = 6;
           } else if (kind == 1) {
+            // A hook stores a position along a spline before the target CP.
+            // That position cannot be converted to an ordinary attachment.
+            constexpr std::uint32_t hookFlag = 0x10u;
+            if ((cp.flags & hookFlag) && w.size() == 5)
+              fail("spline hook at CP " + std::to_string(cp.id) + " (line " +
+                   std::to_string(sourceLineNumber(d, lineOffset)) +
+                   ") requires native spline hook support");
             cp.attachedTo = number<Id>(w[3]);
             if (cp.attachedTo < 0) fail("invalid attachment identifier");
             biasOffset = 4;
@@ -322,9 +412,24 @@ Document parse(std::string source, const Limits &limits) {
             fail(
                 "unsupported CP record kind (hook/special record); source left "
                 "unchanged");
-          // A pair of dots is the compact all-default incoming/outgoing record.
-          if (!(w.size() == biasOffset + 2 && w[biasOffset] == "." &&
-                w[biasOffset + 1] == ".")) {
+          // A:M can abbreviate either complete tangent with a dot. When
+          // exactly one side uses that form, report a lossless source repair.
+          if (w.size() == biasOffset + 4 &&
+              ((w[biasOffset] == ".") != (w.back() == "."))) {
+            const bool defaultIncoming = w[biasOffset] == ".";
+            const auto customStart     = biasOffset + (defaultIncoming ? 1 : 0);
+            for (std::size_t k = 0; k < 3; ++k)
+              cp.bias[(defaultIncoming ? 3 : 0) + k] =
+                  number<double>(w[customStart + k]);
+            const auto dot    = biasOffset + (defaultIncoming ? 0 : 3);
+            const auto offset = lineOffset + wordOffset(line, dot);
+            if (offset < firstMixedOffset) {
+              firstMixedOffset = offset;
+              firstMixedPoint  = cp.id;
+            }
+            mixedBiasDots.push_back(offset);
+          } else if (!(w.size() == biasOffset + 2 && w[biasOffset] == "." &&
+                       w[biasOffset + 1] == ".")) {
             if (w.size() != biasOffset && w.size() != biasOffset + 6)
               fail("unsupported bias record layout");
             for (std::size_t k = biasOffset; k < w.size(); ++k)
@@ -411,6 +516,16 @@ Document parse(std::string source, const Limits &limits) {
     d.models.push_back(std::move(m));
   }
   if (d.models.empty()) fail("no spline/patch MODEL was found");
+  if (!mixedBiasDots.empty()) {
+    if (d.models.size() != 1)
+      fail(
+          "mixed spline tangents in a multi-model file; a project importer "
+          "is required");
+    std::sort(mixedBiasDots.begin(), mixedBiasDots.end());
+    throw MixedBiasError(
+        {expandBiasDefaults(d, mixedBiasDots, limits), mixedBiasDots.size(),
+         sourceLineNumber(d, firstMixedOffset), firstMixedPoint});
+  }
   for (const auto &n : d.nodes)
     if ((n.name == "MATERIALS" || n.name == "ACTIONS" ||
          n.name == "CHOREOGRAPHIES" || n.name == "DECALS") &&
@@ -659,6 +774,7 @@ Mesh previewMesh(const Model &m, const std::vector<std::string> &warnings,
     const auto &p = m.points[a].position, &q = m.points[b].position;
     return std::array<Vec3, 4>{{p, mix(p, q, 1.0 / 3), mix(p, q, 2.0 / 3), q}};
   };
+  std::map<Edge, std::vector<std::size_t>> boundaryOwners;
   for (std::size_t p = 0; p < m.patches.size(); ++p) {
     const auto &patch = m.patches[p];
     std::vector<std::size_t> heads;
@@ -676,6 +792,10 @@ Mesh previewMesh(const Model &m, const std::vector<std::string> &warnings,
     if (std::set<std::size_t>(heads.begin(), heads.end()).size() !=
         heads.size())
       fail("degenerate patch control topology");
+    for (std::size_t i = 0; i < heads.size(); ++i) {
+      const auto next = heads[(i + 1) % heads.size()];
+      boundaryOwners[std::minmax(heads[i], next)].push_back(p);
+    }
     if (patch.flags != 24)
       warn(out.warnings,
            "Patch orientation/special flags are retained; preview uses "
@@ -806,6 +926,13 @@ Mesh previewMesh(const Model &m, const std::vector<std::string> &warnings,
             {{{a, c, e}}, color, p, colorGroup, {{na, nc, ne}}, true});
       }
   }
+  for (const auto &[edge, patches] : boundaryOwners)
+    if (patches.size() == 2)
+      out.adjoiningPatches.emplace_back(patches[0], patches[1]);
+  std::sort(out.adjoiningPatches.begin(), out.adjoiningPatches.end());
+  out.adjoiningPatches.erase(
+      std::unique(out.adjoiningPatches.begin(), out.adjoiningPatches.end()),
+      out.adjoiningPatches.end());
   return out;
 }
 

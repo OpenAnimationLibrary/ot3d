@@ -6,7 +6,6 @@
 
 #include <algorithm>
 #include <stdexcept>
-#include <type_traits>
 
 namespace ot3d {
 template <class PIXEL>
@@ -15,15 +14,17 @@ void copyRenderPixels(TRasterPT<PIXEL> raster,
                       int yOffset) {
   using Channel        = typename PIXEL::Channel;
   const double maximum = PIXEL::maxChannelValue;
-  const double round   = std::is_floating_point<Channel>::value ? 0.0 : 0.5;
   raster->lock();
   const int rows = int(pixels.size() / raster->getLx());
   for (int y = 0; y < rows; ++y)
     for (int x = 0; x < raster->getLx(); ++x) {
-      const auto &p = pixels[std::size_t(y) * raster->getLx() + x];
-      raster->pixels(y + yOffset)[x] = PIXEL(
-          Channel(p.r * maximum + round), Channel(p.g * maximum + round),
-          Channel(p.b * maximum + round), Channel(p.alpha * maximum + round));
+      const auto pixel = otglb::outputPixel(
+          pixels[std::size_t(y) * raster->getLx() + x], raster->isLinear());
+      raster->pixels(y + yOffset)[x] =
+          PIXEL(otglb::displayChannel<Channel>(pixel.r, maximum),
+                otglb::displayChannel<Channel>(pixel.g, maximum),
+                otglb::displayChannel<Channel>(pixel.b, maximum),
+                otglb::displayChannel<Channel>(pixel.alpha, maximum));
     }
   raster->unlock();
 }

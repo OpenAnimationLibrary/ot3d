@@ -14,14 +14,16 @@ void copyMerge3DPixels(TRasterPT<PIXEL> raster,
                        const std::vector<otglb::ColorPixel> &pixels, int y0) {
   using Channel        = typename PIXEL::Channel;
   const double maximum = PIXEL::maxChannelValue;
-  const double round   = std::is_floating_point<Channel>::value ? 0.0 : 0.5;
   raster->lock();
   for (int y = 0; y < int(pixels.size() / raster->getLx()); ++y)
     for (int x = 0; x < raster->getLx(); ++x) {
-      const auto &p             = pixels[std::size_t(y) * raster->getLx() + x];
-      raster->pixels(y + y0)[x] = PIXEL(
-          Channel(p.r * maximum + round), Channel(p.g * maximum + round),
-          Channel(p.b * maximum + round), Channel(p.alpha * maximum + round));
+      const auto p = otglb::outputPixel(
+          pixels[std::size_t(y) * raster->getLx() + x], raster->isLinear());
+      raster->pixels(y + y0)[x] =
+          PIXEL(otglb::displayChannel<Channel>(p.r, maximum),
+                otglb::displayChannel<Channel>(p.g, maximum),
+                otglb::displayChannel<Channel>(p.b, maximum),
+                otglb::displayChannel<Channel>(p.alpha, maximum));
     }
   raster->unlock();
 }
@@ -40,8 +42,9 @@ class Merge3DFx final : public TStandardRasterFx,
       double frame, const int *canceled, const otglb::LightingRig *lighting,
       const std::vector<otglb::ModelTransform> *transforms,
       const TRenderSettings *settings, bool geometryOnly,
-      const otam::MaterialBindings *materials = nullptr,
-      const otam::InkBindings *ink            = nullptr) const {
+      const otam::MaterialBindings *materials     = nullptr,
+      const otam::InkBindings *ink                = nullptr,
+      const otam::NormalSmoothingStack *smoothing = nullptr) const {
     auto result                  = std::make_shared<otglb::RenderScene>();
     const T3DSourcePort *ports[] = {&m_foreground, &m_background};
     TRectD bounds;
@@ -54,7 +57,7 @@ class Merge3DFx final : public TStandardRasterFx,
               ? source->get3DRenderGeometry(frame, canceled, transforms,
                                             settings, ink)
               : source->get3DRenderScene(frame, canceled, lighting, transforms,
-                                         settings, materials, ink);
+                                         settings, materials, ink, smoothing);
       if (!child) continue;
       for (const auto &group : child->splineGroups)
         if (std::find(result->splineGroups.begin(), result->splineGroups.end(),
@@ -64,6 +67,7 @@ class Merge3DFx final : public TStandardRasterFx,
       const auto &a = m_affines[i];
       const auto &b = child->bounds;
       bounds += a * TRectD(b[0], b[1], b[2], b[3]);
+      result->linearSampling |= child->linearSampling;
       result->layers.push_back(
           {child, {{a.a11, a.a12, a.a13, a.a21, a.a22, a.a23}}});
       result->warnings.insert(result->warnings.end(), child->warnings.begin(),
@@ -108,9 +112,10 @@ public:
       const std::vector<otglb::ModelTransform> *transforms = nullptr,
       const TRenderSettings *settings                      = nullptr,
       const otam::MaterialBindings *materials              = nullptr,
-      const otam::InkBindings *ink = nullptr) const override {
+      const otam::InkBindings *ink                         = nullptr,
+      const otam::NormalSmoothingStack *smoothing = nullptr) const override {
     return scene(frame, canceled, lighting, transforms, settings, false,
-                 materials, ink);
+                 materials, ink, smoothing);
   }
   std::shared_ptr<const otglb::RenderScene> get3DRenderGeometry(
       double frame, const int *canceled,
@@ -131,8 +136,8 @@ public:
     return !bbox.isEmpty();
   }
   bool canHandle(const TRenderSettings &, double) override { return true; }
-  bool toBeComputedInLinearColorSpace(bool, bool) const override {
-    return false;
+  bool toBeComputedInLinearColorSpace(bool, bool tileIsLinear) const override {
+    return tileIsLinear;
   }
   int getMemoryRequirement(const TRectD &rect, double,
                            const TRenderSettings &) override {

@@ -160,7 +160,11 @@ public:
       out << L"\nDiffuse Falloff: " << s.diffuseFalloff * 100 << L"%"
           << L"\nAmbiance: " << s.ambiance * 100 << L"%" << L"\nTransparency: "
           << s.transparency * 100 << L"%" << L"\nReflectivity: "
-          << s.reflectivity * 100 << L"% (scene reflections deferred)";
+          << s.reflectivity * 100 << L"%" << L"\nReflective Blend: "
+          << s.reflectiveBlend * 100 << L"%"
+          << L"\nReflection Falloff Distance: " << s.reflectivityFalloff
+          << L" (0 = infinite)"
+          << L"\nConnect Environment Reflections FX to evaluate reflections.";
     }
     out << L"\n\nHighlights respond to direct lights and camera position."
         << L"\nExact A:M highlight matching is not yet validated.";
@@ -198,7 +202,8 @@ public:
       const std::vector<otglb::ModelTransform> *transforms = nullptr,
       const TRenderSettings *settings                      = nullptr,
       const otam::MaterialBindings *downstream             = nullptr,
-      const otam::InkBindings *ink = nullptr) const override {
+      const otam::InkBindings *ink                         = nullptr,
+      const otam::NormalSmoothingStack *smoothing = nullptr) const override {
     auto *source = m_source.source();
     if (!source || (canceled && *canceled)) return {};
     otam::MaterialBindings materials;
@@ -210,7 +215,7 @@ public:
       throw std::runtime_error("A:M material chain exceeds 64 assignments");
     return source->get3DRenderScene(
         frame, canceled, lighting, transforms, settings,
-        materials.empty() ? nullptr : &materials, ink);
+        materials.empty() ? nullptr : &materials, ink, smoothing);
   }
   std::shared_ptr<const otglb::RenderScene> get3DRenderGeometry(
       double frame, const int *canceled,
@@ -250,8 +255,8 @@ public:
                         std::ceil(megabytes)));
   }
 
-  bool toBeComputedInLinearColorSpace(bool, bool) const override {
-    return false;
+  bool toBeComputedInLinearColorSpace(bool, bool tileIsLinear) const override {
+    return tileIsLinear;
   }
 
   void doCompute(TTile &tile, double frame,

@@ -3,7 +3,9 @@
 #include <array>
 #include <cstdint>
 #include <memory>
+#include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 // Native, read-only A:M data. No Hash SDK runtime, Qt, MFC, or graphics
@@ -116,6 +118,20 @@ struct Document {
   std::vector<std::string> warnings;
   std::string version;
 };
+
+struct MixedBiasRepair {
+  std::string source;
+  std::size_t count, firstLine;
+  Id firstPoint;
+};
+
+// The model was otherwise parsed successfully. The source in the repair
+// expands compact defaults without changing the authored tangent values.
+class MixedBiasError : public std::runtime_error {
+public:
+  MixedBiasRepair repair;
+  explicit MixedBiasError(MixedBiasRepair repair);
+};
 struct Triangle {
   std::array<Vec3, 3> vertices;
   Color color;
@@ -139,11 +155,27 @@ struct Mesh {
   // All containing groups, independent of the palette color winner.
   std::vector<std::vector<std::string>> patchGroups;
   bool amMaterials = true;
+  // Sorted tessellated patch pairs sharing an authored welded CP edge.
+  std::vector<std::pair<std::size_t, std::size_t>> adjoiningPatches;
   std::vector<Triangle> triangles;
   std::vector<InkSpline> splines;
   std::vector<std::string> splineGroups;
   std::vector<std::string> warnings;
 };
+
+struct NormalSmoothing {
+  double strength, creaseDegrees;
+
+  bool operator==(const NormalSmoothing &rhs) const {
+    return strength == rhs.strength && creaseDegrees == rhs.creaseDegrees;
+  }
+};
+using NormalSmoothingStack = std::vector<NormalSmoothing>;
+
+// Angle-weighted corner normals across smooth shared edges. Returns false on
+// cancellation. Vertex positions and per-patch data are untouched.
+bool smoothNormals(Mesh &mesh, const NormalSmoothing &options,
+                   const int *canceled = nullptr);
 
 // Bounded native tagged-source reader shared by model and material documents.
 Document parseSource(std::string source, const std::string &root,

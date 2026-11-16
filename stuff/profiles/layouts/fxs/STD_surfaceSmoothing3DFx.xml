@@ -1,0 +1,7 @@
+<fxlayout>
+  <page name="Surface">
+    <label>"Connect a native A:M or GLB model level. Raise Crease Angle to smooth across sharper edges. Use Preview to see the shading."</label>
+    <control>strength</control>
+    <control>creaseAngle</control>
+  </page>
+</fxlayout>

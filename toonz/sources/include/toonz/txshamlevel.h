@@ -2,6 +2,7 @@
 
 #include "toonz/txshlevel.h"
 #include "ammodel.h"
+#include "texception.h"
 #include "tpalette.h"
 #include <map>
 #include <mutex>
@@ -22,6 +23,13 @@ namespace otam {
 struct Action;
 struct BoneAnimation;
 }
+
+class DVAPI AMModelRepairNeeded final : public TException {
+public:
+  const otam::MixedBiasRepair repair;
+  AMModelRepairNeeded(const std::string &message, otam::MixedBiasRepair repair);
+  ~AMModelRepairNeeded() override;
+};
 
 // Immutable inputs a Distortion Cage needs before skinning.
 struct AMLevelCagePose {

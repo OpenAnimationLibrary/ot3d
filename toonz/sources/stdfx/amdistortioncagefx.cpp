@@ -55,7 +55,8 @@ public:
       const std::vector<otglb::ModelTransform> *transforms = nullptr,
       const TRenderSettings *settings                      = nullptr,
       const otam::MaterialBindings *materials              = nullptr,
-      const otam::InkBindings *ink = nullptr) const override {
+      const otam::InkBindings *ink                         = nullptr,
+      const otam::NormalSmoothingStack *smoothing = nullptr) const override {
     const auto *source = m_source.source();
     if (!source || (canceled && *canceled)) return {};
     const auto state = m_cage->getValue();
@@ -63,13 +64,13 @@ public:
         std::clamp(m_strength->getValue(frame) / 100, 0.0, 1.0);
     if (state.empty() || strength <= 0)
       return source->get3DRenderScene(frame, canceled, lighting, transforms,
-                                      settings, materials, ink);
+                                      settings, materials, ink, smoothing);
     TRenderSettings request = settings ? *settings : TRenderSettings();
     request.m_data.push_back(new TAMCageRenderData(
         QString::fromStdWString(state).toUtf8().toStdString(), frame,
         strength));
     return source->get3DRenderScene(frame, canceled, lighting, transforms,
-                                    &request, materials, ink);
+                                    &request, materials, ink, smoothing);
   }
 
   bool doGetBBox(double frame, TRectD &bbox,
