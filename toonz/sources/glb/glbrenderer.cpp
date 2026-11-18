@@ -156,8 +156,7 @@ float srgbToLinear(float v) {
 }
 
 void DiffuseLight::validate() const {
-  require(std::isfinite(intensity) && intensity >= 0.0,
-          "3D light intensity must be finite and nonnegative.");
+  require(std::isfinite(intensity), "3D light intensity must be finite.");
   for (float v : color)
     require(std::isfinite(v) && v >= 0.0f && v <= 1.0f,
             "3D light color must be finite and in [0,1].");
@@ -293,6 +292,7 @@ RenderScene prepareRender(const Asset &asset, const RenderOptions &o,
     std::array<EnvironmentDirection, 3> positions;
     EnvironmentDirection normal;
     EnvironmentColor albedo;
+    double defaultEnergy;
   };
   std::vector<EnvironmentSample> environmentSamples;
   bool hasPointLights = false;
@@ -474,6 +474,15 @@ RenderScene prepareRender(const Asset &asset, const RenderOptions &o,
             for (auto &v : color) v = linearToSrgb(srgbToLinear(v) * gray);
         }
 
+        double defaultEnergy = 0.0;
+        if (o.useLightingRig && o.lighting.includeDefaultLighting) {
+          // Reproduce the unrigged source color at zero explicit intensity.
+          defaultEnergy = 1.0;
+          if (o.headlight)
+            defaultEnergy = o.materialColors
+                                ? gray
+                                : srgbToLinear(gray) / srgbToLinear(.75f);
+        }
         float lineIllumination = -1;
         if (o.useLightingRig && !o.lighting.preserveDefaultLighting) {
           // The renderer is intentionally two-sided. Orient the face normal
@@ -495,9 +504,8 @@ RenderScene prepareRender(const Asset &asset, const RenderOptions &o,
           }
           const std::array<float, 3> surface =
               o.materialColors ? base : std::array<float, 3>{{0.75f, 0.75f, 0.75f}};
-          std::array<double, 3> illumination{{o.lighting.ambient,
-                                              o.lighting.ambient,
-                                              o.lighting.ambient}};
+          const double baseline = o.lighting.ambient + defaultEnergy;
+          std::array<double, 3> illumination{{baseline, baseline, baseline}};
           for (const auto &source : o.lighting.lights) {
             const double diffuse = source.diffuse(
                 (source.point || source.worldDirection) ? worldNormal
@@ -506,7 +514,8 @@ RenderScene prepareRender(const Asset &asset, const RenderOptions &o,
             for (int channel = 0; channel < 3; ++channel)
               illumination[channel] += diffuse * srgbToLinear(source.color[channel]);
           }
-          if (!o.lighting.lights.empty() || o.lighting.ambient > 0)
+          for (double &value : illumination) value = std::max(0.0, value);
+          if (!o.lighting.lights.empty() || baseline > 0)
             lineIllumination = lightLuminance(illumination[0], illumination[1],
                                               illumination[2]) *
                                o.lighting.master;
@@ -542,6 +551,7 @@ RenderScene prepareRender(const Asset &asset, const RenderOptions &o,
           out.triangles.push_back(triangle);
           if (sampleShading) {
             EnvironmentSample sample;
+            sample.defaultEnergy = defaultEnergy;
             for (int k = 0; k < 3; ++k)
               sample.albedo[k] =
                   srgbToLinear(o.materialColors ? base[k] : .75f);
@@ -624,14 +634,15 @@ RenderScene prepareRender(const Asset &asset, const RenderOptions &o,
             const double cnLength = std::hypot(cn[0], cn[1], cn[2]);
             if (cnLength > 0)
               for (auto &value : cn) value /= cnLength;
-            EnvironmentColor energy{
-                {float(rig.ambient), float(rig.ambient), float(rig.ambient)}};
+            const float baseline = float(rig.ambient + s.defaultEnergy);
+            EnvironmentColor energy{{baseline, baseline, baseline}};
             for (const auto &light : rig.lights) {
               const double d = light.diffuse(
                   (light.point || light.worldDirection) ? n : cn, p);
               for (int k = 0; k < 3; ++k)
                 energy[k] += float(d * srgbToLinear(light.color[k]));
             }
+            for (float &value : energy) value = std::max(0.0f, value);
             lineIllumination =
                 lightLuminance(energy[0], energy[1], energy[2]) * rig.master;
             for (int k = 0; k < 3; ++k)

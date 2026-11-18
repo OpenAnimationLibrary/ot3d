@@ -181,6 +181,7 @@ public:
     auto rig = lighting(frame);
     if (downstream) {
       rig.environments = downstream->environments;
+      rig.includeDefaultLighting = downstream->includeDefaultLighting;
       // Scale each rig by its own master before adding its contribution.
       rig.ambient =
           rig.ambient * rig.master + downstream->ambient * downstream->master;

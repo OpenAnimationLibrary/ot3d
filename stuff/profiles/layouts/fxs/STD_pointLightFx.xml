@@ -4,6 +4,8 @@
     <control>lightType</control>
     <control>color</control>
     <control>intensity</control>
+    <control>includeDefaultLighting</control>
+    <label>"Negative Intensity subtracts light. Enable Include Default Lighting to darken a model using its default lighting."</label>
     <separator label="Position"/>
     <control>positionX</control>
     <control>positionY</control>

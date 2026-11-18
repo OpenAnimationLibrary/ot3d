@@ -352,13 +352,16 @@ otam::Vec3 nativeModelDropPosition(TXsheet *xsheet, int frame,
 
 static std::array<double, 3> diffuseEnergy(const otam::Vec3 &normal,
                                            const otam::Vec3 &position,
-                                           const otglb::LightingRig &rig) {
-  std::array<double, 3> energy{rig.ambient, rig.ambient, rig.ambient};
+                                           const otglb::LightingRig &rig,
+                                           double defaultEnergy) {
+  const double baseline = rig.ambient + defaultEnergy;
+  std::array<double, 3> energy{baseline, baseline, baseline};
   for (const auto &light : rig.lights) {
     const double diffuse = light.diffuse(normal, position);
     for (int k = 0; k < 3; ++k)
       energy[k] += diffuse * otglb::srgbToLinear(light.color[k]);
   }
+  for (double &value : energy) value = std::max(0.0, value);
   return energy;
 }
 
@@ -366,9 +369,9 @@ static otam::Color litPaletteColor(const otam::Color &color,
                                    const otam::Vec3 &normal,
                                    const otam::Vec3 &position,
                                    const otglb::LightingRig &rig,
-                                   float &illumination) {
-  const auto energy = diffuseEnergy(normal, position, rig);
-  if (!rig.lights.empty() || rig.ambient > 0)
+                                   float &illumination, double defaultEnergy) {
+  const auto energy = diffuseEnergy(normal, position, rig, defaultEnergy);
+  if (!rig.lights.empty() || rig.ambient > 0 || defaultEnergy > 0)
     illumination =
         otglb::lightLuminance(energy[0], energy[1], energy[2]) * rig.master;
   otam::Color result;
@@ -628,6 +631,7 @@ public:
     if (settings && settings->m_disableDefaultLighting && lighting) {
       noDefault                         = *lighting;
       noDefault.preserveDefaultLighting = false;
+      noDefault.includeDefaultLighting  = false;
       lighting                          = &noDefault;
     }
     if (settings && settings->m_flatRender)
@@ -768,8 +772,9 @@ public:
                                cameraPose[11] - center[2]}};
         const double facing = n[0] * view[0] + n[1] * view[1] + n[2] * view[2];
         for (double &v : n) v /= facing < 0 ? -length : length;
-        triangle.color = litPaletteColor(triangle.color, n, center, *lighting,
-                                         triangle.illumination);
+        triangle.color = litPaletteColor(
+            triangle.color, n, center, *lighting, triangle.illumination,
+            lighting->includeDefaultLighting ? 1.0 : 0.0);
       }
     }
     std::vector<otam::InkTriangle> strokes;
@@ -960,12 +965,19 @@ public:
         }
         // The neutral headlight makes smoothing visible without explicit
         // lighting. Reflections preserve the source's local shading.
-        const double headlight = 0.2 + 0.8 * std::max(0.0, dot(normal, view));
+        const double facingLight = std::max(0.0, dot(normal, view));
+        const double headlight   = 0.2 + 0.8 * facingLight;
+        const double defaultEnergy =
+            rig.includeDefaultLighting
+                ? (sample.binding >= 0 ? facingLight
+                                       : (smoothLighting ? headlight : 1.0))
+                : 0.0;
         if (sample.binding < 0 && rig.environments.empty()) {
           auto color = sample.color;
           float illumination = -1;
           if (useRig) {
-            color = litPaletteColor(color, normal, position, rig, illumination);
+            color = litPaletteColor(color, normal, position, rig, illumination,
+                                    defaultEnergy);
           } else {
             for (float &channel : color)
               channel = otglb::linearToSrgb(
@@ -983,7 +995,8 @@ public:
             sample.binding < 0 ? fallback : surfaces.at(sample.binding);
         const auto &surface = binding.surface;
         std::vector<otam::SurfaceLight> lights;
-        if (!useRig) lights.push_back({view, {{1, 1, 1}}, 1});
+        if (!useRig || (rig.includeDefaultLighting && sample.binding >= 0))
+          lights.push_back({view, {{1, 1, 1}}, 1});
         for (const auto &light : rig.lights) {
           otam::SurfaceLight l;
           l.direction = light.direction;
@@ -1002,8 +1015,10 @@ public:
         const auto diffuse = !binding.paletteColor && surface.diffuse
                                   ? *surface.diffuse
                                   : sample.color;
+        const double ambient =
+            rig.ambient + (sample.binding < 0 ? defaultEnergy : 0.0);
         auto color = otam::shadeSurface(surface, diffuse, normal, view, lights,
-                                        rig.ambient, rig.master);
+                                        ambient, rig.master);
         if (sample.binding < 0 && !useRig) {
           const double energy = smoothLighting ? headlight : 1.0;
           for (int k = 0; k < 3; ++k)
@@ -1024,8 +1039,10 @@ public:
         result.distanceFalloff = surface.reflectivityFalloff;
         result.diffuseFalloff  = surface.diffuseFalloff;
         result.alpha           = float(1 - surface.transparency);
-        if (useRig && (!rig.lights.empty() || rig.ambient > 0)) {
-          const auto energy = diffuseEnergy(normal, position, rig);
+        if (useRig &&
+            (!rig.lights.empty() || rig.ambient > 0 || defaultEnergy > 0)) {
+          const auto energy =
+              diffuseEnergy(normal, position, rig, defaultEnergy);
           result.illumination =
               otglb::lightLuminance(energy[0], energy[1], energy[2]) *
               rig.master;

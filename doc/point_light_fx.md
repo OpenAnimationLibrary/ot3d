@@ -24,6 +24,23 @@ percentage of the half angle; zero gives a hard edge. Lighting is evaluated at
 surface samples, including within a large triangle. Native A:M material shading
 uses the same attenuation for diffuse and specular highlights.
 
+## Subtractive lighting
+
+**Intensity** can range from −1000% to +1000%. A negative light subtracts its
+color contribution in linear light. Sun, Bulb and Klieg use the same aim,
+direction and falloff at either sign. For example, matching white lights at
++100% and −30% leave 70% of the original contribution in their shared footprint.
+
+The renderer sums explicit direct lighting before flooring each channel at
+zero. On A:M materials, negative lights can also reduce direct specular
+highlights. Toon Line reads the resulting illumination. Environment reflections,
+image-based lighting, and surface coverage are evaluated independently.
+
+Enable **Include Default Lighting** to use the model's default shading as a
+baseline. The option applies at positive, zero and negative intensity, so
+keyframes can cross zero without switching baselines. It defaults off, and
+**Disable Default Lighting** overrides it.
+
 ## Target
 
 **Target** is optional and accepts the same typed 3D model/group sources. It is
@@ -60,9 +77,8 @@ its branch's wireframe and column color/opacity settings.
 
 Volumetric beams/haze are reserved for a separate PR. This addition does not
 introduce cast shadows or area-light sampling. Existing default-lighting and
-Flat Render controls retain their meanings; explicit Point Lights replace the
-default model illumination and combine with explicit lights/IBL/reflections.
-Flat Render still shows a visible source when enabled.
+Flat Render controls retain their meanings. Visible sources require positive
+intensity, including in Flat Render.
 
 ## Validation
 
@@ -75,9 +91,7 @@ Flat Render still shows a visible source when enabled.
 - Native A:M regression: positional illumination, target/camera metadata,
   visible-source geometry and typed render-tree expansion.
 
-Local validation: all eight portable GLB/renderer tests and both A:M parser/material
-tests pass. The Point Light FX, native renderer integration, and native test
-translation units pass C++17 syntax checks against Qt 5.15 headers. Renderer
-ASan/UBSan checks pass with leak detection disabled because this execution
-environment does not support LeakSanitizer. Full native FX runtime execution
-and the Windows application build remain pending CI.
+Signed-light tests cover color cancellation, positional sample shading, the
+default baseline, and a nonnegative Toon Line illumination value. The native
+FX tests also cover signed intensity keys and the default-lighting option
+after scene save and reload.

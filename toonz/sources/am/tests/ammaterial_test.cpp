@@ -141,6 +141,18 @@ int main() {
                                           {key, otam::SurfaceLight{}}, 0, 1);
     near(mixed[0], .4);
     near(mixed[2], .8);
+    auto subtract      = key;
+    subtract.intensity = -.5;
+    const auto dimmed  = otam::shadeSurface(
+         shiny, black, n, v, {subtract, key, otam::SurfaceLight{}}, 0, 1);
+    near(dimmed[0], .4);
+    near(dimmed[2], .6);
+    subtract.intensity = -3;
+    shiny.ambiance     = .25;
+    const auto darkened =
+        otam::shadeSurface(shiny, white, n, v, {key, subtract}, 0, 1);
+    near(darkened[0], .25);
+    near(darkened[2], .25);
     shiny.specularSize = 0;
     near(otam::shadeSurface(shiny, black, n, v, {key}, 0, 1)[2], 0);
     check(otam::parseMaterial(material("Reflectivity=60\nSpecularSize=25"))
