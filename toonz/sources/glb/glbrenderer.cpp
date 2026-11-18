@@ -830,6 +830,13 @@ struct ToonLineRaster {
   double radius(double requested) const {
     return std::min(requested, MaxContourRadius / std::max(scaleX, scaleY));
   }
+
+  int smoothingPasses() const {
+    return style.lightingInfluence > 0 || style.bottomWeight > 0
+               ? int(std::ceil(
+                     std::min(32.0, style.width * std::max(scaleX, scaleY))))
+               : 0;
+  }
 };
 
 bool drawContours(const RenderScene &scene, const ToonLineRaster &toon,
@@ -890,9 +897,8 @@ bool drawContours(const RenderScene &scene, const ToonLineRaster &toon,
     const double length = std::hypot(inwardX, inwardY);
     return length > 0 ? std::max(0.0, inwardY / length) : 0.0;
   };
-  const auto draw = [&](int x, int y, const ContourSample &front, int frontX,
-                        int frontY) {
-    const double centerX = x * 0.5, centerY = y * 0.5;
+  const auto contourRadius = [&](const ContourSample &front, int frontX,
+                                 int frontY) {
     double weight = 1;
     if (toon.style.bottomWeight > 0)
       weight += toon.style.bottomWeight * underside(frontX, frontY, front);
@@ -902,7 +908,11 @@ bool drawContours(const RenderScene &scene, const ToonLineRaster &toon,
         weight +=
             toon.style.lightingInfluence * (1 - std::min(illumination, 1.f));
     }
-    const double radius = toon.radius(toon.style.width * weight / 2);
+    return toon.radius(toon.style.width * weight / 2);
+  };
+  const auto draw = [&](int x, int y, const ContourSample &front,
+                        double radius) {
+    const double centerX = x * 0.5, centerY = y * 0.5;
     const double reachX = radius * 2 * toon.scaleX + 0.5;
     const double reachY = radius * 2 * toon.scaleY + 0.5;
     const int x0        = std::max(0, int(std::ceil(centerX - reachX)));
@@ -941,6 +951,20 @@ bool drawContours(const RenderScene &scene, const ToonLineRaster &toon,
   // before applying stroke width. Keep a small exterior silhouette if its
   // transparent neighbor lies outside the component's contour bounds.
   std::vector<int> component;
+  std::vector<float> radii(std::size_t(gridWidth) * gridHeight, -1);
+  std::vector<float> smoothed;
+  const auto neighbors = [&](int cell, const auto &action) {
+    const int x = cell % gridWidth, y = cell / gridWidth;
+    const auto at = [&](int nx, int ny) {
+      if (nx >= 0 && ny >= 0 && nx < gridWidth && ny < gridHeight)
+        action(ny * gridWidth + nx);
+    };
+    const int dx = x & 1, dy = y & 1;
+    at(x + 2 * dy, y + 2 * dx);
+    at(x - 2 * dy, y - 2 * dx);
+    for (int turnX : {-1, 1})
+      for (int turnY : {-1, 1}) at(x + turnX, y + turnY);
+  };
   const auto visit = [&](int x, int y) {
     if (x < 0 || y < 0 || x >= gridWidth || y >= gridHeight) return;
     const int cell = y * gridWidth + x;
@@ -966,11 +990,9 @@ bool drawContours(const RenderScene &scene, const ToonLineRaster &toon,
         top    = std::max(top, cy);
         // Candidate segments are connected wherever they share an endpoint
         // on the grid between the raster's four coverage samples.
+        neighbors(component[i],
+                  [&](int cell) { visit(cell % gridWidth, cell / gridWidth); });
         const int dx = cx & 1, dy = cy & 1;
-        visit(cx + 2 * dy, cy + 2 * dx);
-        visit(cx - 2 * dy, cy - 2 * dx);
-        for (int turnX : {-1, 1})
-          for (int turnY : {-1, 1}) visit(cx + turnX, cy + turnY);
         for (int side : {-1, 1}) {
           const int sx = cx + side * dx, sy = cy + side * dy;
           if (hits[index(sx / 2, sy / 2)].alpha != 0) continue;
@@ -982,17 +1004,52 @@ bool drawContours(const RenderScene &scene, const ToonLineRaster &toon,
       }
       const bool exterior = emptyLeft < left || emptyRight > right ||
                             emptyBottom < bottom || emptyTop > top;
-      if (!exterior && std::max(right - left, top - bottom) < MinContourSpan)
+      const double scale    = std::max(toon.scaleX, toon.scaleY);
+      const int minimumSpan = std::max(
+          MinContourSpan,
+          int(std::ceil(4 * toon.radius(toon.style.width / 2) * scale)));
+      if (!exterior && std::max(right - left, top - bottom) < minimumSpan)
         continue;
-      for (std::size_t i = 0; i < component.size(); ++i) {
-        if ((i & 255) == 0 && canceled && *canceled) return false;
-        const int cx = component[i] % gridWidth, cy = component[i] / gridWidth;
+      const auto front = [&](int cell) -> const ContourSample & {
+        const int cx = cell % gridWidth, cy = cell / gridWidth;
         const int sx = cx / 2, sy = cy / 2;
         const auto &a = hits[index(sx, sy)];
         const auto &b = hits[index(sx + (cx & 1), sy + (cy & 1))];
-        const bool first = a.depth >= b.depth;
-        draw(cx, cy, first ? a : b, sx + (first ? 0 : (cx & 1)),
-             sy + (first ? 0 : (cy & 1)));
+        return a.depth >= b.depth ? a : b;
+      };
+      for (const auto cell : component) {
+        const int cx = cell % gridWidth, cy = cell / gridWidth;
+        const auto &sample = front(cell);
+        const bool first   = &sample == &hits[index(cx / 2, cy / 2)];
+        radii[cell] =
+            float(contourRadius(sample, cx / 2 + (first ? 0 : (cx & 1)),
+                                cy / 2 + (first ? 0 : (cy & 1))));
+      }
+      // Smooth only the width along an existing connected contour. This
+      // removes per-triangle spikes while preserving its sampled centerline.
+      const int passes = toon.smoothingPasses();
+      smoothed.resize(component.size());
+      for (int pass = 0; pass < passes; ++pass) {
+        if (canceled && *canceled) return false;
+        for (std::size_t i = 0; i < component.size(); ++i) {
+          const int cell = component[i];
+          float sum      = 0;
+          int count      = 0;
+          neighbors(cell, [&](int neighbor) {
+            if (radii[neighbor] < 0) return;
+            sum += radii[neighbor];
+            ++count;
+          });
+          smoothed[i] =
+              count ? 0.5f * (radii[cell] + sum / count) : radii[cell];
+        }
+        for (std::size_t i = 0; i < component.size(); ++i)
+          radii[component[i]] = smoothed[i];
+      }
+      for (std::size_t i = 0; i < component.size(); ++i) {
+        if ((i & 255) == 0 && canceled && *canceled) return false;
+        const int cell = component[i];
+        draw(cell % gridWidth, cell / gridWidth, front(cell), radii[cell]);
       }
     }
   }
@@ -1009,9 +1066,11 @@ std::vector<ColorPixel> renderToonTile(const RenderScene &scene,
                                        const int *canceled, int nesting,
                                        const ToonLineRaster &toon) {
   const double scale = std::max(toon.scaleX, toon.scaleY);
+  // Each width-smoothing pass can reach another half pixel along the contour.
+  // Include that support so independently rendered tiles agree at their edges.
   const int margin =
       int(std::ceil(toon.radius(toon.style.maximumRadius()) * scale)) + 2 +
-      MinContourSpan / 4;
+      MinContourSpan / 4 + (toon.smoothingPasses() + 1) / 2;
   std::vector<ColorPixel> result(std::size_t(tile.width) * tile.height);
   // Bound scratch space for the depth, coverage and transparency buffers, even
   // when a caller supplies a full frame or a wide film-resolution tile.
@@ -1082,12 +1141,12 @@ std::vector<ColorPixel> renderLayeredTile(const RenderScene &scene,
   if (toon && scene.layers.empty() && !padded)
     return renderToonTile(scene, tile, canceled, nesting, *toon);
 
-  // Four hits per pixel, a quarter-pixel edge grid and up to eight
-  // edge indices per pixel (including vector growth).
+  // Four hits per pixel, a quarter-pixel edge grid, component indices and
+  // radius-smoothing buffers (including vector growth).
   const std::size_t contourMemory =
       toon && scene.layers.empty()
           ? 4 * (sizeof(ContourSample) + sizeof(float)) +
-                16 * (sizeof(unsigned char) + sizeof(int))
+                16 * (sizeof(unsigned char) + sizeof(int) + 2 * sizeof(float))
           : 0;
   const std::size_t bytesPerPixel =
       std::size_t(nesting + 2) * sizeof(ColorPixel) + 4 * sizeof(Sample) +
