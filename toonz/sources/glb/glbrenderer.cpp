@@ -826,7 +826,6 @@ struct ToonLineRaster {
   const ToonLineStyle &style;
   double scaleX, scaleY, sampleScale;
   std::array<double, 4> inverse;
-  double bottom = 0, middle = 0;
 
   double radius(double requested) const {
     return std::min(requested, MaxContourRadius / std::max(scaleX, scaleY));
@@ -867,16 +866,36 @@ bool drawContours(const RenderScene &scene, const ToonLineRaster &toon,
     }
     return true;
   };
-  const auto draw = [&](int x, int y, const ContourSample &front) {
+  const auto underside = [&](int x, int y, const ContourSample &front) {
+    // Estimate the outward contour normal from neighboring coverage/depth.
+    // Surface depth slopes are removed so continuous faces stay together.
+    double inwardX = 0, inwardY = 0;
+    for (int dy = -1; dy <= 1; ++dy)
+      for (int dx = -1; dx <= 1; ++dx) {
+        const int sx = x + dx, sy = y + dy;
+        if (sx < 0 || sy < 0 || sx >= width || sy >= height) continue;
+        const auto &neighbor = hits[index(sx, sy)];
+        if (neighbor.alpha == 0) continue;
+        const double gap = front.depth + 0.5 * (dx * front.dx + dy * front.dy) -
+                           neighbor.depth;
+        const double tolerance =
+            0.5 * std::abs(dx * (front.dx - neighbor.dx) +
+                           dy * (front.dy - neighbor.dy)) +
+            1e-6 * std::max(std::abs(front.depth), std::abs(neighbor.depth)) +
+            1e-10;
+        if (gap > tolerance) continue;
+        inwardX += dx * (dy == 0 ? 2 : 1);
+        inwardY += dy * (dx == 0 ? 2 : 1);
+      }
+    const double length = std::hypot(inwardX, inwardY);
+    return length > 0 ? std::max(0.0, inwardY / length) : 0.0;
+  };
+  const auto draw = [&](int x, int y, const ContourSample &front, int frontX,
+                        int frontY) {
     const double centerX = x * 0.5, centerY = y * 0.5;
     double weight = 1;
-    if (toon.middle > toon.bottom) {
-      const double sampleY = tile.y + 0.25 + centerY / 2;
-      weight +=
-          toon.style.bottomWeight *
-          std::clamp((toon.middle - sampleY) / (toon.middle - toon.bottom), 0.0,
-                     1.0);
-    }
+    if (toon.style.bottomWeight > 0)
+      weight += toon.style.bottomWeight * underside(frontX, frontY, front);
     if (toon.style.lightingInfluence > 0) {
       const float illumination = contourIllumination(scene, front, ibl);
       if (illumination >= 0)
@@ -971,7 +990,9 @@ bool drawContours(const RenderScene &scene, const ToonLineRaster &toon,
         const int sx = cx / 2, sy = cy / 2;
         const auto &a = hits[index(sx, sy)];
         const auto &b = hits[index(sx + (cx & 1), sy + (cy & 1))];
-        draw(cx, cy, a.depth >= b.depth ? a : b);
+        const bool first = a.depth >= b.depth;
+        draw(cx, cy, first ? a : b, sx + (first ? 0 : (cx & 1)),
+             sy + (first ? 0 : (cy & 1)));
       }
     }
   }
@@ -987,27 +1008,6 @@ std::vector<ColorPixel> renderToonTile(const RenderScene &scene,
                                        const RenderTile &tile,
                                        const int *canceled, int nesting,
                                        const ToonLineRaster &toon) {
-  auto brush = toon;
-  if (brush.style.bottomWeight > 0) {
-    // Use the actual screen-space extent of the model surfaces. Ink Line
-    // splines and visible light markers must not move the weight gradient.
-    double bottom = std::numeric_limits<double>::infinity();
-    double top    = -bottom;
-    const auto &m = tile.affine;
-    for (const auto &triangle : scene.triangles) {
-      if (canceled && *canceled) return {};
-      if (!triangle.toonSurface) continue;
-      for (const auto &v : triangle.vertices) {
-        const double y = m[3] * v.x + m[4] * v.y + m[5];
-        bottom         = std::min(bottom, y);
-        top            = std::max(top, y);
-      }
-    }
-    if (top > bottom) {
-      brush.bottom = bottom;
-      brush.middle = 0.5 * bottom + 0.5 * top;
-    }
-  }
   const double scale = std::max(toon.scaleX, toon.scaleY);
   const int margin =
       int(std::ceil(toon.radius(toon.style.maximumRadius()) * scale)) + 2 +
@@ -1025,7 +1025,7 @@ std::vector<ColorPixel> renderToonTile(const RenderScene &scene,
       request.width  = columns + 2 * margin;
       request.height = rows + 2 * margin;
       const auto pixels =
-          renderLayeredTile(scene, request, canceled, nesting, &brush, true);
+          renderLayeredTile(scene, request, canceled, nesting, &toon, true);
       if (pixels.empty()) return {};
       for (int row = 0; row < rows; ++row)
         std::copy_n(

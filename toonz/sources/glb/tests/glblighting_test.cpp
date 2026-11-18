@@ -126,6 +126,71 @@ void testToonLines() {
           "Bottom Weight and shadow thickness did not combine");
 }
 
+void testBottomContourWeight() {
+  const auto rectangle = [](otglb::RenderScene &scene, double y, double depth) {
+    const otglb::ProjectedVertex a{8, y, depth}, b{32, y, depth},
+        c{32, y + 15, depth}, d{8, y + 15, depth};
+    for (auto vertices : {std::array<otglb::ProjectedVertex, 3>{{a, b, c}},
+                          std::array<otglb::ProjectedVertex, 3>{{a, c, d}}}) {
+      otglb::RenderTriangle triangle{vertices, {}, {{1, 1, 1}}};
+      triangle.toonSurface = true;
+      scene.triangles.push_back(triangle);
+    }
+  };
+  for (bool overlap : {false, true}) {
+    otglb::RenderScene scene;
+    scene.toonLine                    = otglb::ToonLineStyle{};
+    scene.toonLine->width             = 2;
+    scene.toonLine->lightingInfluence = 0;
+    if (overlap) {
+      // A large rear surface makes both rectangles internal depth contours.
+      const otglb::ProjectedVertex a{0, 0, 0}, b{40, 0, 0}, c{40, 68, 0},
+          d{0, 68, 0};
+      for (auto vertices : {std::array<otglb::ProjectedVertex, 3>{{a, b, c}},
+                            std::array<otglb::ProjectedVertex, 3>{{a, c, d}}}) {
+        otglb::RenderTriangle triangle{vertices, {}, {{1, 1, 1}}};
+        triangle.toonSurface = true;
+        scene.triangles.push_back(triangle);
+      }
+    }
+    rectangle(scene, 10, 5);
+    rectangle(scene, 45, 5);
+    const otglb::RenderTile tile{40, 68};
+    const auto base              = otglb::renderTile(scene, tile);
+    scene.toonLine->bottomWeight = 1;
+    const auto heavy             = otglb::renderTile(scene, tile);
+    const auto ink               = [&](const auto &pixels, int x, int y) {
+      const auto &p = pixels[y * tile.width + x];
+      return overlap ? 1 - p.r : p.alpha;
+    };
+    for (int bottom : {10, 45}) {
+      require(ink(heavy, 20, bottom - 2) > ink(base, 20, bottom - 2) + .4,
+              "Bottom Weight missed an underside above the model base");
+      // Sample far enough from the corners to exclude rounded stroke caps.
+      for (int y = bottom + 5; y < bottom + 10; ++y)
+        for (int x : {6, 7, 8, 9, 30, 31, 32, 33}) {
+          const auto i = y * tile.width + x;
+          near(heavy[i].r, base[i].r, 1e-6f);
+          near(heavy[i].alpha, base[i].alpha, 1e-6f);
+        }
+      for (int y = bottom + 13; y <= bottom + 17; ++y)
+        for (int x = 15; x <= 25; ++x) {
+          const auto i = y * tile.width + x;
+          near(heavy[i].r, base[i].r, 1e-6f);
+          near(heavy[i].alpha, base[i].alpha, 1e-6f);
+        }
+    }
+    // Tile origins do not change which direction a contour faces.
+    const auto part = otglb::renderTile(scene, {24, 22, 6, 38});
+    for (int y = 0; y < 22; ++y)
+      for (int x = 0; x < 24; ++x) {
+        const auto &full = heavy[(y + 38) * tile.width + x + 6];
+        near(full.r, part[y * 24 + x].r, 1e-6f);
+        near(full.alpha, part[y * 24 + x].alpha, 1e-6f);
+      }
+  }
+}
+
 void testToonOcclusionAndTiles() {
   otglb::RenderScene scene;
   scene.toonLine = otglb::ToonLineStyle{};
@@ -269,6 +334,7 @@ int main() {
     near(color(rig)[0], 0.0f);
 
     testToonLines();
+    testBottomContourWeight();
     testToonOcclusionAndTiles();
     testToonSpeckles();
     std::cout << "Directional and positional diffuse lighting passed\n";
