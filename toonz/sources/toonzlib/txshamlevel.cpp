@@ -222,7 +222,8 @@ void TXshAMLevel::load() {
         auto &point     = edited->points[i];
         const auto edit = m_pointEdits.find(point.id);
         if (edit == m_pointEdits.end()) continue;
-        if (point.head != i && edit->second.position != point.position)
+        if ((point.head != i || point.isSplineHook) &&
+            edit->second.position != point.position)
           throw std::runtime_error("an attached point cannot own a position");
         point.position = edit->second.position;
         point.bias     = edit->second.bias;
@@ -230,6 +231,7 @@ void TXshAMLevel::load() {
       }
       if (applied != m_pointEdits.size())
         throw std::runtime_error("control point edit refers to an unknown ID");
+      otam::updateSplineHooks(*edited);
       model = std::move(edited);
     }
     auto mesh =
@@ -303,6 +305,9 @@ bool TXshAMLevel::setControlPoints(const PointValues &values,
     if (it == requested.end()) continue;
     const auto &value = *it->second;
     if (point.head != i && point.position != value.position) return false;
+    if (point.isSplineHook &&
+        m_editableModel->points[i].position != value.position)
+      return false;
     if (!(pointValue(m_editableModel->points[i]) == value))
       changed.emplace_back(i, &value);
     requested.erase(it);
@@ -315,14 +320,18 @@ bool TXshAMLevel::setControlPoints(const PointValues &values,
     auto &point    = model->points[i];
     point.position = value->position;
     point.bias     = value->bias;
-    if (!(pointValue(source.points[i]) == *value))
-      replacements.emplace(point.id, *value);
+    const PointValue stored{
+        point.isSplineHook ? source.points[i].position : value->position,
+        value->bias};
+    if (!(pointValue(source.points[i]) == stored))
+      replacements.emplace(point.id, stored);
   }
   auto editRevision = m_revision;
   auto overrides    = paletteColorOverridesLocked(
          m_renderPalette ? *m_renderPalette : *m_palette);
   std::shared_ptr<const otam::Mesh> mesh, renderMesh;
   try {
+    otam::updateSplineHooks(*model);
     mesh = std::make_shared<otam::Mesh>(
         otam::previewMesh(*model, m_document->warnings));
     renderMesh = meshWithColorsLocked(mesh, overrides);
@@ -509,6 +518,7 @@ void TXshAMLevel::sampleActionLocked(
   try {
     auto model = std::make_shared<otam::Model>(*m_editableModel);
     otam::applyAction(*action, *model, seconds);
+    otam::updateSplineHooks(*model);
     sample.mesh = std::make_shared<otam::Mesh>(
         otam::previewMesh(*model, m_document->warnings));
     sample.model = std::move(model);

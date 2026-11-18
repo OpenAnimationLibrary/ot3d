@@ -196,6 +196,73 @@ void resolve(Model &m) {
     for (auto cp : p.points)
       if (!ids.count(cp)) fail("patch references a missing CP");
 }
+
+struct HookRecord {
+  std::size_t point, offset;
+  Id target;
+  double fraction;
+};
+
+void resolveSplineHooks(Model &model, const Document &document,
+                        const std::vector<HookRecord> &records) {
+  if (records.empty()) return;
+  const auto ids = index(model);
+  using Location = std::pair<std::size_t, std::size_t>;
+  std::vector<Location> occurrences(model.points.size());
+  for (std::size_t s = 0; s < model.splines.size(); ++s)
+    for (std::size_t i = 0; i < model.splines[s].points.size(); ++i)
+      occurrences[model.splines[s].points[i]] = {s, i};
+
+  std::vector<SplineHook> hooks;
+  std::vector<std::size_t> hookByPoint(model.points.size(), records.size());
+  for (const auto &record : records) {
+    const auto target  = ids.find(record.target);
+    const auto context = [&] {
+      return " at CP " + std::to_string(model.points[record.point].id) +
+             " (line " +
+             std::to_string(sourceLineNumber(document, record.offset)) + ")";
+    };
+    if (target == ids.end()) fail("missing spline hook target" + context());
+    const auto [spline, segment] = occurrences[target->second];
+    const auto &host             = model.splines[spline];
+    if (!host.closed && segment + 1 == host.points.size())
+      fail("spline hook target has no outgoing segment" + context());
+    hookByPoint[record.point] = hooks.size();
+    hooks.push_back({record.point, spline, segment, record.fraction});
+  }
+
+  // The cubic depends on both endpoints and their adjacent spline points.
+  // Evaluate dependent hooks after their hosts and reject cycles without
+  // recursing through untrusted input.
+  std::vector<std::vector<std::size_t>> dependents(hooks.size());
+  std::vector<unsigned> remaining(hooks.size());
+  std::vector<std::size_t> ready;
+  for (std::size_t i = 0; i < hooks.size(); ++i) {
+    const auto &hook = hooks[i];
+    const auto &host = model.splines[hook.spline];
+    const auto size  = host.points.size();
+    const auto start = hook.segment, end = (start + 1) % size;
+    for (const auto index :
+         {start, end,
+          (start || host.closed) ? (start + size - 1) % size : start,
+          (end + 1 < size || host.closed) ? (end + 1) % size : end}) {
+      const auto dependency =
+          hookByPoint[model.points[host.points[index]].head];
+      if (dependency == hooks.size()) continue;
+      dependents[dependency].push_back(i);
+      ++remaining[i];
+    }
+    if (!remaining[i]) ready.push_back(i);
+  }
+  for (std::size_t i = 0; i < ready.size(); ++i) {
+    const auto hook = ready[i];
+    model.splineHooks.push_back(hooks[hook]);
+    for (const auto next : dependents[hook])
+      if (!--remaining[next]) ready.push_back(next);
+  }
+  if (ready.size() != hooks.size()) fail("cyclic spline hook dependency");
+  updateSplineHooks(model);
+}
 void readBoneSegment(const Document &d, const SourceNode &node, Model &model,
                      const std::map<Id, std::size_t> &ids,
                      std::set<std::string> &paths, int parent,
@@ -370,6 +437,7 @@ Document parse(std::string source, const Limits &limits) {
   for (std::size_t ni = 0; ni < d.nodes.size(); ++ni) {
     if (d.nodes[ni].name != "MODEL") continue;
     Model m;
+    std::vector<HookRecord> hookRecords;
     for (const auto &line : lines(d, d.nodes[ni]))
       if (line.compare(0, 5, "Name=") == 0) m.name = line.substr(5);
     // Descendants are in source order. Scope every record to its MODEL.
@@ -398,16 +466,23 @@ Document parse(std::string source, const Limits &limits) {
             }
             biasOffset = 6;
           } else if (kind == 1) {
-            // A hook stores a position along a spline before the target CP.
-            // That position cannot be converted to an ordinary attachment.
             constexpr std::uint32_t hookFlag = 0x10u;
-            if ((cp.flags & hookFlag) && w.size() == 5)
-              fail("spline hook at CP " + std::to_string(cp.id) + " (line " +
-                   std::to_string(sourceLineNumber(d, lineOffset)) +
-                   ") requires native spline hook support");
-            cp.attachedTo = number<Id>(w[3]);
-            if (cp.attachedTo < 0) fail("invalid attachment identifier");
-            biasOffset = 4;
+            if ((cp.flags & hookFlag) && w.size() == 5) {
+              const auto fraction = number<double>(w[3]);
+              const auto target   = number<Id>(w[4]);
+              if (fraction <= 0 || fraction >= 1 || target < 0)
+                fail("invalid spline hook at CP " + std::to_string(cp.id) +
+                     " (line " +
+                     std::to_string(sourceLineNumber(d, lineOffset)) + ")");
+              hookRecords.push_back(
+                  {m.points.size(), lineOffset, target, fraction});
+              cp.isSplineHook = true;
+              biasOffset      = 5;
+            } else {
+              cp.attachedTo = number<Id>(w[3]);
+              if (cp.attachedTo < 0) fail("invalid attachment identifier");
+              biasOffset = 4;
+            }
           } else
             fail(
                 "unsupported CP record kind (hook/special record); source left "
@@ -492,6 +567,7 @@ Document parse(std::string source, const Limits &limits) {
     }
     if (m.points.empty()) fail("model has no supported spline geometry");
     resolve(m);
+    resolveSplineHooks(m, d, hookRecords);
     try {
       std::set<std::string> paths;
       for (auto i : d.nodes[ni].children) {
@@ -616,6 +692,26 @@ SplineSegment splineSegment(const Model &m, const Spline &s,
           handle(end, true)};
 }
 
+void updateSplineHooks(Model &model) {
+  for (const auto &hook : model.splineHooks) {
+    const auto curve =
+        splineSegment(model, model.splines[hook.spline], hook.segment).bezier();
+    model.points[hook.point].position = sampleSpline(curve, hook.fraction);
+  }
+}
+
+static std::array<Vec3, 4> splineInterval(const std::array<Vec3, 4> &curve,
+                                          double from, double to) {
+  const auto tangent = [&](double t) {
+    return add(add(scale(sub(curve[1], curve[0]), (1 - t) * (1 - t)),
+                   scale(sub(curve[2], curve[1]), 2 * t * (1 - t))),
+               scale(sub(curve[3], curve[2]), t * t));
+  };
+  const auto a = sampleSpline(curve, from), b = sampleSpline(curve, to);
+  return {{a, add(a, scale(tangent(from), to - from)),
+           sub(b, scale(tangent(to), to - from)), b}};
+}
+
 bool applyPlasticBones(const Model &rest, Model &pose,
                        const std::vector<PlasticBone> &bones) {
   struct BoneFrame {
@@ -703,9 +799,15 @@ Mesh previewMesh(const Document &d, std::size_t modelIndex,
   return previewMesh(d.models[modelIndex], d.warnings, subdivisions, limits);
 }
 
-Mesh previewMesh(const Model &m, const std::vector<std::string> &warnings,
+Mesh previewMesh(const Model &model, const std::vector<std::string> &warnings,
                  unsigned subdivisions, const Limits &limits) {
   if (subdivisions < 1 || subdivisions > 32) fail("invalid preview request");
+  Model posed;
+  if (!model.splineHooks.empty()) {
+    posed = model;
+    updateSplineHooks(posed);
+  }
+  const auto &m  = model.splineHooks.empty() ? model : posed;
   const auto ids = index(m);
   Mesh out;
   out.warnings = warnings;
@@ -766,6 +868,40 @@ Mesh previewMesh(const Model &m, const std::vector<std::string> &warnings,
                             std::back_inserter(curve.groups));
       std::reverse(points.begin(), points.end());
       curves.emplace(Edge(b, a), points);
+    }
+  }
+  if (!m.splineHooks.empty()) {
+    // A patch beside a hook can use only part of the host curve as an edge.
+    // Reuse that exact cubic interval so the hook meets the host surface.
+    using Fractions = std::map<std::size_t, double>;
+    std::map<Edge, Fractions> hosts;
+    std::map<std::size_t, std::vector<std::size_t>> neighbors;
+    for (const auto &hook : m.splineHooks) {
+      hosts[{hook.spline, hook.segment}][hook.point] = hook.fraction;
+      neighbors.try_emplace(hook.point);
+    }
+    for (const auto &[a, b] : patchEdges) {
+      auto first = neighbors.find(a), second = neighbors.find(b);
+      if (first != neighbors.end()) first->second.push_back(b);
+      if (second != neighbors.end()) second->second.push_back(a);
+    }
+    for (auto &[host, fractions] : hosts) {
+      const auto segment = splineSegment(m, m.splines[host.first], host.second);
+      const auto cubic   = segment.bezier();
+      fractions.emplace(m.points[segment.from].head, 0);
+      fractions.emplace(m.points[segment.to].head, 1);
+      for (const auto &[a, from] : fractions) {
+        auto edges = neighbors.find(a);
+        if (edges == neighbors.end()) continue;
+        for (const auto b : edges->second) {
+          const auto to = fractions.find(b);
+          if (to == fractions.end() || to->second == from) continue;
+          auto interval = splineInterval(cubic, from, to->second);
+          curves.emplace(Edge(a, b), interval);
+          std::reverse(interval.begin(), interval.end());
+          curves.emplace(Edge(b, a), interval);
+        }
+      }
     }
   }
   const auto boundary = [&](std::size_t a, std::size_t b) {
