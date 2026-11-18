@@ -196,9 +196,10 @@ textures, lighting, decals, motion-blur/temporal FX parity and picking are defer
 **Confirmed by examined 19.5 fixtures:** position-bearing CP and attachment records
 have distinct source IDs; equal XYZ does not imply attachment. Incoming/outgoing
 bias fields must remain separate. Both short four-corner patch records and richer
-four-corner records with trailing metadata exist. Rich metadata is preserved,
-not mistaken for additional CP identifiers. Model files use a mixed text/tag
-container; FileInfoPos and unsupported sections are retained verbatim in memory.
+four-corner records with trailing metadata exist. The reader also accepts
+short and normal-index five-corner records and retains their source text. Model
+files use a mixed text/tag container; FileInfoPos and unsupported sections are
+retained verbatim in memory.
 
 **SDK reference:** `OpenAnimationLibrary/amsdk`, current 19.5 `HCP`, `HPatch`,
 `HModel`, `HAction` and time headers. Historical documentation in `docs` identifies
@@ -210,18 +211,20 @@ implementation supplied by the SDK. No SDK source is copied into this change.
 neighbor-based tangents, magnitude application and Coons surface interpolation.
 The preview is NOT the proprietary Hash patch evaluator. Special CP flags are retained with limited evaluation. Warnings identify this.
 Four-corner patches use a Coons approximation and curved three-corner patches
-use a cubic triangular surface. Shared boundaries use the same cubic splines
-drawn by the editor. Gamma rotates in the local spline plane, alpha tilts out of
-it and magnitude scales the tangent. The plane and tangent are approximations
-informed by the SDK's
+use a cubic triangular surface. Five-corner patches use five cubic sectors
+with shared interior edges and shading normals. Shared boundaries use the
+same cubic splines drawn by the editor. Gamma rotates in the local spline
+plane, alpha tilts out of it and magnitude scales the tangent. The plane and
+tangent are approximations informed by the SDK's
 [HCP documentation](https://github.com/OpenAnimationLibrary/amsdk/blob/ee3dd9fb82bf80de8cdd75e00273e2eeab925e33/docs/classHCP__02.md).
 Coincident but unattached points remain separate.
 
 **Unknown/deferred:** exact modern tangent rules, interior subdivision heuristic,
-peaked/special CP flags, exact Hash hook and five-point patch evaluation, patch orientation
-semantics and topology-driven patch discovery. Only explicit supported patches
-are previewed. Models without usable explicit patches are rejected with a clear
-message. Complex models can be partial and are not a compliance claim. Do not use
+peaked/special CP flags, exact Hash hook and five-point patch evaluation, complete
+patch orientation semantics and topology-driven patch discovery. Only explicit
+supported patches are previewed. Models without usable explicit patches are
+rejected with a clear message. Complex models can be partial and are not a
+compliance claim. Do not use
 a plausible cube screenshot as proof that arbitrary curved A:M models match.
 
 ## Validation and acceptance
@@ -242,7 +245,9 @@ cell, select Animate, key XYZ/Rx/Ry/Rz/scale/pivot, scrub and reopen. Repeat wit
 second instance and a parent pegbar. Compare camera Viewer/Preview/final output,
 undo/redo and Function Editor, then switch to vector/raster/Toonz Raster levels
 and verify unchanged controls/rendering. Record A:M version, GPU, driver and
-scaling (100%/150%). Hooks/five-point and rigged files must show explicit limits.
+scaling (100%/150%). Compare five-point patches with adjacent quads and check
+that spline hooks follow their host curves in the Viewer and final output.
+Unsupported hook records and rigs must show explicit limits.
 
 This is an experimental native model level with an approximate surface preview.
 Older OpenToonz builds do not understand

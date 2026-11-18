@@ -530,9 +530,11 @@ Document parse(std::string source, const Limits &limits) {
           Patch p;
           p.flags        = number<std::uint32_t>(w[0]);
           p.sourceRecord = line;
-          // The 19.5 rich four-corner record carries trailing normal indices.
-          // Preserve those bytes; never interpret them as more CP identifiers.
-          const std::size_t cornerEnd = w.size() == 10 ? 5 : w.size();
+          // Rich records append one normal index per corner and a trailer.
+          // Preserve those bytes in sourceRecord, not as CP identifiers.
+          std::size_t cornerEnd = w.size();
+          if (w.size() == 10) cornerEnd = 5;
+          if ((p.flags & 1u) && w.size() == 12) cornerEnd = 6;
           for (std::size_t k = 1; k < cornerEnd; ++k)
             p.points.push_back(number<Id>(w[k]));
           m.patches.push_back(std::move(p));
@@ -793,6 +795,112 @@ bool applyPlasticBones(const Model &rest, Model &pose,
   return changed;
 }
 
+namespace {
+using Curve = std::array<Vec3, 4>;
+
+struct CubicTriangle {
+  Curve ab, bc, ca;
+  Vec3 middle;
+
+  CubicTriangle(const Curve &ab, const Curve &bc, const Curve &ca)
+      : ab(ab)
+      , bc(bc)
+      , ca(ca)
+      , middle(scale(
+            add(add(add(ab[1], ab[2]), add(bc[1], bc[2])), add(ca[1], ca[2])),
+            1.0 / 6)) {}
+
+  Vec3 sample(double u, double v) const {
+    const double w              = 1 - u - v;
+    const auto edgeContribution = [](const Curve &edge, double a, double b) {
+      return add(scale(edge[0], a * a * a), add(scale(edge[1], 3 * a * a * b),
+                                                scale(edge[2], 3 * a * b * b)));
+    };
+    return add(add(edgeContribution(ab, w, u), edgeContribution(bc, u, v)),
+               add(edgeContribution(ca, v, w), scale(middle, 6 * w * u * v)));
+  }
+
+  Vec3 normal(double u, double v) const {
+    constexpr double h = 1e-5;
+    return unit(cross(sub(sample(u + h, v), sample(u - h, v)),
+                      sub(sample(u, v + h), sample(u, v - h))));
+  }
+};
+
+template <class Normal>
+void tessellateTriangle(Mesh &mesh, const CubicTriangle &surface,
+                        unsigned subdivisions, Color color, std::size_t patch,
+                        int colorGroup, const Normal &normal) {
+  const double step = 1.0 / subdivisions;
+  for (unsigned y = 0; y < subdivisions; ++y)
+    for (unsigned x = 0; x + y < subdivisions; ++x) {
+      const double u = x * step, v = y * step;
+      const double u1 = (x + 1) * step, v1 = (y + 1) * step;
+      const auto a = surface.sample(u, v), b = surface.sample(u1, v),
+                 c  = surface.sample(u, v1);
+      const auto na = normal(u, v), nb = normal(u1, v), nc = normal(u, v1);
+      mesh.triangles.push_back(
+          {{{a, b, c}}, color, patch, colorGroup, {{na, nb, nc}}, true});
+      if (x + y + 1 < subdivisions)
+        mesh.triangles.push_back({{{b, surface.sample(u1, v1), c}},
+                                  color,
+                                  patch,
+                                  colorGroup,
+                                  {{nb, normal(u1, v1), nc}},
+                                  true});
+    }
+}
+
+void tessellatePentagon(Mesh &mesh, const std::array<Curve, 5> &boundary,
+                        unsigned subdivisions, Color color, std::size_t patch,
+                        int colorGroup) {
+  Vec3 center{}, plane{};
+  for (const auto &edge : boundary)
+    center = add(center, scale(sampleSpline(edge, 0.5), 0.2));
+  for (const auto &edge : boundary)
+    plane = add(plane, cross(sub(edge[0], center), sub(edge[3], center)));
+  const auto centerNormal = unit(plane);
+  const auto tangent      = [](const Vec3 &v, const Vec3 &normal) {
+    return sub(v, scale(normal, dot(v, normal)));
+  };
+
+  // Share one cubic spoke per corner. The handle at the center lies in a
+  // common tangent plane so the five sectors converge without a sharp tip.
+  std::array<Curve, 5> inward, outward;
+  for (std::size_t i = 0; i < boundary.size(); ++i) {
+    const auto &edge     = boundary[i];
+    const auto &previous = boundary[(i + 4) % 5];
+    const auto &corner   = edge[0];
+    const auto cornerNormal =
+        unit(cross(sub(edge[1], corner), sub(previous[2], corner)));
+    const auto step = scale(sub(center, corner), 1.0 / 3);
+    inward[i]       = {{corner, add(corner, tangent(step, cornerNormal)),
+                        sub(center, tangent(step, centerNormal)), center}};
+    std::reverse_copy(inward[i].begin(), inward[i].end(), outward[i].begin());
+  }
+  const auto sector = [&](std::size_t i) {
+    return CubicTriangle(boundary[i], inward[(i + 1) % 5], outward[i]);
+  };
+  const std::array<CubicTriangle, 5> sectors{
+      {sector(0), sector(1), sector(2), sector(3), sector(4)}};
+  for (std::size_t i = 0; i < sectors.size(); ++i) {
+    const auto normal = [&](double u, double v) {
+      constexpr double epsilon = 1e-12;
+      if (v >= 1 - epsilon) return centerNormal;
+      const auto n = sectors[i].normal(u, v);
+      // Both triangles along an internal spoke use the same shading normal.
+      if (u < epsilon)
+        return unit(add(n, sectors[(i + 4) % 5].normal(1 - v, v)));
+      if (u + v >= 1 - epsilon)
+        return unit(add(n, sectors[(i + 1) % 5].normal(0, v)));
+      return n;
+    };
+    tessellateTriangle(mesh, sectors[i], subdivisions, color, patch, colorGroup,
+                       normal);
+  }
+}
+}  // namespace
+
 Mesh previewMesh(const Document &d, std::size_t modelIndex,
                  unsigned subdivisions, const Limits &limits) {
   if (modelIndex >= d.models.size()) fail("invalid preview request");
@@ -816,7 +924,7 @@ Mesh previewMesh(const Model &model, const std::vector<std::string> &warnings,
        "Experimental A:M control-surface preview; Hash patch/bias evaluation "
        "fidelity is not validated.");
   warn(out.warnings,
-       "Only explicit three/four-corner patches are displayed; automatic patch "
+       "Only explicit supported patches are displayed; automatic patch "
        "discovery is not implemented.");
   // Use one curve per welded boundary so neighboring patches share the same
   // samples. Bias is read from the actual occurrence on that spline.
@@ -919,10 +1027,8 @@ Mesh previewMesh(const Model &model, const std::vector<std::string> &warnings,
       if (heads.empty() || heads.back() != h) heads.push_back(h);
     }
     if (heads.size() > 1 && heads.front() == heads.back()) heads.pop_back();
-    if (heads.size() != 3 && heads.size() != 4) {
-      warn(out.warnings,
-           "Five-point/hook/special patches are not tessellated by this "
-           "preview.");
+    if (heads.size() < 3 || heads.size() > 5) {
+      warn(out.warnings, "Unsupported patch corner count; patch skipped.");
       continue;
     }
     if (std::set<std::size_t>(heads.begin(), heads.end()).size() !=
@@ -979,46 +1085,20 @@ Mesh previewMesh(const Model &model, const std::vector<std::string> &warnings,
         continue;
       }
 
-      // A cubic triangular patch has six boundary handles and one interior
-      // handle. Use their mean for the interior so all three edges follow
-      // exactly the same splines as adjoining quads.
-      const auto middle = scale(
-          add(add(add(ab[1], ab[2]), add(bc[1], bc[2])), add(ca[1], ca[2])),
-          1.0 / 6);
-      const auto sample = [&](double u, double v) {
-        const double w              = 1 - u - v;
-        const auto edgeContribution = [](const std::array<Vec3, 4> &edge,
-                                         double a, double b) {
-          return add(scale(edge[0], a * a * a),
-                     add(scale(edge[1], 3 * a * a * b),
-                         scale(edge[2], 3 * a * b * b)));
-        };
-        return add(
-            add(edgeContribution(ab, w, u), edgeContribution(bc, u, v)),
-            add(edgeContribution(ca, v, w), scale(middle, 6 * w * u * v)));
-      };
-      const double step = 1.0 / subdivisions;
-      const auto normal = [&](double u, double v) {
-        constexpr double h = 1e-5;
-        return unit(cross(sub(sample(u + h, v), sample(u - h, v)),
-                          sub(sample(u, v + h), sample(u, v - h))));
-      };
-      for (unsigned y = 0; y < subdivisions; ++y)
-        for (unsigned x = 0; x + y < subdivisions; ++x) {
-          const double u = x * step, v = y * step;
-          const double u1 = (x + 1) * step, v1 = (y + 1) * step;
-          const auto a = sample(u, v), b = sample(u1, v), c = sample(u, v1);
-          const auto na = normal(u, v), nb = normal(u1, v), nc = normal(u, v1);
-          out.triangles.push_back(
-              {{{a, b, c}}, color, p, colorGroup, {{na, nb, nc}}, true});
-          if (x + y + 1 < subdivisions)
-            out.triangles.push_back({{{b, sample(u1, v1), c}},
-                                     color,
-                                     p,
-                                     colorGroup,
-                                     {{nb, normal(u1, v1), nc}},
-                                     true});
-        }
+      const CubicTriangle triangle(ab, bc, ca);
+      tessellateTriangle(
+          out, triangle, subdivisions, color, p, colorGroup,
+          [&](double u, double v) { return triangle.normal(u, v); });
+      continue;
+    }
+    if (heads.size() == 5) {
+      if (5 * subdivisions * subdivisions >
+          limits.triangles - out.triangles.size())
+        fail("preview triangle budget exceeded");
+      std::array<Curve, 5> edges;
+      for (std::size_t i = 0; i < edges.size(); ++i)
+        edges[i] = boundary(heads[i], heads[(i + 1) % edges.size()]);
+      tessellatePentagon(out, edges, subdivisions, color, p, colorGroup);
       continue;
     }
     if (2 * subdivisions * subdivisions >

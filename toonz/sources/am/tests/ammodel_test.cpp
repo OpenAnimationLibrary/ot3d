@@ -31,6 +31,93 @@ std::string replace(std::string s, const std::string &a, const std::string &b) {
   s.replace(pos, a.size(), b);
   return s;
 }
+void testFivePointPatch() {
+  const std::string fixture = R"(<MODELFILE>
+ProductVersion=19.5
+<MODEL>
+<MESH>
+<SPLINE>
+262145 0 1 -1 -1 0 . .
+262145 0 2 1 -1 0 . .
+262145 0 3 1.4 0.5 0.25 . .
+262145 0 4 0 1.5 0.1 . .
+262149 0 5 -1.4 0.5 0.1 . .
+</SPLINE>
+<SPLINE>
+262145 1 8 1 . .
+262145 0 6 -1 -2 0 . .
+262145 0 7 1 -2 0 . .
+262145 1 9 2 . .
+</SPLINE>
+<PATCHES>
+1 1 2 3 4 5
+24 2 1 6 7
+</PATCHES>
+</MESH>
+<GROUPS>
+<GROUP>
+Name=Pentagon
+<CPS>
+1 2 3 4 5
+</CPS>
+DiffuseColor=255 0 0
+</GROUP>
+</GROUPS>
+</MODEL>
+</MODELFILE>
+)";
+  const auto doc            = otam::parse(fixture);
+  const auto rich           = otam::parse(
+                replace(fixture, "1 1 2 3 4 5", "1 1 2 3 4 5 20 21 22 23 24 0"));
+  check(rich.models[0].patches[0].points == doc.models[0].patches[0].points &&
+            rich.models[0].patches[0].sourceRecord ==
+                "1 1 2 3 4 5 20 21 22 23 24 0",
+        "rich five-point patch lost or misread metadata");
+  const auto &model = doc.models[0];
+  const auto shared = otam::splineSegment(model, model.splines[0], 0).bezier();
+  for (unsigned subdivisions : {1u, 3u, 4u}) {
+    const auto mesh         = otam::previewMesh(rich, 0, subdivisions);
+    const auto pentagonSize = 5 * subdivisions * subdivisions;
+    check(mesh.triangles.size() == 7 * subdivisions * subdivisions &&
+              mesh.patchGroups[0] == std::vector<std::string>{"Pentagon"} &&
+              mesh.adjoiningPatches ==
+                  std::vector<std::pair<std::size_t, std::size_t>>{{0, 1}},
+          "five-point surface or patch identity missing");
+    for (auto it = mesh.triangles.begin();
+         it != mesh.triangles.begin() + pentagonSize; ++it) {
+      check(it->patch == 0 && it->colorGroup == 0 && it->hasNormals &&
+                it->color == otam::Color{1, 0, 0},
+            "five-point triangle lost group, color or normals");
+    }
+    for (unsigned i = 0; i <= subdivisions; ++i) {
+      const auto expected =
+          otam::sampleSpline(shared, double(i) / subdivisions);
+      const auto contains = [&](const otam::Triangle &triangle) {
+        return std::any_of(triangle.vertices.begin(), triangle.vertices.end(),
+                           [&](const otam::Vec3 &v) {
+                             return std::hypot(v[0] - expected[0],
+                                               v[1] - expected[1],
+                                               v[2] - expected[2]) < 1e-8;
+                           });
+      };
+      const auto seam = mesh.triangles.begin() + pentagonSize;
+      check(std::any_of(mesh.triangles.begin(), seam, contains) &&
+                std::any_of(seam, mesh.triangles.end(), contains),
+            "five-point patch does not share its biased edge with the quad");
+    }
+  }
+  const auto pixels = otam::rasterize(
+      otam::transformed(
+          otam::previewMesh(doc),
+          otam::multiply(otam::translation(8, 8, 0), otam::scaling(4, 4, 1))),
+      16, 16);
+  check(pixels[8 * 16 + 8] == std::array<float, 4>{1, 0, 0, 1},
+        "five-point patch center rasterized as a hole");
+  otam::Limits budget;
+  budget.triangles = 5 * 3 * 3 - 1;
+  rejects([&] { otam::previewMesh(doc, 0, 3, budget); });
+}
+
 void testNativeBones() {
   const auto fixture = amtest::rigidBoneSource();
   const auto doc     = otam::parse(fixture);
@@ -425,6 +512,7 @@ int main() {
     check(mesh.triangles.size() == 8, "quad tessellation");
     testInk(mesh);
     testNativeBones();
+    testFivePointPatch();
     testPlasticBones();
     testSpatialPlasticBones();
     testSplineProfile();
