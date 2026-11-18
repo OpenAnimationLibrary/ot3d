@@ -22,6 +22,46 @@ otglb::ColorPixel sample(const otglb::RenderScene &scene, double x = 0,
   tile.y                   = y - .5;
   return otglb::renderTile(scene, tile)[0];
 }
+void testToonWithEmitter(const otglb::RenderScene &source) {
+  const auto wrap = [](const otglb::RenderScene &model) {
+    otglb::RenderScene outline;
+    outline.layers.push_back({std::make_shared<otglb::RenderScene>(model)});
+    outline.toonLine               = otglb::ToonLineStyle{};
+    outline.toonLine->width        = 4;
+    outline.toonLine->bottomWeight = .5;
+    return outline;
+  };
+  auto emitterLast      = wrap(source);
+  auto modelWithEmitter = source;
+  const std::array<double, 3> position{{0, 0, 1}};
+  const std::array<float, 3> color{{2, 0, 0}};
+  int canceled = 1;
+  otglb::appendVisibleLight(emitterLast, position, .2, color, &canceled);
+  check(
+      emitterLast.layers[0].scene->triangles.size() == source.triangles.size(),
+      "Canceled emitter changed the model");
+  check(otglb::renderTile(emitterLast, {32, 32}, &canceled).empty(),
+        "Canceled Toon Line tile rendered");
+  canceled = 0;
+  otglb::appendVisibleLight(emitterLast, position, .2, color, &canceled);
+  otglb::appendVisibleLight(modelWithEmitter, position, .2, color);
+  const auto outlineLast = wrap(modelWithEmitter);
+  const otglb::RenderTile tile{220, 220, -110, -110};
+  const auto a = otglb::renderTile(emitterLast, tile);
+  const auto b = otglb::renderTile(outlineLast, tile);
+  check(a.size() == 220 * 220 && b.size() == a.size(),
+        "Point Light and Toon Line produced incomplete tiles");
+  for (std::size_t i = 0; i < a.size(); ++i) {
+    near(a[i].r, b[i].r);
+    near(a[i].alpha, b[i].alpha);
+  }
+  check(sample(emitterLast).r > 1.99,
+        "Toon Line obscured Point Light's visible source");
+  check(sample(outlineLast, 0, -101).alpha > .5,
+        "Adding the Point Light emitter removed the model outline");
+  check(sample(source).g > .95,
+        "Adding the Point Light emitter changed the original shaded scene");
+}
 }  // namespace
 int main() {
   try {
@@ -90,6 +130,7 @@ int main() {
     // Emitter spheres use the same projection, shader and depth test as
     // geometry.
     auto source = scene;
+    testToonWithEmitter(source);
     otglb::appendVisibleLight(scene, {{0, 0, 1}}, .2, {{2, 0, 0}});
     check(sample(scene).r > 1.99 && sample(scene).g == 0,
           "HDR visible light missing");

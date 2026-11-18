@@ -172,6 +172,7 @@ set(SOURCES
     ammaterialfx.cpp
     amdistortioncagefx.cpp
     inklinefx.cpp
+    toonlinefx.cpp
     imagebasedlightingfx.cpp
     environmentreflectionfx.cpp
     environmentfx.h

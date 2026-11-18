@@ -1222,7 +1222,8 @@ Mesh projected(const Mesh &mesh, double cx, double cy, double cz, double focus,
                                t.patch,
                                t.colorGroup,
                                {{normals[0], normals[i], normals[i + 1]}},
-                               t.hasNormals});
+                               t.hasNormals,
+                               t.illumination});
   }
   return out;
 }

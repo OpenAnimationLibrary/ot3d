@@ -73,19 +73,44 @@ jobs:
           choco install boost-msvc-${{ env.BOOST_TOOLSET }} --version=${{ env.BOOST_VERSION }} -y
         shell: cmd
 
+      - name: Cache WinTab Qt archive
+        uses: actions/cache@v5
+        with:
+          path: ${{ runner.temp }}\Qt5.15.2_wintab.zip
+          key: ${{ runner.os }}-qt-5.15.2-wintab-eba1a5da9cb631ccd11991e38e0aab6cd7ecb506436389b397abb6ccf591111a
+
       - name: Install custom Qt 5.15.2 with WinTab support
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          $archive = 'Qt5.15.2_wintab.zip'
-          # Use the upstream release asset ID to avoid failures on the browser download URL.
-          curl.exe --fail --silent --show-error --location --retry 3 --retry-max-time 90 --connect-timeout 15 --max-time 180 `
-            --header 'Accept: application/octet-stream' --output $archive `
-            'https://api.github.com/repos/shun-iwasawa/qt5/releases/assets/34012654'
-          if ($LASTEXITCODE -ne 0) { throw 'Could not download the WinTab Qt archive.' }
+          $archive = Join-Path $env:RUNNER_TEMP 'Qt5.15.2_wintab.zip'
           $expectedHash = 'eba1a5da9cb631ccd11991e38e0aab6cd7ecb506436389b397abb6ccf591111a'
-          if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne $expectedHash) {
-            throw 'The WinTab Qt archive failed SHA-256 verification.'
+          function Test-QtArchive {
+            (Test-Path -LiteralPath $archive -PathType Leaf) -and
+              ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -eq $expectedHash)
           }
+
+          $valid = Test-QtArchive
+          if (-not $valid) {
+            $sources = @(
+              'https://github.com/shun-iwasawa/qt5/releases/download/v5.15.2_wintab/Qt5.15.2_wintab.zip?download=1',
+              "https://api.github.com/repos/shun-iwasawa/qt5/releases/assets/34012654?ci=$env:GITHUB_RUN_ID.$env:GITHUB_RUN_ATTEMPT"
+            )
+            foreach ($source in $sources) {
+              Remove-Item -LiteralPath $archive -Force -ErrorAction SilentlyContinue
+              $headers = @('--header', 'Accept: application/octet-stream')
+              if ($source.StartsWith('https://api.github.com/')) {
+                $headers += @('--header', "Authorization: Bearer $env:GH_TOKEN")
+              }
+              curl.exe --fail --silent --show-error --location --retry 2 --retry-max-time 90 --connect-timeout 15 --max-time 180 `
+                @headers --output $archive $source
+              $valid = ($LASTEXITCODE -eq 0) -and (Test-QtArchive)
+              if ($valid) { break }
+              Write-Warning "Could not download a verified WinTab Qt archive from $source"
+            }
+          }
+          if (-not $valid) { throw 'Could not obtain the WinTab Qt archive with the expected SHA-256.' }
           7z x -y $archive
           if ($LASTEXITCODE -ne 0) { throw 'Could not extract the WinTab Qt archive.' }
           New-Item -ItemType Directory -Path 'thirdparty\qt' -Force | Out-Null

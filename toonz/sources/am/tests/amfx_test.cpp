@@ -5,6 +5,7 @@
 #include "../../stdfx/ammaterialfx.cpp"
 #include "../../stdfx/amdistortioncagefx.cpp"
 #include "../../stdfx/inklinefx.cpp"
+#include "../../stdfx/toonlinefx.cpp"
 #include "../../stdfx/surfacesmoothing3dfx.cpp"
 #include "../../stdfx/transform3dfx.cpp"
 #include "../../stdfx/threepointlightfx.cpp"
@@ -332,6 +333,101 @@ void testDistortionCage(const QTemporaryDir &temp) {
   set(cage, "strength", 0);
   require(cage.get3DRenderGeometry(8, nullptr)->bounds == rest->bounds,
           "zero strength changed input geometry");
+}
+
+void testToonLine(ToonzScene &source) {
+  ToonzScene scene;
+  auto *sheet = scene.getXsheet();
+  require(sheet->setCell(0, 0, source.getXsheet()->getCell(0, 0)),
+          "Toon Line test model exposure");
+  auto *column = sheet->getColumn(0)->getFx();
+  TFxP toon    = new ToonLineFx;
+  TFxP light   = new ThreePointLightFx;
+  require(canConnectFxPort(toon->getInputPort(0), column),
+          "Toon Line rejected a native A:M model column");
+  auto *dag      = sheet->getFxDag();
+  auto *terminal = dag->getTerminalFxs();
+  TRenderSettings info;
+  const double base = coverage(render(scene, info));
+  require(base > 0, "Toon Line model fixture has no fill");
+  toon->getInputPort(0)->setFx(column);
+  dag->getInternalFxs()->addFx(toon.getPointer());
+  terminal->removeFx(column);
+  terminal->addFx(toon.getPointer());
+  set(*toon, "width", 6);
+  set(*toon, "lightInfluence", 100);
+  const double unlit = coverage(render(scene, info));
+  require(unlit > base, "Toon Line did not extend the native silhouette");
+  set(*toon, "bottomWeight", 100);
+  require(coverage(render(scene, info)) > unlit,
+          "Bottom Weight did not reach the native renderer");
+  set(*toon, "bottomWeight", 0);
+  set(*toon, "width", 0);
+  require(coverage(render(scene, info)) == base,
+          "Zero width altered the model");
+  set(*toon, "width", 6);
+
+  set(*light, "ambient", 0);
+  set(*light, "fillIntensity", 0);
+  set(*light, "rimIntensity", 0);
+  set(*light, "keyElevation", 0);
+  light->getInputPort(0)->setFx(column);
+  toon->getInputPort(0)->setFx(light.getPointer());
+  dag->getInternalFxs()->addFx(light.getPointer());
+  set(*light, "keyAzimuth", 0);
+  const double bright = coverage(render(scene, info));
+  set(*light, "keyAzimuth", 180);
+  const double shadow = coverage(render(scene, info));
+  require(shadow > bright,
+          "Upstream lighting did not thicken the shadow outline");
+
+  toon->getInputPort(0)->setFx(column);
+  light->getInputPort(0)->setFx(toon.getPointer());
+  terminal->removeFx(toon.getPointer());
+  terminal->addFx(light.getPointer());
+  require(coverage(render(scene, info)) == shadow,
+          "Downstream lighting changed the Toon Line result");
+
+  TFxP point = new PointLightFx;
+  dag->getInternalFxs()->addFx(point.getPointer());
+  point->getInputPort(1)->setFx(column);
+  set(*point, "positionZ", 100);
+  set(*point, "falloffRadius", 100);
+  set(*point, "intensity", 25);
+  set(*point, "visibleSize", 5);
+  set(*toon, "bottomWeight", 40);
+  auto *mode =
+      dynamic_cast<TIntEnumParam *>(point->getParams()->getParam("lightType"));
+  auto *visible =
+      dynamic_cast<TBoolParam *>(point->getParams()->getParam("visible"));
+  require(mode && visible, "Point Light controls missing");
+  terminal->removeFx(light.getPointer());
+  for (int type : {0, 1, 2}) {
+    mode->setValue(type);
+    double withoutEmitter = 0;
+    for (bool showEmitter : {false, true}) {
+      visible->setValue(showEmitter);
+      point->getInputPort(0)->setFx(column);
+      toon->getInputPort(0)->setFx(point.getPointer());
+      terminal->addFx(toon.getPointer());
+      const auto toonLast = render(scene, info);
+      terminal->removeFx(toon.getPointer());
+      toon->getInputPort(0)->setFx(column);
+      point->getInputPort(0)->setFx(toon.getPointer());
+      terminal->addFx(point.getPointer());
+      const auto lightLast = render(scene, info);
+      terminal->removeFx(point.getPointer());
+      require(coverage(toonLast) > base &&
+                  coverage(toonLast) == coverage(lightLast) &&
+                  brightness(toonLast) == brightness(lightLast),
+              "Point Light and Toon Line failed to render in both node orders");
+      if (showEmitter)
+        require(brightness(toonLast) > withoutEmitter,
+                "Point Light's visible source was lost in the Toon Line chain");
+      else
+        withoutEmitter = brightness(toonLast);
+    }
+  }
 }
 
 void testInkLine(const QString &path) {
@@ -1181,6 +1277,7 @@ int main(int argc, char **argv) {
     testInkLine(temp.filePath("ink-lines.mdl"));
     testDistortionCage(temp);
     testVectorInkLine(temp);
+    testToonLine(scene);
     testShine(scene, temp.filePath("shine.mat"));
     testSurfaceSmoothing();
     const auto original = level->getAMLevel()->mesh();
