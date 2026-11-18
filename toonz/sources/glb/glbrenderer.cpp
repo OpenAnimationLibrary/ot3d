@@ -237,6 +237,18 @@ ColorPixel shadeSurfaceSample(const SurfaceSample &s,
           linearToSrgbExtended(color[2]) * s.alpha, s.alpha};
 }
 
+void RenderScene::setSurfaceShader(SurfaceShader shader) {
+  auto shared   = std::make_shared<const SurfaceShader>(std::move(shader));
+  surfaceShader = [shared](std::size_t index,
+                           const std::array<double, 3> &bary) {
+    return (*shared)(index, bary);
+  };
+  sampleShader = [shared, layers = environments](
+                     std::size_t index, const std::array<double, 3> &bary) {
+    return shadeSurfaceSample((*shared)(index, bary), layers);
+  };
+}
+
 RenderScene prepareRender(const Asset &asset, const RenderOptions &o,
                           const int *canceled) {
   for (double v : o.position) require(std::isfinite(v), "Non-finite GLB position.");
@@ -462,6 +474,7 @@ RenderScene prepareRender(const Asset &asset, const RenderOptions &o,
             for (auto &v : color) v = linearToSrgb(srgbToLinear(v) * gray);
         }
 
+        float lineIllumination = -1;
         if (o.useLightingRig && !o.lighting.preserveDefaultLighting) {
           // The renderer is intentionally two-sided. Orient the face normal
           // toward the camera before evaluating camera-relative diffuse lights.
@@ -493,6 +506,10 @@ RenderScene prepareRender(const Asset &asset, const RenderOptions &o,
             for (int channel = 0; channel < 3; ++channel)
               illumination[channel] += diffuse * srgbToLinear(source.color[channel]);
           }
+          if (!o.lighting.lights.empty() || o.lighting.ambient > 0)
+            lineIllumination = lightLuminance(illumination[0], illumination[1],
+                                              illumination[2]) *
+                               o.lighting.master;
           for (int channel = 0; channel < 3; ++channel) {
             const double linear = srgbToLinear(surface[channel]) *
                                   illumination[channel] * o.lighting.master;
@@ -520,6 +537,8 @@ RenderScene prepareRender(const Asset &asset, const RenderOptions &o,
             out.bounds[2] = std::max(out.bounds[2], v.x);
             out.bounds[3] = std::max(out.bounds[3], v.y);
           }
+          triangle.toonSurface  = true;
+          triangle.illumination = lineIllumination;
           out.triangles.push_back(triangle);
           if (sampleShading) {
             EnvironmentSample sample;
@@ -553,10 +572,10 @@ RenderScene prepareRender(const Asset &asset, const RenderOptions &o,
     out.environments       = o.lighting.environments;
     out.surfaceCount       = out.triangles.size();
     out.surfacePerspective = o.perspective;
-    out.surfaceShader =
+    out.setSurfaceShader(
         [samples = std::move(environmentSamples), triangles = out.triangles,
-         layers = o.lighting.environments, rig = o.lighting, sampleLights,
-         perspective = o.perspective, eye, ortho,
+         rig = o.lighting, sampleLights, perspective = o.perspective, eye,
+         ortho,
          cameraNormals](std::size_t index, const std::array<double, 3> &bary) {
           const auto &s = samples.at(index);
           auto weights  = bary;
@@ -591,6 +610,7 @@ RenderScene prepareRender(const Asset &asset, const RenderOptions &o,
           EnvironmentColor color;
           for (int k = 0; k < 3; ++k)
             color[k] = srgbToLinear(triangles[index].color[k]);
+          float lineIllumination = triangles[index].illumination;
           if (sampleLights && !rig.preserveDefaultLighting) {
             // World-space for new individual lights; preserve legacy camera
             // directions by converting the normal back to camera space.
@@ -612,23 +632,21 @@ RenderScene prepareRender(const Asset &asset, const RenderOptions &o,
               for (int k = 0; k < 3; ++k)
                 energy[k] += float(d * srgbToLinear(light.color[k]));
             }
+            lineIllumination =
+                lightLuminance(energy[0], energy[1], energy[2]) * rig.master;
             for (int k = 0; k < 3; ++k)
               color[k] = float(s.albedo[k] * energy[k] * rig.master);
           }
           SurfaceSample result;
           result.local  = color;
+          result.illumination = lineIllumination;
           result.normal = n;
           result.view   = v;
           for (auto &component : result.view) component *= l;
           result.diffuse = s.albedo;
           return result;
-        };
+        });
   }
-  if (out.surfaceShader)
-    out.sampleShader = [surface = out.surfaceShader, layers = out.environments](
-                           std::size_t i, const std::array<double, 3> &b) {
-      return shadeSurfaceSample(surface(i, b), layers);
-    };
   if (worldBounds) {
     std::array<double, 3> center{};
     for (int k = 0; k < 3; ++k)
@@ -670,7 +688,9 @@ std::optional<std::array<double, 3>> targetCenter(
 
 void appendVisibleLight(RenderScene &scene,
                         const std::array<double, 3> &position, double radius,
-                        const std::array<float, 3> &radiance) {
+                        const std::array<float, 3> &radiance,
+                        const int *canceled) {
+  if (canceled && *canceled) return;
   require(std::isfinite(radius) && radius > 0, "Invalid visible light size.");
   for (double v : position)
     require(std::isfinite(v), "Invalid visible light position.");
@@ -679,7 +699,8 @@ void appendVisibleLight(RenderScene &scene,
   for (auto &layer : scene.layers) {
     if (!layer.scene) continue;
     auto copy = std::make_shared<RenderScene>(*layer.scene);
-    appendVisibleLight(*copy, position, radius, radiance);
+    appendVisibleLight(*copy, position, radius, radiance, canceled);
+    if (canceled && *canceled) return;
     layer.scene   = copy;
     const auto &a = layer.affine;
     const auto &b = copy->bounds;
@@ -704,7 +725,9 @@ void appendVisibleLight(RenderScene &scene,
          position[1] + radius * std::sin(latitude),
          position[2] + radius * std::cos(latitude) * std::sin(longitude)}};
   };
-  for (int row = 0; row < 12; ++row)
+  std::vector<RenderTriangle> emitter;
+  for (int row = 0; row < 12; ++row) {
+    if (canceled && *canceled) return;
     for (int col = 0; col < 24; ++col) {
       const auto a = vertex(row, col), b = vertex(row, col + 1),
                  c = vertex(row + 1, col + 1), d = vertex(row + 1, col);
@@ -712,28 +735,36 @@ void appendVisibleLight(RenderScene &scene,
                                 RenderScene::WorldTriangle{{a, c, d}}})
         for (auto triangle : scene.projectTriangle(world)) {
           triangle.color = radiance;
-          for (const auto &v : triangle.vertices) {
+          for (const auto &v : triangle.vertices)
             require(std::isfinite(v.x) && std::isfinite(v.y) &&
                         std::isfinite(v.depth),
                     "Invalid light projection.");
-            if (scene.triangles.empty()) scene.bounds = {{v.x, v.y, v.x, v.y}};
-            scene.bounds[0] = std::min(scene.bounds[0], v.x);
-            scene.bounds[1] = std::min(scene.bounds[1], v.y);
-            scene.bounds[2] = std::max(scene.bounds[2], v.x);
-            scene.bounds[3] = std::max(scene.bounds[3], v.y);
-          }
-          scene.triangles.push_back(triangle);
+          emitter.push_back(triangle);
         }
     }
-  if (scene.triangles.size() == first) return;
-  const auto shader = scene.sampleShader;
+  }
+  if (emitter.empty()) return;
+  if (scene.triangles.empty()) {
+    const auto &v = emitter.front().vertices.front();
+    scene.bounds  = {{v.x, v.y, v.x, v.y}};
+  }
+  for (const auto &triangle : emitter)
+    for (const auto &v : triangle.vertices) {
+      scene.bounds[0] = std::min(scene.bounds[0], v.x);
+      scene.bounds[1] = std::min(scene.bounds[1], v.y);
+      scene.bounds[2] = std::max(scene.bounds[2], v.x);
+      scene.bounds[3] = std::max(scene.bounds[3], v.y);
+    }
+  scene.triangles.insert(scene.triangles.end(), emitter.begin(), emitter.end());
+  auto shader = std::move(scene.sampleShader);
   std::vector<std::array<float, 3>> colors;
   if (!shader) {
     colors.reserve(first);
     for (std::size_t i = 0; i < first; ++i)
       colors.push_back(scene.triangles[i].color);
   }
-  scene.sampleShader = [shader, first, colors = std::move(colors), radiance](
+  scene.sampleShader = [shader = std::move(shader), first,
+                        colors = std::move(colors), radiance](
                            std::size_t i, const std::array<double, 3> &bary) {
     if (i >= first) return ColorPixel{radiance[0], radiance[1], radiance[2], 1};
     if (shader) return shader(i, bary);
@@ -756,9 +787,260 @@ void applyColorScale(const RenderScene &scene,
   }
 }
 
+struct ContourSample {
+  double depth = -std::numeric_limits<double>::infinity();
+  double dx = 0, dy = 0;
+  std::size_t triangle = 0;
+  float a = 0, b = 0, alpha = 0;
+};
+
+float contourIllumination(const RenderScene &scene, const ContourSample &sample,
+                          bool imageBasedLighting) {
+  const auto &triangle = scene.triangles[sample.triangle];
+  float illumination   = triangle.illumination;
+  if (scene.surfaceShader && sample.triangle < scene.surfaceCount) {
+    const auto surface = scene.surfaceShader(
+        sample.triangle, {{sample.a, sample.b, 1.0 - sample.a - sample.b}});
+    if (surface.illumination >= 0) illumination = surface.illumination;
+    if (imageBasedLighting) {
+      illumination = std::max(0.f, illumination);
+      for (const auto &layer : scene.environments) {
+        if (!layer.map || !layer.diffuseLighting) continue;
+        const auto energy = layer.map->irradiance(
+            layer.direction(surface.normal), surface.diffuseFalloff);
+        illumination +=
+            lightLuminance(energy[0] * layer.gain[0], energy[1] * layer.gain[1],
+                           energy[2] * layer.gain[2]);
+      }
+    }
+  }
+  return illumination;
+}
+
+// Limit the halo and the work per edge sample at extreme preview zoom.
+constexpr double MaxContourRadius = 48;
+// Contour centers use a quarter-pixel grid between the raster's sample sites.
+constexpr int MinContourSpan = 8;
+
+struct ToonLineRaster {
+  const ToonLineStyle &style;
+  double scaleX, scaleY, sampleScale;
+  std::array<double, 4> inverse;
+  double bottom = 0, middle = 0;
+
+  double radius(double requested) const {
+    return std::min(requested, MaxContourRadius / std::max(scaleX, scaleY));
+  }
+};
+
+bool drawContours(const RenderScene &scene, const ToonLineRaster &toon,
+                  const std::vector<ContourSample> &hits,
+                  const RenderTile &tile, const int *canceled,
+                  std::vector<float> &coverage) {
+  // The rasterizer already evaluates four sample sites. Detect edges on that
+  // grid and spread each edge's coverage before downsampling the result.
+  const int width = tile.width * 2, height = tile.height * 2;
+  const auto index = [width](int x, int y) {
+    return (std::size_t(y / 2) * (width / 2) + x / 2) * 4 + ((y & 1) * 2) +
+           (x & 1);
+  };
+  const bool ibl = std::any_of(
+      scene.environments.begin(), scene.environments.end(),
+      [](const auto &layer) { return layer.map && layer.diffuseLighting; });
+  const auto isContour = [&](int x, int y, int offsetX, int offsetY) {
+    const auto &a = hits[index(x, y)];
+    const auto &b = hits[index(x + offsetX, y + offsetY)];
+    if (a.alpha == 0 && b.alpha == 0) return false;
+    const auto &front = a.depth >= b.depth ? a : b;
+    if (!scene.triangles[front.triangle].toonSurface) return false;
+    if (a.alpha > 0 && b.alpha > 0) {
+      if (a.triangle == b.triangle) return false;
+      // Compare both projected depth planes at the midpoint. A sloping face
+      // or a continuous tessellation edge must not create a contour.
+      const double stepA = (offsetX * a.dx + offsetY * a.dy) * 0.25;
+      const double stepB = (offsetX * b.dx + offsetY * b.dy) * 0.25;
+      const double gap   = std::abs((a.depth + stepA) - (b.depth - stepB));
+      const double tolerance =
+          std::abs(stepA - stepB) +
+          1e-6 * std::max(std::abs(a.depth), std::abs(b.depth)) + 1e-10;
+      if (gap <= tolerance) return false;
+    }
+    return true;
+  };
+  const auto draw = [&](int x, int y, const ContourSample &front) {
+    const double centerX = x * 0.5, centerY = y * 0.5;
+    double weight = 1;
+    if (toon.middle > toon.bottom) {
+      const double sampleY = tile.y + 0.25 + centerY / 2;
+      weight +=
+          toon.style.bottomWeight *
+          std::clamp((toon.middle - sampleY) / (toon.middle - toon.bottom), 0.0,
+                     1.0);
+    }
+    if (toon.style.lightingInfluence > 0) {
+      const float illumination = contourIllumination(scene, front, ibl);
+      if (illumination >= 0)
+        weight +=
+            toon.style.lightingInfluence * (1 - std::min(illumination, 1.f));
+    }
+    const double radius = toon.radius(toon.style.width * weight / 2);
+    const double reachX = radius * 2 * toon.scaleX + 0.5;
+    const double reachY = radius * 2 * toon.scaleY + 0.5;
+    const int x0        = std::max(0, int(std::ceil(centerX - reachX)));
+    const int x1 = std::min(width - 1, int(std::floor(centerX + reachX)));
+    const int y0 = std::max(0, int(std::ceil(centerY - reachY)));
+    const int y1 = std::min(height - 1, int(std::floor(centerY + reachY)));
+    for (int sy = y0; sy <= y1; ++sy)
+      for (int sx = x0; sx <= x1; ++sx) {
+        const double dx = (sx - centerX) / 2, dy = (sy - centerY) / 2;
+        const auto &m         = toon.inverse;
+        const double ux       = m[0] * dx + m[1] * dy;
+        const double uy       = m[2] * dx + m[3] * dy;
+        const double distance = std::sqrt(ux * ux + uy * uy);
+        const float opacity =
+            float(std::clamp(0.5 + (radius - distance) * toon.sampleScale, 0.0,
+                             1.0)) *
+            front.alpha;
+        auto &value = coverage[index(sx, sy)];
+        value       = std::max(value, opacity);
+      }
+  };
+  const int gridWidth = 2 * width, gridHeight = 2 * height;
+  enum Edge : unsigned char { Absent, Pending, Visited };
+  std::vector<Edge> edges(std::size_t(gridWidth) * gridHeight, Absent);
+  for (int y = 0; y < height; ++y) {
+    if (canceled && *canceled) return false;
+    for (int x = 0; x < width; ++x) {
+      const int cell = 2 * y * gridWidth + 2 * x;
+      if (x + 1 < width && isContour(x, y, 1, 0)) edges[cell + 1] = Pending;
+      if (y + 1 < height && isContour(x, y, 0, 1))
+        edges[cell + gridWidth] = Pending;
+    }
+  }
+
+  // Remove compact depth-edge islands and the rings around coverage pinholes
+  // before applying stroke width. Keep a small exterior silhouette if its
+  // transparent neighbor lies outside the component's contour bounds.
+  std::vector<int> component;
+  const auto visit = [&](int x, int y) {
+    if (x < 0 || y < 0 || x >= gridWidth || y >= gridHeight) return;
+    const int cell = y * gridWidth + x;
+    if (edges[cell] != Pending) return;
+    edges[cell] = Visited;
+    component.push_back(cell);
+  };
+  for (int y = 0; y < gridHeight; ++y) {
+    if (canceled && *canceled) return false;
+    for (int x = 0; x < gridWidth; ++x) {
+      if (edges[y * gridWidth + x] != Pending) continue;
+      component.clear();
+      visit(x, y);
+      int left = x, right = x, bottom = y, top = y;
+      int emptyLeft = gridWidth, emptyRight = -1;
+      int emptyBottom = gridHeight, emptyTop = -1;
+      for (std::size_t i = 0; i < component.size(); ++i) {
+        if ((i & 255) == 0 && canceled && *canceled) return false;
+        const int cx = component[i] % gridWidth, cy = component[i] / gridWidth;
+        left   = std::min(left, cx);
+        right  = std::max(right, cx);
+        bottom = std::min(bottom, cy);
+        top    = std::max(top, cy);
+        // Candidate segments are connected wherever they share an endpoint
+        // on the grid between the raster's four coverage samples.
+        const int dx = cx & 1, dy = cy & 1;
+        visit(cx + 2 * dy, cy + 2 * dx);
+        visit(cx - 2 * dy, cy - 2 * dx);
+        for (int turnX : {-1, 1})
+          for (int turnY : {-1, 1}) visit(cx + turnX, cy + turnY);
+        for (int side : {-1, 1}) {
+          const int sx = cx + side * dx, sy = cy + side * dy;
+          if (hits[index(sx / 2, sy / 2)].alpha != 0) continue;
+          emptyLeft   = std::min(emptyLeft, sx);
+          emptyRight  = std::max(emptyRight, sx);
+          emptyBottom = std::min(emptyBottom, sy);
+          emptyTop    = std::max(emptyTop, sy);
+        }
+      }
+      const bool exterior = emptyLeft < left || emptyRight > right ||
+                            emptyBottom < bottom || emptyTop > top;
+      if (!exterior && std::max(right - left, top - bottom) < MinContourSpan)
+        continue;
+      for (std::size_t i = 0; i < component.size(); ++i) {
+        if ((i & 255) == 0 && canceled && *canceled) return false;
+        const int cx = component[i] % gridWidth, cy = component[i] / gridWidth;
+        const int sx = cx / 2, sy = cy / 2;
+        const auto &a = hits[index(sx, sy)];
+        const auto &b = hits[index(sx + (cx & 1), sy + (cy & 1))];
+        draw(cx, cy, a.depth >= b.depth ? a : b);
+      }
+    }
+  }
+  return true;
+}
+
+std::vector<ColorPixel> renderLayeredTile(
+    const RenderScene &scene, const RenderTile &tile, const int *canceled,
+    int nesting, const ToonLineRaster *inherited = nullptr,
+    bool padded = false);
+
+std::vector<ColorPixel> renderToonTile(const RenderScene &scene,
+                                       const RenderTile &tile,
+                                       const int *canceled, int nesting,
+                                       const ToonLineRaster &toon) {
+  auto brush = toon;
+  if (brush.style.bottomWeight > 0) {
+    // Use the actual screen-space extent of the model surfaces. Ink Line
+    // splines and visible light markers must not move the weight gradient.
+    double bottom = std::numeric_limits<double>::infinity();
+    double top    = -bottom;
+    const auto &m = tile.affine;
+    for (const auto &triangle : scene.triangles) {
+      if (canceled && *canceled) return {};
+      if (!triangle.toonSurface) continue;
+      for (const auto &v : triangle.vertices) {
+        const double y = m[3] * v.x + m[4] * v.y + m[5];
+        bottom         = std::min(bottom, y);
+        top            = std::max(top, y);
+      }
+    }
+    if (top > bottom) {
+      brush.bottom = bottom;
+      brush.middle = 0.5 * bottom + 0.5 * top;
+    }
+  }
+  const double scale = std::max(toon.scaleX, toon.scaleY);
+  const int margin =
+      int(std::ceil(toon.radius(toon.style.maximumRadius()) * scale)) + 2 +
+      MinContourSpan / 4;
+  std::vector<ColorPixel> result(std::size_t(tile.width) * tile.height);
+  // Bound scratch space for the depth, coverage and transparency buffers, even
+  // when a caller supplies a full frame or a wide film-resolution tile.
+  for (int y = 0; y < tile.height; y += 128) {
+    const int rows = std::min(128, tile.height - y);
+    for (int x = 0; x < tile.width; x += 512) {
+      const int columns = std::min(512, tile.width - x);
+      auto request      = tile;
+      request.x += x - margin;
+      request.y += y - margin;
+      request.width  = columns + 2 * margin;
+      request.height = rows + 2 * margin;
+      const auto pixels =
+          renderLayeredTile(scene, request, canceled, nesting, &brush, true);
+      if (pixels.empty()) return {};
+      for (int row = 0; row < rows; ++row)
+        std::copy_n(
+            pixels.begin() + std::size_t(row + margin) * request.width + margin,
+            columns, result.begin() + std::size_t(y + row) * tile.width + x);
+    }
+  }
+  return result;
+}
+
 std::vector<ColorPixel> renderLayeredTile(const RenderScene &scene,
                                           const RenderTile &tile,
-                                          const int *canceled, int nesting) {
+                                          const int *canceled, int nesting,
+                                          const ToonLineRaster *inherited,
+                                          bool padded) {
   require(tile.width >= 0 && tile.height >= 0, "Invalid GLB tile dimensions.");
   const std::size_t count = std::size_t(tile.width) * std::size_t(tile.height);
   struct Sample { double depth = -std::numeric_limits<double>::infinity(); ColorPixel color; };
@@ -771,9 +1053,48 @@ std::vector<ColorPixel> renderLayeredTile(const RenderScene &scene,
     require(std::isfinite(value), "Invalid GLB image affine.");
   require(std::isfinite(tile.x) && std::isfinite(tile.y),
           "Invalid GLB tile origin.");
-  std::vector<ColorPixel> output(count);
-  if (!count || scene.empty()) return output;
+  if (!count || scene.empty()) return std::vector<ColorPixel>(count);
   require(nesting < 64, "3D Merge nesting exceeds the render limit.");
+  const auto &matrix = tile.affine;
+  std::optional<ToonLineRaster> local;
+  if (!inherited && scene.toonLine) {
+    const double x           = std::hypot(matrix[0], matrix[1]);
+    const double y           = std::hypot(matrix[3], matrix[4]);
+    const double determinant = matrix[0] * matrix[4] - matrix[1] * matrix[3];
+    if (std::isfinite(determinant) && std::abs(determinant) > 1e-12) {
+      // Measure the stroke in the FX's image plane, including when the
+      // camera affine stretches or shears that plane.
+      local.emplace(ToonLineRaster{
+          *scene.toonLine,
+          x,
+          y,
+          2 * std::min(x, y),
+          {{matrix[4] / determinant, -matrix[1] / determinant,
+            -matrix[3] / determinant, matrix[0] / determinant}}});
+    }
+  }
+  const auto *toon = inherited ? inherited : (local ? &*local : nullptr);
+  if (toon && scene.layers.empty() &&
+      (scene.wireframe ||
+       !std::any_of(scene.triangles.begin(), scene.triangles.end(),
+                    [](const auto &t) { return t.toonSurface; })))
+    toon = nullptr;
+  if (toon && scene.layers.empty() && !padded)
+    return renderToonTile(scene, tile, canceled, nesting, *toon);
+
+  // Four hits per pixel, a quarter-pixel edge grid and up to eight
+  // edge indices per pixel (including vector growth).
+  const std::size_t contourMemory =
+      toon && scene.layers.empty()
+          ? 4 * (sizeof(ContourSample) + sizeof(float)) +
+                16 * (sizeof(unsigned char) + sizeof(int))
+          : 0;
+  const std::size_t bytesPerPixel =
+      std::size_t(nesting + 2) * sizeof(ColorPixel) + 4 * sizeof(Sample) +
+      contourMemory;
+  require(count <= MemoryLimit / bytesPerPixel,
+          "Toon Line tile exceeds the render budget.");
+  std::vector<ColorPixel> output(count);
   bool linearSampling = scene.linearSampling;
   for (const auto &layer : scene.layers)
     linearSampling |= layer.scene && layer.scene->linearSampling;
@@ -791,7 +1112,7 @@ std::vector<ColorPixel> renderLayeredTile(const RenderScene &scene,
                          a[3] * b[0] + a[4] * b[3], a[3] * b[1] + a[4] * b[4],
                          a[3] * b[2] + a[4] * b[5] + a[5]}};
       const auto pixels =
-          renderLayeredTile(*layer.scene, request, canceled, nesting + 1);
+          renderLayeredTile(*layer.scene, request, canceled, nesting + 1, toon);
       if (pixels.empty()) return {};
       for (std::size_t i = 0; i < count; ++i) {
         const auto p          = outputPixel(pixels[i], linearSampling);
@@ -807,15 +1128,14 @@ std::vector<ColorPixel> renderLayeredTile(const RenderScene &scene,
     return output;
   }
   std::vector<Sample> samples(count * 4);
+  std::vector<ContourSample> contourHits(toon ? count * 4 : 0);
   struct Fragment {
     std::size_t sample;
     double depth;
     ColorPixel color;
   };
   std::vector<Fragment> fragments;
-  const std::size_t baseMemory =
-      count *
-      (std::size_t(nesting + 2) * sizeof(ColorPixel) + 4 * sizeof(Sample));
+  const std::size_t baseMemory = count * bytesPerPixel;
   // Account for vector growth as well as the already allocated tile buffers.
   const std::size_t fragmentLimit =
       (MemoryLimit - baseMemory) / (4 * sizeof(Fragment));
@@ -841,6 +1161,12 @@ std::vector<ColorPixel> renderLayeredTile(const RenderScene &scene,
     const double lengths[] = {std::hypot(v[1].x - v[0].x, v[1].y - v[0].y),
                               std::hypot(v[2].x - v[1].x, v[2].y - v[1].y),
                               std::hypot(v[0].x - v[2].x, v[0].y - v[2].y)};
+    double depthX = 0, depthY = 0;
+    if (toon) {
+      const double db = v[1].depth - v[0].depth, dc = v[2].depth - v[0].depth;
+      depthX = ((v[2].y - v[0].y) * db - (v[1].y - v[0].y) * dc) / area;
+      depthY = ((v[1].x - v[0].x) * dc - (v[2].x - v[0].x) * db) / area;
+    }
     for (int y = bottom; y <= top; ++y) {
       if (canceled && *canceled) return {};
       for (int x = left; x <= right; ++x)
@@ -853,7 +1179,8 @@ std::vector<ColorPixel> renderLayeredTile(const RenderScene &scene,
           const double a = e1 / area, b = e2 / area, c = e0 / area;
           if (a < -1e-12 || b < -1e-12 || c < -1e-12) continue;
           const double depth = a * v[0].depth + b * v[1].depth + c * v[2].depth;
-          Sample &sample = samples[(std::size_t(y) * tile.width + x) * 4 + s];
+          const auto site    = (std::size_t(y) * tile.width + x) * 4 + s;
+          Sample &sample     = samples[site];
           const bool line =
               !scene.wireframe ||
               (triangle.edges[0] && std::abs(e0) <= 0.65 * lengths[0]) ||
@@ -894,6 +1221,12 @@ std::vector<ColorPixel> renderLayeredTile(const RenderScene &scene,
                           color.alpha <= 1 && std::isfinite(color.r) &&
                           std::isfinite(color.g) && std::isfinite(color.b),
                       "Invalid material sample.");
+            }
+            if (toon && color.alpha > 0 &&
+                depth > contourHits[site].depth + epsilon)
+              contourHits[site] = {depth,    depthX,   depthY,     shaderIndex,
+                                   float(a), float(b), color.alpha};
+            if (scene.sampleShader) {
               if (color.alpha == 1) {
                 // Opaque material hits only need the closest depth, exactly as
                 // ordinary opaque geometry. Avoid allocating transparency hits
@@ -975,9 +1308,27 @@ std::vector<ColorPixel> renderLayeredTile(const RenderScene &scene,
             linear.alpha};
     }
   }
+  std::vector<float> coverage;
+  ColorPixel stroke;
+  if (toon) {
+    coverage.resize(count * 4);
+    if (!drawContours(scene, *toon, contourHits, tile, canceled, coverage))
+      return {};
+    const auto &color = toon->style.color;
+    stroke            = outputPixel({color[0] * color[3], color[1] * color[3],
+                                     color[2] * color[3], color[3]},
+                                    linearSampling);
+  }
   for (std::size_t i = 0; i < count; ++i)
     for (int s = 0; s < 4; ++s) {
-      const auto c = outputPixel(samples[i * 4 + s].color, linearSampling);
+      const auto site = i * 4 + s;
+      auto c          = outputPixel(samples[site].color, linearSampling);
+      if (toon) {
+        const float ink = coverage[site], remaining = 1 - ink * stroke.alpha;
+        c = {ink * stroke.r + c.r * remaining, ink * stroke.g + c.g * remaining,
+             ink * stroke.b + c.b * remaining,
+             ink * stroke.alpha + c.alpha * remaining};
+      }
       output[i].r += c.r * 0.25f;
       output[i].g += c.g * 0.25f;
       output[i].b += c.b * 0.25f;

@@ -478,7 +478,7 @@ class AMControlPointEditor final : public TTool {
         auto selected = gesture.add ? m_selectedHeads : HeadSelection{};
         for (std::size_t i = 0; i < model->points.size(); ++i) {
           const auto &point = model->points[i];
-          if (point.head != i) continue;
+          if (point.head != i || point.isSplineHook) continue;
           const auto screen = m_projection->project(point.position);
           if (screen && gesture.region.contains(xy(*screen)))
             selected.insert(i);
@@ -842,7 +842,7 @@ public:
     if (!hit || event.isShiftPressed()) {
       for (std::size_t i = 0; i < model->points.size(); ++i) {
         const auto &point = model->points[i];
-        if (point.head != i) continue;
+        if (point.head != i || point.isSplineHook) continue;
         const auto p = m_projection->project(point.position);
         if (!p) continue;
         const double distance = norm2(xy(*p) - event.m_pos);

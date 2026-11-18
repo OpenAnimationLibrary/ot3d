@@ -93,8 +93,9 @@ class PointLightFx final : public TStandardRasterFx,
     return result;
   }
   std::shared_ptr<const otglb::RenderScene> finish(
-      std::shared_ptr<const otglb::RenderScene> source, double frame) const {
-    if (!source) return {};
+      std::shared_ptr<const otglb::RenderScene> source, double frame,
+      const int *canceled) const {
+    if (!source || (canceled && *canceled)) return {};
     if (m_visible->getValue() && m_intensity->getValue(frame) > 0) {
       auto copy         = std::make_shared<otglb::RenderScene>(*source);
       const auto c      = m_color->getValueD(frame);
@@ -107,8 +108,10 @@ class PointLightFx final : public TStandardRasterFx,
            otglb::linearToSrgbExtended(float(
                gain * otglb::srgbToLinear(float(std::clamp(c.b, 0.0, 1.0)))))}};
       otglb::appendVisibleLight(*copy, position(frame),
-                                m_visibleSize->getValue(frame), radiance);
-      source = copy;
+                                m_visibleSize->getValue(frame), radiance,
+                                canceled);
+      if (canceled && *canceled) return {};
+      source = std::move(copy);
     }
     if (m_affines[0] == TAffine()) return source;
     auto placed            = std::make_shared<otglb::RenderScene>();
@@ -203,7 +206,7 @@ public:
     rig.lights.push_back(light(frame, canceled, settings));
     return finish(source->get3DRenderScene(frame, canceled, &rig, transforms,
                                            settings, materials, ink, smoothing),
-                  frame);
+                  frame, canceled);
   }
   std::shared_ptr<const otglb::RenderScene> get3DRenderGeometry(
       double frame, const int *canceled,
@@ -214,7 +217,7 @@ public:
     if (!source || (canceled && *canceled)) return {};
     return finish(
         source->get3DRenderGeometry(frame, canceled, transforms, settings, ink),
-        frame);
+        frame, canceled);
   }
   bool doGetBBox(double frame, TRectD &bbox,
                  const TRenderSettings &info) override {

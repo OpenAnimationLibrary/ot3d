@@ -127,6 +127,8 @@ struct RenderTriangle {
   std::array<float, 3> color;
   std::array<std::array<double, 2>, 3> uv{};
   bool textured = false;
+  bool toonSurface   = false;
+  float illumination = -1;  // Linear diffuse energy; -1 means no lighting FX.
 };
 struct ColorPixel {
   float r = 0, g = 0, b = 0, alpha = 0;  // Premultiplied sRGB.
@@ -138,9 +140,25 @@ struct SurfaceSample {
   EnvironmentDirection normal{{0, 0, 1}}, view{{0, 0, 1}};
   double reflectivity = 0, blend = 0, distanceFalloff = 0, diffuseFalloff = 1;
   float alpha = 1;
+  float illumination = -1;
 };
 ColorPixel shadeSurfaceSample(const SurfaceSample &sample,
                               const std::vector<EnvironmentLayer> &layers);
+
+inline float lightLuminance(double r, double g, double b) {
+  return float(0.2126 * r + 0.7152 * g + 0.0722 * b);
+}
+
+struct ToonLineStyle {
+  double width             = 1.5;  // Full stroke width in image plane units.
+  double lightingInfluence = 0.75;
+  double bottomWeight      = 0;
+  std::array<float, 4> color{{0, 0, 0, 1}};
+
+  double maximumRadius() const {
+    return 0.5 * width * (1 + lightingInfluence + bottomWeight);
+  }
+};
 
 struct RenderScene;
 struct RenderLayer {
@@ -160,8 +178,12 @@ struct RenderScene {
   // Results are premultiplied sRGB. Transparent hits composite in linear light.
   std::function<ColorPixel(std::size_t, const std::array<double, 3> &)>
       sampleShader;
-  std::function<SurfaceSample(std::size_t, const std::array<double, 3> &)>
-      surfaceShader;
+  using SurfaceShader =
+      std::function<SurfaceSample(std::size_t, const std::array<double, 3> &)>;
+  SurfaceShader surfaceShader;
+  // Bind both evaluators to a single immutable payload so copying a render
+  // scene for visible lights does not duplicate the per-triangle shader data.
+  void setSurfaceShader(SurfaceShader shader);
   std::size_t surfaceCount = 0;
   bool surfacePerspective  = false;
   std::vector<EnvironmentLayer> environments;
@@ -185,6 +207,7 @@ struct RenderScene {
   // Back-to-front source layers. Each retains its own camera/depth, texture,
   // wireframe and color filter. Groups contain layers instead of triangles.
   std::vector<RenderLayer> layers;
+  std::optional<ToonLineStyle> toonLine;
   bool empty() const { return triangles.empty() && layers.empty(); }
 };
 struct RenderTile {
@@ -222,7 +245,8 @@ RenderScene projectImagePlane(int width, int height,
 // Existing material shaders and source geometry remain immutable.
 void appendVisibleLight(RenderScene &scene,
                         const std::array<double, 3> &position, double radius,
-                        const std::array<float, 3> &radiance);
+                        const std::array<float, 3> &radiance,
+                        const int *canceled = nullptr);
 std::optional<std::array<double, 3>> targetCenter(
     const RenderScene &scene,
     const std::array<double, 6> &affine = {{1, 0, 0, 0, 1, 0}});

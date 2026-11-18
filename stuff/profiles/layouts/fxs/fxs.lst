@@ -201,6 +201,7 @@
     STD_surfaceSmoothing3DFx
     STD_amDistortionCageFx
     STD_inkLineFx
+    STD_toonLineFx
     STD_imageBasedLightingFx
     STD_environmentReflectionFx
     STD_pointLightFx

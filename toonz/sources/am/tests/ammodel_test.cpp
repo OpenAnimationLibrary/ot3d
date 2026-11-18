@@ -684,14 +684,43 @@ int main() {
       }
     }
     {
-      bool identified = false;
-      try {
-        otam::parse(replace(source, "262145 1 3 2 . .", "262161 1 3 0.5 2"));
-      } catch (const std::runtime_error &e) {
-        identified = std::string(e.what()).find(
-                         "spline hook at CP 3 (line 11)") != std::string::npos;
-      }
-      check(identified, "spline hook was not diagnosed as unsupported");
+      auto hooked = replace(source, "262145 1 3 2 . .", "262161 1 3 0.5 1");
+      hooked      = replace(hooked, "24 1 2 4 6", "24 1 3 4 6");
+      hooked      = replace(hooked, "262145 0 1 -1 -1 0 . .",
+                            "262145 0 1 -1 -1 0 0 0 1 0 45 1");
+      auto model  = otam::parse(hooked).models.front();
+      check(model.splineHooks.size() == 1 && model.points[2].isSplineHook &&
+                model.points[2].head == 2,
+            "spline hook did not retain its own control point");
+      const auto curve =
+          otam::splineSegment(model, model.splines[0], 0).bezier();
+      check(model.points[2].position == otam::sampleSpline(curve, 0.5),
+            "spline hook missed the host segment midpoint");
+      const auto quarter = otam::sampleSpline(curve, 0.25);
+      const auto mesh    = otam::previewMesh(model, {}, 2);
+      check(std::any_of(mesh.triangles.begin(), mesh.triangles.end(),
+                        [&](const auto &triangle) {
+                          return std::any_of(
+                              triangle.vertices.begin(),
+                              triangle.vertices.end(), [&](const auto &point) {
+                                return std::hypot(point[0] - quarter[0],
+                                                  point[1] - quarter[1],
+                                                  point[2] - quarter[2]) < 1e-8;
+                              });
+                        }),
+            "the hooked patch edge did not follow the host cubic");
+      const auto rest = model.points[2].position;
+      model.points[1].position[2] += 2;
+      otam::updateSplineHooks(model);
+      check(
+          model.points[2].position != rest &&
+              model.points[2].position ==
+                  otam::sampleSpline(
+                      otam::splineSegment(model, model.splines[0], 0).bezier(),
+                      0.5),
+          "the spline hook did not follow its edited host");
+      rejects([&] { otam::parse(replace(hooked, "0.5 1", "0.5 999")); });
+      rejects([&] { otam::parse(replace(hooked, "0.5 1", "0.5 3")); });
     }
     rejects(
         [&] { otam::parse(replace(source, "262145 1 3 2", "262145 1 3 9")); });

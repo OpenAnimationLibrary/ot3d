@@ -20,8 +20,9 @@ Missing or unsupported models report an error rather than creating empty levels.
 If a control point mixes a compact default tangent with a custom tangent,
 OT3D reports the first affected control point and the number of affected
 records. Choose **Save Repaired Copy…** to expand the defaults and load the
-new `.mdl` while keeping the original file intact. Spline hooks are reported
-with their control point and line number. They require native hook evaluation.
+new `.mdl` while keeping the original file intact. A spline hook follows its
+fractional position along its host spline. Hook positions follow edits and
+poses on the host, and the Control Point Editor moves the host points.
 
 Select its column and choose the **Animate Tool**. Position uses existing X/Y/Z.
 Rotation adds **Rx/Ry**, with existing Angle presented as **Rz**. Scale adds **Z**
@@ -197,7 +198,8 @@ have distinct source IDs; equal XYZ does not imply attachment. Incoming/outgoing
 bias fields must remain separate. Both short four-corner patch records and richer
 four-corner records with trailing metadata exist. The reader also accepts
 short and normal-index five-corner records and retains their source text. Model
-files use a mixed text/tag container; FileInfoPos and unsupported sections are retained verbatim in memory.
+files use a mixed text/tag container; FileInfoPos and unsupported sections are
+retained verbatim in memory.
 
 **SDK reference:** `OpenAnimationLibrary/amsdk`, current 19.5 `HCP`, `HPatch`,
 `HModel`, `HAction` and time headers. Historical documentation in `docs` identifies
@@ -211,17 +213,18 @@ The preview is NOT the proprietary Hash patch evaluator. Special CP flags are re
 Four-corner patches use a Coons approximation and curved three-corner patches
 use a cubic triangular surface. Five-corner patches use five cubic sectors
 with shared interior edges and shading normals. Shared boundaries use the
-same cubic splines drawn by the editor. Gamma rotates in the local spline plane, alpha tilts out of
-it and magnitude scales the tangent. The plane and tangent are approximations
-informed by the SDK's
+same cubic splines drawn by the editor. Gamma rotates in the local spline
+plane, alpha tilts out of it and magnitude scales the tangent. The plane and
+tangent are approximations informed by the SDK's
 [HCP documentation](https://github.com/OpenAnimationLibrary/amsdk/blob/ee3dd9fb82bf80de8cdd75e00273e2eeab925e33/docs/classHCP__02.md).
 Coincident but unattached points remain separate.
 
 **Unknown/deferred:** exact modern tangent rules, interior subdivision heuristic,
-peaked/special CP flags, hooks, complete patch orientation
-semantics and topology-driven patch discovery. Only explicit supported patches
-are previewed. Models without usable explicit patches are rejected with a clear
-message. Complex models can be partial and are not a compliance claim. Do not use
+peaked/special CP flags, exact Hash hook and five-point patch evaluation, complete
+patch orientation semantics and topology-driven patch discovery. Only explicit
+supported patches are previewed. Models without usable explicit patches are
+rejected with a clear message. Complex models can be partial and are not a
+compliance claim. Do not use
 a plausible cube screenshot as proof that arbitrary curved A:M models match.
 
 ## Validation and acceptance
@@ -242,8 +245,9 @@ cell, select Animate, key XYZ/Rx/Ry/Rz/scale/pivot, scrub and reopen. Repeat wit
 second instance and a parent pegbar. Compare camera Viewer/Preview/final output,
 undo/redo and Function Editor, then switch to vector/raster/Toonz Raster levels
 and verify unchanged controls/rendering. Record A:M version, GPU, driver and
-scaling (100%/150%). Compare five-point patches with adjacent quads in the
-Viewer and final output. Hooks and unsupported rigs must show explicit limits.
+scaling (100%/150%). Compare five-point patches with adjacent quads and check
+that spline hooks follow their host curves in the Viewer and final output.
+Unsupported hook records and rigs must show explicit limits.
 
 This is an experimental native model level with an approximate surface preview.
 Older OpenToonz builds do not understand
