@@ -22,6 +22,50 @@ otglb::ColorPixel sample(const otglb::RenderScene &scene, double x = 0,
   tile.y                   = y - .5;
   return otglb::renderTile(scene, tile)[0];
 }
+void testSignedLighting(const otglb::Asset &asset) {
+  otglb::RenderOptions options;
+  options.useLightingRig = true;
+  options.materialColors = true;
+  otglb::DiffuseLight key;
+  otglb::DiffuseLight subtract;
+  subtract.intensity = -.25;
+  subtract.color     = {{1, 0, 0}};
+
+  // Run the directional (per-face) and positional (per-sample) paths.
+  for (bool positional : {false, true}) {
+    if (positional) subtract.point = otglb::PointPlacement{{{0, 0, 5}}, 5};
+    options.lighting.lights = {subtract, key};
+    auto scene              = otglb::prepareRender(asset, options);
+    auto pixel              = sample(scene);
+    near(otglb::srgbToLinear(pixel.r), .75);
+    near(pixel.g, 1);
+    near(pixel.b, 1);
+    near(pixel.alpha, 1);
+  }
+
+  subtract.color          = {{1, 1, 1}};
+  subtract.intensity      = -2;
+  options.lighting.lights = {subtract, key};
+  const auto dark         = otglb::prepareRender(asset, options);
+  near(sample(dark).r, 0);
+  near(sample(dark).alpha, 1);
+  near(dark.triangles.front().illumination, 0);
+  near(dark.surfaceShader(0, {{.25, .25, .5}}).illumination, 0);
+
+  options.headlight                       = true;
+  options.lighting.includeDefaultLighting = true;
+  subtract.intensity                      = 0;
+  options.lighting.lights                 = {subtract};
+  const auto zero         = sample(otglb::prepareRender(asset, options));
+  subtract.intensity      = -.3;
+  options.lighting.lights = {subtract};
+  const auto dimmed       = sample(otglb::prepareRender(asset, options));
+  options.useLightingRig  = false;
+  const auto base         = sample(otglb::prepareRender(asset, options));
+  near(zero.r, base.r);
+  near(otglb::srgbToLinear(dimmed.r), otglb::srgbToLinear(base.r) - .3);
+}
+
 void testToonWithEmitter(const otglb::RenderScene &source) {
   const auto wrap = [](const otglb::RenderScene &model) {
     otglb::RenderScene outline;
@@ -78,13 +122,21 @@ int main() {
     auto changed        = light;
     changed.spot->outer = 40;
     check(!(light == changed), "cone edits did not invalidate lighting");
-    for (int bad = 0; bad < 4; ++bad) {
+    auto negative      = light;
+    negative.intensity = -.5;
+    negative.validate();
+    near(negative.diffuse({{0, 0, 1}}, {{0, 0, 0}}), -.5);
+    near(negative.diffuse({{0, 0, 1}}, {{5, 0, 0}}), 0);
+    near(negative.diffuse({{0, 0, 1}}, {{x, 0, 0}}), -.5 * soft);
+    for (int bad = 0; bad < 5; ++bad) {
       auto invalid = light;
       if (bad == 0) invalid.spot->inner = 40;
       if (bad == 1) invalid.spot->axis = {{0, 0, 0}};
       if (bad == 2)
         invalid.spot->outer = std::numeric_limits<double>::infinity();
       if (bad == 3) invalid.point.reset();
+      if (bad == 4)
+        invalid.intensity = -std::numeric_limits<double>::infinity();
       bool rejected = false;
       try {
         invalid.validate();
@@ -107,6 +159,7 @@ int main() {
     auto loaded = otglb::load(path);
     std::filesystem::remove(path);
     check(bool(loaded), "Point Light fixture load");
+    testSignedLighting(*loaded.asset);
     otglb::RenderOptions options;
     options.materialColors = true;
     options.useLightingRig = true;

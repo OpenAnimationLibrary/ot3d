@@ -122,6 +122,38 @@ int main(int argc, char **argv) {
                "Point Light chain lost independent contributions");
     checkPoint(pointCenter(light).g == 0,
                "Point Light mutated upstream source");
+    TFxP negativeOwner = new PointLightFx;
+    auto &negative = *static_cast<PointLightFx *>(negativeOwner.getPointer());
+    negative.getInputPort(0)->setFx(&model);
+    pointParam<TIntEnumParam>(negative, "lightType")->setValue(0);
+    auto *includeDefault =
+        pointParam<TBoolParam>(negative, "includeDefaultLighting");
+    auto *negativeVisible = pointParam<TBoolParam>(negative, "visible");
+    checkPoint(!includeDefault->getValue(), "Default lighting must be opt-in");
+    includeDefault->setValue(true);
+    auto *modelLighting = pointParam<TIntEnumParam>(model, "lighting");
+    modelLighting->setValue(1);
+    setPoint(negative, "intensity", -30);
+    setPoint(negative, "intensity", 0, 1);
+    setPoint(negative, "intensity", 30, 2);
+    const auto dim  = pointCenter(negative).r;
+    const auto zero = pointCenter(negative, 1).r;
+    checkPoint(dim < zero && std::abs(zero - pointCenter(model).r) < 1e-6 &&
+                   pointCenter(negative, 2).r > zero,
+               "Signed keys did not use a stable baseline");
+    negativeVisible->setValue(true);
+    checkPoint(pointCenter(negative).r == dim,
+               "Negative light rendered an emissive source");
+    modelLighting->setValue(0);
+    negative.getInputPort(0)->setFx(&second);
+    includeDefault->setValue(false);
+    pointParam<TPixelParam>(negative, "color")
+        ->setValue(0, TPixel32(255, 0, 0, 255));
+    setPoint(negative, "intensity", -25);
+    const auto canceledRed = pointCenter(negative);
+    checkPoint(canceledRed.r < .001 && canceledRed.g == pair.g &&
+                   canceledRed.alpha == pair.alpha,
+               "Negative light did not cancel only its own color channel");
     // Production scene expansion: optional Target must not become a raster
     // affine.
     ToonzScene scene;
@@ -147,6 +179,8 @@ int main(int argc, char **argv) {
         pointCenter(*static_cast<PointLightFx *>(copy.getPointer()));
     checkPoint(clonePixel.r == pointCenter(*built).r,
                "Point Light clone lost render settings");
+    setPoint(light, "intensity", -25, 7);
+    pointParam<TBoolParam>(light, "includeDefaultLighting")->setValue(true);
     const auto saved = directory.filePath("point-scene.xml");
     {
       TOStream stream{TFilePath(saved)};
@@ -164,10 +198,13 @@ int main(int argc, char **argv) {
     auto *fxs  = restored->getFxDag()->getInternalFxs();
     for (int i = 0; i < fxs->getFxCount(); ++i)
       if (auto *fx = dynamic_cast<PointLightFx *>(fxs->getFx(i)))
-        found = fx->getInputPort("Source")->getFx() &&
-                fx->getInputPort("Target")->getFx() &&
-                pointParam<TBoolParam>(*fx, "visible")->getValue() &&
-                pointParam<TIntEnumParam>(*fx, "lightType")->getValue() == 2;
+        found =
+            fx->getInputPort("Source")->getFx() &&
+            fx->getInputPort("Target")->getFx() &&
+            pointParam<TBoolParam>(*fx, "visible")->getValue() &&
+            pointParam<TIntEnumParam>(*fx, "lightType")->getValue() == 2 &&
+            pointParam<TDoubleParam>(*fx, "intensity")->getValue(7) == -25 &&
+            pointParam<TBoolParam>(*fx, "includeDefaultLighting")->getValue();
     checkPoint(found, "Point Light save/reload lost parameters or ports");
     int canceled = 1;
     checkPoint(!light.get3DRenderScene(0, &canceled),

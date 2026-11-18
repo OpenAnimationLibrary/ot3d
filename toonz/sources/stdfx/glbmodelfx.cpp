@@ -233,11 +233,14 @@ class GlbModelFx final : public TStandardZeraryFx,
     } else if (lighting) {
       settings.useLightingRig = true;
       settings.lighting = *lighting;
-      if (!lighting->preserveDefaultLighting ||
-          (renderSettings && renderSettings->m_disableDefaultLighting))
+      if (!lighting->preserveDefaultLighting &&
+          !lighting->includeDefaultLighting)
         settings.headlight = false;
-      if (renderSettings && renderSettings->m_disableDefaultLighting)
+      if (renderSettings && renderSettings->m_disableDefaultLighting) {
+        settings.headlight                        = false;
         settings.lighting.preserveDefaultLighting = false;
+        settings.lighting.includeDefaultLighting  = false;
+      }
     } else if (renderSettings && renderSettings->m_disableDefaultLighting) {
       settings.useLightingRig = true;
       settings.lighting       = {};

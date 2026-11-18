@@ -207,10 +207,10 @@ Color shadeSurface(const Surface &s, const Color &diffuse, const Vec3 &normal,
   const auto &ac = s.ambianceColor ? *s.ambianceColor : diffuse;
   const auto &sc = s.specularColor ? *s.specularColor : diffuse;
   for (int k = 0; k < 3; ++k)
-    result[k] = float(linear(diffuse[k]) * (ambient + energy[k]) * master *
-                          (1 - s.ambiance * s.ambianceBlend) +
+    result[k] = float(linear(diffuse[k]) * std::max(0.0, ambient + energy[k]) *
+                          master * (1 - s.ambiance * s.ambianceBlend) +
                       linear(ac[k]) * s.ambiance +
-                      linear(sc[k]) * specular[k] * master);
+                      linear(sc[k]) * std::max(0.0f, specular[k]) * master);
   return result;
 }
 }  // namespace otam

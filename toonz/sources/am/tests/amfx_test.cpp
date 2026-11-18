@@ -1007,6 +1007,14 @@ void testShine(ToonzScene &scene, const QString &path) {
   const auto white = sample(0, rig);
   require(white.b > .5,
           "fileless shine did not add a white highlight to red palette");
+  auto subtractiveRig = rig;
+  auto subtract       = rig.lights.front();
+  subtract.intensity  = -1;
+  subtractiveRig.lights.push_back(subtract);
+  const auto darkened = sample(0, subtractiveRig);
+  require(
+      darkened.r < .001 && darkened.b < .001 && darkened.alpha == white.alpha,
+      "negative light failed to cancel A:M diffuse and shine");
   color->setValue(0, TPixel32::Red);
   require(sample(0, rig).b < .001, "specular color not applied");
   color->setValue(0, TPixel32::White);

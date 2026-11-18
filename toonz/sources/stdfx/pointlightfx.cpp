@@ -41,7 +41,7 @@ class PointLightFx final : public TStandardRasterFx,
   TDoubleParamP m_x, m_y, m_z, m_targetX, m_targetY, m_targetZ;
   TDoubleParamP m_intensity, m_radius, m_cone, m_softness, m_visibleSize;
   TPixelParamP m_color;
-  TBoolParamP m_visible;
+  TBoolParamP m_visible, m_includeDefaultLighting;
   TAffine m_affines[2];
 
   std::array<double, 3> position(double frame) const {
@@ -143,7 +143,8 @@ public:
       , m_softness(25.0)
       , m_visibleSize(.1)
       , m_color(TPixel32::White)
-      , m_visible(false) {
+      , m_visible(false)
+      , m_includeDefaultLighting(false) {
     addInputPort("Source", m_source);
     addInputPort("Target", m_target);
     m_type->addItem(0, "Sun");
@@ -156,13 +157,14 @@ public:
     bindParam(this, "targetY", m_targetY);
     bindParam(this, "targetZ", m_targetZ);
     bindParam(this, "intensity", m_intensity);
+    bindParam(this, "includeDefaultLighting", m_includeDefaultLighting);
     bindParam(this, "color", m_color);
     bindParam(this, "falloffRadius", m_radius);
     bindParam(this, "coneAngle", m_cone);
     bindParam(this, "coneSoftness", m_softness);
     bindParam(this, "visible", m_visible);
     bindParam(this, "visibleSize", m_visibleSize);
-    m_intensity->setValueRange(0, 1000);
+    m_intensity->setValueRange(-1000, 1000);
     m_radius->setValueRange(.001, 100000);
     m_cone->setMeasureName("angle");
     m_cone->setValueRange(.01, 179);
@@ -203,6 +205,8 @@ public:
     for (auto &l : rig.lights) l.intensity *= rig.master;
     rig.master                  = 1;
     rig.preserveDefaultLighting = false;
+    rig.includeDefaultLighting =
+        rig.includeDefaultLighting || m_includeDefaultLighting->getValue();
     rig.lights.push_back(light(frame, canceled, settings));
     return finish(source->get3DRenderScene(frame, canceled, &rig, transforms,
                                            settings, materials, ink, smoothing),

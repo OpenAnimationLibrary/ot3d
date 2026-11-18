@@ -37,7 +37,7 @@ struct DiffuseLight {
   std::array<double, 3> direction{{0.0, 0.0, 1.0}};
   // Display-referred sRGB light color in [0,1].
   std::array<float, 3> color{{1.0f, 1.0f, 1.0f}};
-  double intensity = 1.0;
+  double intensity = 1.0;  // Negative values subtract incident light.
   std::optional<PointPlacement> point;
   std::optional<SpotCone> spot;
   // Existing rigs retain camera-relative directional lighting in GLB FX.
@@ -63,11 +63,14 @@ struct LightingRig {
   std::vector<EnvironmentLayer> environments;
   // Environment reflections alone preserve the source's default lighting.
   bool preserveDefaultLighting = false;
+  // Include the source's default shading in the explicit light sum.
+  bool includeDefaultLighting = false;
 
   bool operator==(const LightingRig &other) const {
     return ambient == other.ambient && master == other.master &&
            lights == other.lights && environments == other.environments &&
-           preserveDefaultLighting == other.preserveDefaultLighting;
+           preserveDefaultLighting == other.preserveDefaultLighting &&
+           includeDefaultLighting == other.includeDefaultLighting;
   }
 };
 
@@ -100,8 +103,7 @@ struct RenderOptions {
   std::vector<std::array<float, 3>> colors;
 
   // Optional diffuse lighting supplied by a downstream 3D
-  // FX. When enabled it supersedes the legacy headlight but preserves the
-  // source node's geometry, camera, material and animation settings.
+  // FX. The rig can explicitly include the source's legacy shading.
   bool useLightingRig = false;
   LightingRig lighting;
 
