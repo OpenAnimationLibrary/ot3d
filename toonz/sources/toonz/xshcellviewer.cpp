@@ -1,4 +1,5 @@
 #include "xshcellviewer.h"
+#include "toonzqt/nativelevelcolors.h"
 
 // Tnz6 includes
 #include "xsheetviewer.h"
@@ -2117,6 +2118,8 @@ void CellArea::drawLevelCell(QPainter &p, int row, int col, bool isReference,
   QColor penColor = isRed        ? QColor(m_viewer->getErrorTextColor())
                     : isSelected ? m_viewer->getSelectedTextColor()
                                  : m_viewer->getTextColor();
+  if (!isRed && !isReference && isNativeModelLevel(cell.m_level->getType()))
+    penColor = NativeLevelColors::text();
   p.setPen(penColor);
 
   QFont font = p.font();
@@ -2166,7 +2169,11 @@ void CellArea::drawLevelCell(QPainter &p, int row, int col, bool isReference,
         if (pegbar->isKeyframe(row)) return;
       }
 
-      drawFrameMarker(p, QPoint(x, y), (isRed ? Qt::red : Qt::black));
+      drawFrameMarker(
+          p, QPoint(x, y),
+          !isReference && isNativeModelLevel(cell.m_level->getType())
+              ? penColor
+              : (isRed ? Qt::red : Qt::black));
       return;
     }
 

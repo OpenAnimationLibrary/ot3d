@@ -2,6 +2,7 @@
 
 // TnzCore includes
 #include "tofflinegl.h"
+#include "toonzqt/nativelevelcolors.h"
 #include "tstroke.h"
 #include "tconvert.h"
 #include "tvectorimage.h"
@@ -171,7 +172,9 @@ void ColumnPainter::paint(QPainter *painter,
       painter->drawRect(0, -pixmap.height(), m_width, pixmap.height());
     }
   }
-  painter->setPen(viewer->getTextColor());
+  painter->setPen(isNativeModelLevel(levelType) && !m_isReference
+                      ? NativeLevelColors::text()
+                      : viewer->getTextColor());
   painter->setBrush(Qt::NoBrush);
 
   //! Draw the name only if it is not editing
@@ -181,7 +184,8 @@ void ColumnPainter::paint(QPainter *painter,
     if (!stageScene) return;
 
     // If this is current object
-    if (stageScene->getCurrentObject() == m_parent->getStageObject()->getId())
+    if (stageScene->getCurrentObject() == m_parent->getStageObject()->getId() &&
+        (!isNativeModelLevel(levelType) || m_isReference))
       painter->setPen(viewer->getSelectedNodeTextColor());
     QRectF columnNameRect(18, 2, 54, 14);
     QString elidedName =

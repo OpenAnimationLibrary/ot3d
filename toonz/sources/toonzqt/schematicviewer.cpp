@@ -1,5 +1,6 @@
 
 #include "toonzqt/schematicviewer.h"
+#include "toonzqt/nativelevelcolors.h"
 
 // TnzQt includes
 #include "toonzqt/fxtypes.h"
@@ -914,6 +915,10 @@ void SchematicViewer::getNodeColor(int ltype, QColor &nodeColor) {
     break;
   case MESH_XSHLEVEL:
     nodeColor = getMeshColumnColor();
+    break;
+  case AM_XSHLEVEL:
+  case GLB_XSHLEVEL:
+    nodeColor = NativeLevelColors::background();
     break;
   case META_XSHLEVEL:
     nodeColor = getMetaColumnColor();

@@ -5,5 +5,6 @@
     <control>color</control>
     <control>lightInfluence</control>
     <control>bottomWeight</control>
+    <label>"Bottom Weight thickens downward-facing contours, including under arms and other raised forms. At 100, those contours gain one base line width."</label>
   </page>
 </fxlayout>

@@ -1247,13 +1247,14 @@ void testMultipleModels(ToonzScene &source, TFx *glb,
   lighting->getInputPort(0)->setFx(&models);
   auto *light = static_cast<ThreePointLightFx *>(lighting.getPointer());
   set(*light, "masterIntensity", 0);
-  const auto dark = light->get3DRenderScene(0, nullptr);
+  const auto dark =
+      light->get3DRenderScene(0, nullptr, nullptr, nullptr, &info);
   for (const auto &layer : dark->layers)
     require(layer.scene->triangles[0].color == std::array<float, 3>{{0, 0, 0}},
             "Multiple Models shared lighting missed a branch");
   set(*light, "masterIntensity", 100);
   set(*light, "ambient", 100);
-  const auto lit = light->get3DRenderScene(0, nullptr);
+  const auto lit = light->get3DRenderScene(0, nullptr, nullptr, nullptr, &info);
   for (const auto &layer : lit->layers)
     require(layer.scene->triangles[0].color[0] > 0,
             "Multiple Models shared lighting lost a mixed model");
