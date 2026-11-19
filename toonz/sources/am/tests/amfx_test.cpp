@@ -28,6 +28,7 @@
 #include "toonz/txshlevelcolumn.h"
 #include "toonz/vectoraction.h"
 #include "toonz/txsheethandle.h"
+#include "toonz/tfxhandle.h"
 #include "toonz/scenefx.h"
 #include "toonz/fxcommand.h"
 #include "toonz/fxdag.h"
@@ -41,6 +42,7 @@
 #include "tthread.h"
 #include "tstream.h"
 #include "tparamcontainer.h"
+#include "tfxutil.h"
 #include "tpalette.h"
 #include "tstroke.h"
 #include "tvectorimage.h"
@@ -1296,6 +1298,34 @@ void testMultipleModels(ToonzScene &source, TFx *glb,
               !rejected->getInputPort(0)->getFx() &&
               models.getInputPort(0)->getFx() == columns[0],
           "incompatible 3D insertion modified the graph");
+  TFxP rasterFx  = TFxUtil::makeAffine(sheet->getFxDag()->getXsheetFx(),
+                                       TTranslation(10, 0));
+  auto *internal = sheet->getFxDag()->getInternalFxs();
+  internal->addFx(rasterFx.getPointer());
+  internal->addFx(light);
+  const int replacementCount = internal->getFxCount();
+  TFxHandle fxHandle;
+  fxHandle.setFx(rasterFx.getPointer());
+  QList<TFxP> replaceRaster;
+  replaceRaster << rasterFx;
+  TFxCommand::replaceFx(rejected.getPointer(), replaceRaster, &handle,
+                        &fxHandle);
+  require(
+      rasterFx->getInputPort(0)->getFx() == sheet->getFxDag()->getXsheetFx() &&
+          internal->getFxCount() == replacementCount &&
+          fxHandle.getFx() == rasterFx.getPointer(),
+      "replacement accepted raster input on a typed 3D port");
+  fxHandle.setFx(light);
+  QList<TFxP> replaceLight;
+  replaceLight << lighting;
+  TFxCommand::replaceFx(rasterFx.getPointer(), replaceLight, &handle,
+                        &fxHandle);
+  require(outline->getInputPort(0)->getFx() == light &&
+              internal->getFxCount() == replacementCount &&
+              fxHandle.getFx() == light,
+          "replacement broke a downstream typed 3D connection");
+  internal->removeFx(rasterFx.getPointer());
+  internal->removeFx(light);
   models.set3DInputAffine(0, TAffine());
   sheet->getFxDag()->getInternalFxs()->addFx(&models);
   const TFxP tree = buildSceneFx(&scene, 0, sheet, owner, BSFX_NO_TR);

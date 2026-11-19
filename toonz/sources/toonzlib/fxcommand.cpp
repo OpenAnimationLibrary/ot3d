@@ -78,6 +78,13 @@ inline TFx *getActualOut(TFx *fx) {
   return (zfx && zfx->getColumnFx()) ? zfx->getColumnFx() : fx;
 }
 
+void warnIncompatibleFxConnection() {
+  DVGui::warning(QObject::tr(
+      "This effect cannot use the selected connection. Combine native "
+      "models with Multiple Models before adding shared 3D effects; "
+      "the Xsheet output is a raster image."));
+}
+
 //------------------------------------------------------
 
 inline int inputPortIndex(TFx *fx, TFxPort *port) {
@@ -826,10 +833,7 @@ void InsertFxUndo::initialize(const TFxP &newFx, int row, int col) {
         compatible = false;
     }
     if (!compatible) {
-      DVGui::warning(QObject::tr(
-          "This effect cannot use the selected connection. Combine native "
-          "models with Multiple Models before adding shared 3D effects; "
-          "the Xsheet output is a raster image."));
+      warnIncompatibleFxConnection();
       return;
     }
 
@@ -1176,6 +1180,25 @@ void ReplaceFxUndo::initialize() {
 
   if (dynamic_cast<TXsheetFx *>(repFx) || dynamic_cast<TOutputFx *>(repFx) ||
       dynamic_cast<TColumnFx *>(repFx)) {
+    m_repFx = TFxP();
+    return;
+  }
+
+  // Replacement inherits both the old inputs and its downstream connections.
+  // Check all of them before registering the replacement or detaching anything.
+  TFx *oldInputFx = ::getActualIn(fx);
+  bool compatible = true;
+  const int count =
+      std::min(oldInputFx->getInputPortCount(), repFx->getInputPortCount());
+  for (int i = 0; i < count; ++i)
+    if (!canConnectFxPort(repFx->getInputPort(i),
+                          oldInputFx->getInputPort(i)->getFx()))
+      compatible = false;
+  for (int i = 0; i < fx->getOutputConnectionCount(); ++i)
+    if (!canConnectFxPort(fx->getOutputConnection(i), repFx))
+      compatible = false;
+  if (!compatible) {
+    warnIncompatibleFxConnection();
     m_repFx = TFxP();
     return;
   }
