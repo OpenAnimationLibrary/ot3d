@@ -28,6 +28,7 @@
 // TnzCore includes
 #include "tundo.h"
 #include "tconst.h"
+#include "tmsgcore.h"
 
 // Qt includes
 #include <QMap>
@@ -75,6 +76,13 @@ inline TFx *getActualIn(TFx *fx) {
 inline TFx *getActualOut(TFx *fx) {
   TZeraryFx *zfx = dynamic_cast<TZeraryFx *>(fx);
   return (zfx && zfx->getColumnFx()) ? zfx->getColumnFx() : fx;
+}
+
+void warnIncompatibleFxConnection() {
+  DVGui::warning(QObject::tr(
+      "This effect cannot use the selected connection. Combine native "
+      "models with Multiple Models before adding shared 3D effects; "
+      "the Xsheet output is a raster image."));
 }
 
 //------------------------------------------------------
@@ -801,6 +809,34 @@ void InsertFxUndo::initialize(const TFxP &newFx, int row, int col) {
                        }),
         m_selectedLinks.end());
 
+    // Validate before cloning, registering or rewiring anything. Inserting a
+    // typed 3D FX after the raster-only Xsheet otherwise throws from setFx().
+    const TFxPort *input =
+        fx->getInputPortCount() ? fx->getInputPort(0) : nullptr;
+    bool compatible = true;
+    for (const auto &selected : m_selectedFxs) {
+      TFx *output = ::getActualOut(selected.getPointer());
+      if (input && !canConnectFxPort(input, output)) compatible = false;
+      if (m_attachOutputs)
+        for (int i = 0; i < output->getOutputConnectionCount(); ++i)
+          if (!canConnectFxPort(output->getOutputConnection(i), fx))
+            compatible = false;
+    }
+    for (const auto &link : m_selectedLinks) {
+      if (input &&
+          !canConnectFxPort(input, ::getActualOut(link.m_inputFx.getPointer())))
+        compatible = false;
+      if (link.m_index >= 0 &&
+          !canConnectFxPort(::getActualIn(link.m_outputFx.getPointer())
+                                ->getInputPort(link.m_index),
+                            fx))
+        compatible = false;
+    }
+    if (!compatible) {
+      warnIncompatibleFxConnection();
+      return;
+    }
+
     // Build an fx for each of the specified inputs
     ::CloneFxFunctor cloneFx = {fx, true};
 
@@ -1144,6 +1180,25 @@ void ReplaceFxUndo::initialize() {
 
   if (dynamic_cast<TXsheetFx *>(repFx) || dynamic_cast<TOutputFx *>(repFx) ||
       dynamic_cast<TColumnFx *>(repFx)) {
+    m_repFx = TFxP();
+    return;
+  }
+
+  // Replacement inherits both the old inputs and its downstream connections.
+  // Check all of them before registering the replacement or detaching anything.
+  TFx *oldInputFx = ::getActualIn(fx);
+  bool compatible = true;
+  const int count =
+      std::min(oldInputFx->getInputPortCount(), repFx->getInputPortCount());
+  for (int i = 0; i < count; ++i)
+    if (!canConnectFxPort(repFx->getInputPort(i),
+                          oldInputFx->getInputPort(i)->getFx()))
+      compatible = false;
+  for (int i = 0; i < fx->getOutputConnectionCount(); ++i)
+    if (!canConnectFxPort(fx->getOutputConnection(i), repFx))
+      compatible = false;
+  if (!compatible) {
+    warnIncompatibleFxConnection();
     m_repFx = TFxP();
     return;
   }
@@ -2014,7 +2069,7 @@ void DeleteLinksUndo::undo() const {
     for (d = 0; d != dCount; ++d) {
       const DynamicLink &link = dynLinks[d];
 
-      TFxPort *port = new TRasterFxPort;  // isAControlPort... semi-obsolete
+      TFxPort *port = createDynamicFxPort(outputFx, link.m_groupIndex);
       port->setFx(link.m_inputFx);
 
       outputFx->addInputPort(link.m_portName, port, link.m_groupIndex);

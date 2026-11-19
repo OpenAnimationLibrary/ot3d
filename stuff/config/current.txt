@@ -140,6 +140,7 @@
   <item>"STD_toonLineFx.lightInfluence" "Lighting Influence (%)" </item>
   <item>"STD_toonLineFx.bottomWeight" "Bottom Weight (%)" </item>
   <item>"STD_merge3DFx" "3D Merge" </item>
+  <item>"STD_multipleModelsFx" "Multiple Models" </item>
   <item>"STD_threePointLightFx.masterIntensity" "Master Intensity (%)" </item>
   <item>"STD_threePointLightFx.ambient" "Ambient (%)" </item>
   <item>"STD_threePointLightFx.keyColor" "Key Color" </item>

@@ -16,6 +16,7 @@
 #include <memory>  // For std::unique_ptr
 
 #include "tfx.h"
+#include "tfxconnection.h"
 
 //==============================================================================
 
@@ -337,13 +338,9 @@ TFx *TFx::clone(TFx *fx, bool recursive) const {
 
       int groupIdx = namedPort.second->getGroupIndex();
       if (groupIdx >= 0 && !fx->getInputPort(namedPort.first)) {
-        // Fix: Use unique_ptr to prevent memory leak
-        std::unique_ptr<TRasterFxPort> port(new TRasterFxPort());
-        if (fx->addInputPort(namedPort.first, port.get(), groupIdx)) {
-          // Successfully added, release ownership to fx
-          port.release();
-        }
-        // If addInputPort fails, unique_ptr will automatically delete the port
+        // addInputPort takes ownership, including on failure.
+        fx->addInputPort(namedPort.first, createDynamicFxPort(fx, groupIdx),
+                         groupIdx);
       }
     }
 
@@ -768,15 +765,8 @@ void TFx::loadData(TIStream &is) {
               TFxPortDG *group = const_cast<TFxPortDG *>(dynamicPortGroup(g));
 
               if (group->contains(portName)) {
-                // Fix: Use unique_ptr to prevent memory leak
-                std::unique_ptr<TRasterFxPort> tempPort(new TRasterFxPort());
-                if (addInputPort(portName, tempPort.get(), g)) {
-                  // Successfully added, assign and release ownership
-                  port = tempPort.release();
-                } else {
-                  // Failed to add, set port to nullptr (will throw below)
-                  port = nullptr;
-                }
+                if (addInputPort(portName, createDynamicFxPort(this, g), g))
+                  port = getInputPort(portName);
                 break;
               }
             }
