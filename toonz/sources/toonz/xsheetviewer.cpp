@@ -1,6 +1,7 @@
 
 
 #include "xsheetviewer.h"
+#include "toonzqt/nativelevelcolors.h"
 #include "sceneviewerevents.h"
 #include "tapp.h"
 #include "floatingpanelcommand.h"
@@ -119,6 +120,11 @@ void XsheetViewer::getCellTypeAndColors(int &ltype, QColor &cellColor,
       cellColor =
           (isSelected) ? getSelectedMeshColumnColor() : getMeshColumnColor();
       sideColor = getMeshColumnBorderColor();
+      break;
+    case AM_XSHLEVEL:
+    case GLB_XSHLEVEL:
+      cellColor = NativeLevelColors::background(isSelected);
+      sideColor = NativeLevelColors::border();
       break;
     case META_XSHLEVEL:
       cellColor =

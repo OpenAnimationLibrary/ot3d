@@ -1,6 +1,7 @@
 #include "tfxconnection.h"
 
 #include "toonzqt/fxschematicnode.h"
+#include "toonzqt/nativelevelcolors.h"
 
 // TnzQt includes
 #include "toonzqt/fxtypes.h"
@@ -206,7 +207,9 @@ void FxColumnPainter::paint(QPainter *painter,
     }
   }
 
-  painter->setPen(viewer->getTextColor());
+  painter->setPen(isNativeModelLevel(levelType) && !m_isReference
+                      ? NativeLevelColors::text()
+                      : viewer->getTextColor());
   painter->setBrush(Qt::NoBrush);
 
   QRectF columnNameRect;
@@ -226,7 +229,8 @@ void FxColumnPainter::paint(QPainter *painter,
   // column name
   if (!m_parent->isNameEditing()) {
     // if this is a current object
-    if (sceneFx->getCurrentFx() == m_parent->getFx())
+    if (sceneFx->getCurrentFx() == m_parent->getFx() &&
+        (!isNativeModelLevel(levelType) || m_isReference))
       painter->setPen(viewer->getSelectedNodeTextColor());
     QString elidedName =
         elideText(m_name, painter->font(), columnNameRect.width());
