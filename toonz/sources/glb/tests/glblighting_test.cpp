@@ -126,6 +126,71 @@ void testToonLines() {
           "Bottom Weight and shadow thickness did not combine");
 }
 
+void testBottomContourWeight() {
+  const auto rectangle = [](otglb::RenderScene &scene, double y, double depth) {
+    const otglb::ProjectedVertex a{8, y, depth}, b{32, y, depth},
+        c{32, y + 15, depth}, d{8, y + 15, depth};
+    for (auto vertices : {std::array<otglb::ProjectedVertex, 3>{{a, b, c}},
+                          std::array<otglb::ProjectedVertex, 3>{{a, c, d}}}) {
+      otglb::RenderTriangle triangle{vertices, {}, {{1, 1, 1}}};
+      triangle.toonSurface = true;
+      scene.triangles.push_back(triangle);
+    }
+  };
+  for (bool overlap : {false, true}) {
+    otglb::RenderScene scene;
+    scene.toonLine                    = otglb::ToonLineStyle{};
+    scene.toonLine->width             = 2;
+    scene.toonLine->lightingInfluence = 0;
+    if (overlap) {
+      // A large rear surface makes both rectangles internal depth contours.
+      const otglb::ProjectedVertex a{0, 0, 0}, b{40, 0, 0}, c{40, 68, 0},
+          d{0, 68, 0};
+      for (auto vertices : {std::array<otglb::ProjectedVertex, 3>{{a, b, c}},
+                            std::array<otglb::ProjectedVertex, 3>{{a, c, d}}}) {
+        otglb::RenderTriangle triangle{vertices, {}, {{1, 1, 1}}};
+        triangle.toonSurface = true;
+        scene.triangles.push_back(triangle);
+      }
+    }
+    rectangle(scene, 10, 5);
+    rectangle(scene, 45, 5);
+    const otglb::RenderTile tile{40, 68};
+    const auto base              = otglb::renderTile(scene, tile);
+    scene.toonLine->bottomWeight = 1;
+    const auto heavy             = otglb::renderTile(scene, tile);
+    const auto ink               = [&](const auto &pixels, int x, int y) {
+      const auto &p = pixels[y * tile.width + x];
+      return overlap ? 1 - p.r : p.alpha;
+    };
+    for (int bottom : {10, 45}) {
+      require(ink(heavy, 20, bottom - 2) > ink(base, 20, bottom - 2) + .4,
+              "Bottom Weight missed an underside above the model base");
+      // Sample far enough from the corners to exclude rounded stroke caps.
+      for (int y = bottom + 5; y < bottom + 10; ++y)
+        for (int x : {6, 7, 8, 9, 30, 31, 32, 33}) {
+          const auto i = y * tile.width + x;
+          near(heavy[i].r, base[i].r, 1e-6f);
+          near(heavy[i].alpha, base[i].alpha, 1e-6f);
+        }
+      for (int y = bottom + 13; y <= bottom + 17; ++y)
+        for (int x = 15; x <= 25; ++x) {
+          const auto i = y * tile.width + x;
+          near(heavy[i].r, base[i].r, 1e-6f);
+          near(heavy[i].alpha, base[i].alpha, 1e-6f);
+        }
+    }
+    // Tile origins do not change which direction a contour faces.
+    const auto part = otglb::renderTile(scene, {24, 22, 6, 38});
+    for (int y = 0; y < 22; ++y)
+      for (int x = 0; x < 24; ++x) {
+        const auto &full = heavy[(y + 38) * tile.width + x + 6];
+        near(full.r, part[y * 24 + x].r, 1e-6f);
+        near(full.alpha, part[y * 24 + x].alpha, 1e-6f);
+      }
+  }
+}
+
 void testToonOcclusionAndTiles() {
   otglb::RenderScene scene;
   scene.toonLine = otglb::ToonLineStyle{};
@@ -157,6 +222,79 @@ void testToonOcclusionAndTiles() {
       }
   }
 }
+void testWideToonStrokes() {
+  const auto quad = [](otglb::RenderScene &scene, double x0, double y0,
+                       double x1, double y1, double depth) {
+    const otglb::ProjectedVertex a{x0, y0, depth}, b{x1, y0, depth},
+        c{x1, y1, depth}, d{x0, y1, depth};
+    for (auto vertices : {std::array<otglb::ProjectedVertex, 3>{{a, b, c}},
+                          std::array<otglb::ProjectedVertex, 3>{{a, c, d}}}) {
+      otglb::RenderTriangle triangle{vertices, {}, {{1, 1, 1}}};
+      triangle.toonSurface = true;
+      scene.triangles.push_back(triangle);
+    }
+  };
+  otglb::RenderScene source;
+  quad(source, 15, 15, 155, 155, 0);
+  quad(source, 60, 60, 64, 64, 1);  // A short depth fragment.
+  quad(source, 100, 40, 104, 130, 1);
+  source.toonLine                    = otglb::ToonLineStyle{};
+  source.toonLine->width             = 20;
+  source.toonLine->lightingInfluence = 0;
+  const otglb::RenderTile tile{170, 170};
+  const auto wide = otglb::renderTile(source, tile);
+  for (int y = 50; y < 74; ++y)
+    for (int x = 50; x < 74; ++x)
+      require(wide[y * 170 + x].r > .99f,
+              "wide stroke turned a short depth fragment into a blot");
+  require(wide[80 * 170 + 95].r < .01f,
+          "wide stroke removed a continuous occlusion contour");
+  const auto part = otglb::renderTile(source, {35, 45, 85, 65});
+  for (int y = 0; y < 45; ++y)
+    for (int x = 0; x < 35; ++x) {
+      const auto &full = wide[(y + 65) * 170 + x + 85];
+      near(full.r, part[y * 35 + x].r, 1e-6f);
+      near(full.alpha, part[y * 35 + x].alpha, 1e-6f);
+    }
+
+  // Curved, finely tessellated silhouettes must remain connected at high
+  // width even with rapidly changing per-face lighting.
+  otglb::RenderScene circle;
+  constexpr int segments = 96;
+  const double pi        = std::acos(-1.0);
+  for (int i = 0; i < segments; ++i) {
+    const double a = 2 * pi * i / segments, b = 2 * pi * (i + 1) / segments;
+    otglb::RenderTriangle triangle{
+        {{{85, 85, 0},
+          {85 + 45 * std::cos(a), 85 + 45 * std::sin(a), 0},
+          {85 + 45 * std::cos(b), 85 + 45 * std::sin(b), 0}}},
+        {},
+        {{1, 1, 1}}};
+    triangle.toonSurface  = true;
+    triangle.illumination = i % 2 ? 0.f : 1.f;
+    circle.triangles.push_back(triangle);
+  }
+  circle.toonLine                    = otglb::ToonLineStyle{};
+  circle.toonLine->width             = 20;
+  circle.toonLine->lightingInfluence = 1;
+  const auto curved                  = otglb::renderTile(circle, tile);
+  for (int i = 0; i < 360; ++i) {
+    const double theta = i * pi / 180;
+    const int x        = int(std::floor(85 + 48 * std::cos(theta))),
+              y        = int(std::floor(85 + 48 * std::sin(theta)));
+    const auto &p      = curved[y * 170 + x];
+    require(p.alpha > .99f && p.r < .01f,
+            "wide curved outline has a gap or soft interior");
+  }
+  const auto curvedPart = otglb::renderTile(circle, {35, 45, 95, 70});
+  for (int y = 0; y < 45; ++y)
+    for (int x = 0; x < 35; ++x) {
+      const auto &full = curved[(y + 70) * 170 + x + 95];
+      near(full.r, curvedPart[y * 35 + x].r, 1e-6f);
+      near(full.alpha, curvedPart[y * 35 + x].alpha, 1e-6f);
+    }
+}
+
 void testToonSpeckles() {
   otglb::RenderScene source;
   const auto quad = [&](int x0, int y0, int x1, int y1, double depth) {
@@ -269,8 +407,10 @@ int main() {
     near(color(rig)[0], 0.0f);
 
     testToonLines();
+    testBottomContourWeight();
     testToonOcclusionAndTiles();
     testToonSpeckles();
+    testWideToonStrokes();
     std::cout << "Directional and positional diffuse lighting passed\n";
     return 0;
   } catch (const std::exception &error) {

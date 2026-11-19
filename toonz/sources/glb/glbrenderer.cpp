@@ -837,10 +837,16 @@ struct ToonLineRaster {
   const ToonLineStyle &style;
   double scaleX, scaleY, sampleScale;
   std::array<double, 4> inverse;
-  double bottom = 0, middle = 0;
 
   double radius(double requested) const {
     return std::min(requested, MaxContourRadius / std::max(scaleX, scaleY));
+  }
+
+  int smoothingPasses() const {
+    return style.lightingInfluence > 0 || style.bottomWeight > 0
+               ? int(std::ceil(
+                     std::min(32.0, style.width * std::max(scaleX, scaleY))))
+               : 0;
   }
 };
 
@@ -878,23 +884,46 @@ bool drawContours(const RenderScene &scene, const ToonLineRaster &toon,
     }
     return true;
   };
-  const auto draw = [&](int x, int y, const ContourSample &front) {
-    const double centerX = x * 0.5, centerY = y * 0.5;
+  const auto underside = [&](int x, int y, const ContourSample &front) {
+    // Estimate the outward contour normal from neighboring coverage/depth.
+    // Surface depth slopes are removed so continuous faces stay together.
+    double inwardX = 0, inwardY = 0;
+    for (int dy = -1; dy <= 1; ++dy)
+      for (int dx = -1; dx <= 1; ++dx) {
+        const int sx = x + dx, sy = y + dy;
+        if (sx < 0 || sy < 0 || sx >= width || sy >= height) continue;
+        const auto &neighbor = hits[index(sx, sy)];
+        if (neighbor.alpha == 0) continue;
+        const double gap = front.depth + 0.5 * (dx * front.dx + dy * front.dy) -
+                           neighbor.depth;
+        const double tolerance =
+            0.5 * std::abs(dx * (front.dx - neighbor.dx) +
+                           dy * (front.dy - neighbor.dy)) +
+            1e-6 * std::max(std::abs(front.depth), std::abs(neighbor.depth)) +
+            1e-10;
+        if (gap > tolerance) continue;
+        inwardX += dx * (dy == 0 ? 2 : 1);
+        inwardY += dy * (dx == 0 ? 2 : 1);
+      }
+    const double length = std::hypot(inwardX, inwardY);
+    return length > 0 ? std::max(0.0, inwardY / length) : 0.0;
+  };
+  const auto contourRadius = [&](const ContourSample &front, int frontX,
+                                 int frontY) {
     double weight = 1;
-    if (toon.middle > toon.bottom) {
-      const double sampleY = tile.y + 0.25 + centerY / 2;
-      weight +=
-          toon.style.bottomWeight *
-          std::clamp((toon.middle - sampleY) / (toon.middle - toon.bottom), 0.0,
-                     1.0);
-    }
+    if (toon.style.bottomWeight > 0)
+      weight += toon.style.bottomWeight * underside(frontX, frontY, front);
     if (toon.style.lightingInfluence > 0) {
       const float illumination = contourIllumination(scene, front, ibl);
       if (illumination >= 0)
         weight +=
             toon.style.lightingInfluence * (1 - std::min(illumination, 1.f));
     }
-    const double radius = toon.radius(toon.style.width * weight / 2);
+    return toon.radius(toon.style.width * weight / 2);
+  };
+  const auto draw = [&](int x, int y, const ContourSample &front,
+                        double radius) {
+    const double centerX = x * 0.5, centerY = y * 0.5;
     const double reachX = radius * 2 * toon.scaleX + 0.5;
     const double reachY = radius * 2 * toon.scaleY + 0.5;
     const int x0        = std::max(0, int(std::ceil(centerX - reachX)));
@@ -933,6 +962,20 @@ bool drawContours(const RenderScene &scene, const ToonLineRaster &toon,
   // before applying stroke width. Keep a small exterior silhouette if its
   // transparent neighbor lies outside the component's contour bounds.
   std::vector<int> component;
+  std::vector<float> radii(std::size_t(gridWidth) * gridHeight, -1);
+  std::vector<float> smoothed;
+  const auto neighbors = [&](int cell, const auto &action) {
+    const int x = cell % gridWidth, y = cell / gridWidth;
+    const auto at = [&](int nx, int ny) {
+      if (nx >= 0 && ny >= 0 && nx < gridWidth && ny < gridHeight)
+        action(ny * gridWidth + nx);
+    };
+    const int dx = x & 1, dy = y & 1;
+    at(x + 2 * dy, y + 2 * dx);
+    at(x - 2 * dy, y - 2 * dx);
+    for (int turnX : {-1, 1})
+      for (int turnY : {-1, 1}) at(x + turnX, y + turnY);
+  };
   const auto visit = [&](int x, int y) {
     if (x < 0 || y < 0 || x >= gridWidth || y >= gridHeight) return;
     const int cell = y * gridWidth + x;
@@ -958,11 +1001,9 @@ bool drawContours(const RenderScene &scene, const ToonLineRaster &toon,
         top    = std::max(top, cy);
         // Candidate segments are connected wherever they share an endpoint
         // on the grid between the raster's four coverage samples.
+        neighbors(component[i],
+                  [&](int cell) { visit(cell % gridWidth, cell / gridWidth); });
         const int dx = cx & 1, dy = cy & 1;
-        visit(cx + 2 * dy, cy + 2 * dx);
-        visit(cx - 2 * dy, cy - 2 * dx);
-        for (int turnX : {-1, 1})
-          for (int turnY : {-1, 1}) visit(cx + turnX, cy + turnY);
         for (int side : {-1, 1}) {
           const int sx = cx + side * dx, sy = cy + side * dy;
           if (hits[index(sx / 2, sy / 2)].alpha != 0) continue;
@@ -974,15 +1015,52 @@ bool drawContours(const RenderScene &scene, const ToonLineRaster &toon,
       }
       const bool exterior = emptyLeft < left || emptyRight > right ||
                             emptyBottom < bottom || emptyTop > top;
-      if (!exterior && std::max(right - left, top - bottom) < MinContourSpan)
+      const double scale    = std::max(toon.scaleX, toon.scaleY);
+      const int minimumSpan = std::max(
+          MinContourSpan,
+          int(std::ceil(4 * toon.radius(toon.style.width / 2) * scale)));
+      if (!exterior && std::max(right - left, top - bottom) < minimumSpan)
         continue;
-      for (std::size_t i = 0; i < component.size(); ++i) {
-        if ((i & 255) == 0 && canceled && *canceled) return false;
-        const int cx = component[i] % gridWidth, cy = component[i] / gridWidth;
+      const auto front = [&](int cell) -> const ContourSample & {
+        const int cx = cell % gridWidth, cy = cell / gridWidth;
         const int sx = cx / 2, sy = cy / 2;
         const auto &a = hits[index(sx, sy)];
         const auto &b = hits[index(sx + (cx & 1), sy + (cy & 1))];
-        draw(cx, cy, a.depth >= b.depth ? a : b);
+        return a.depth >= b.depth ? a : b;
+      };
+      for (const auto cell : component) {
+        const int cx = cell % gridWidth, cy = cell / gridWidth;
+        const auto &sample = front(cell);
+        const bool first   = &sample == &hits[index(cx / 2, cy / 2)];
+        radii[cell] =
+            float(contourRadius(sample, cx / 2 + (first ? 0 : (cx & 1)),
+                                cy / 2 + (first ? 0 : (cy & 1))));
+      }
+      // Smooth only the width along an existing connected contour. This
+      // removes per-triangle spikes while preserving its sampled centerline.
+      const int passes = toon.smoothingPasses();
+      smoothed.resize(component.size());
+      for (int pass = 0; pass < passes; ++pass) {
+        if (canceled && *canceled) return false;
+        for (std::size_t i = 0; i < component.size(); ++i) {
+          const int cell = component[i];
+          float sum      = 0;
+          int count      = 0;
+          neighbors(cell, [&](int neighbor) {
+            if (radii[neighbor] < 0) return;
+            sum += radii[neighbor];
+            ++count;
+          });
+          smoothed[i] =
+              count ? 0.5f * (radii[cell] + sum / count) : radii[cell];
+        }
+        for (std::size_t i = 0; i < component.size(); ++i)
+          radii[component[i]] = smoothed[i];
+      }
+      for (std::size_t i = 0; i < component.size(); ++i) {
+        if ((i & 255) == 0 && canceled && *canceled) return false;
+        const int cell = component[i];
+        draw(cell % gridWidth, cell / gridWidth, front(cell), radii[cell]);
       }
     }
   }
@@ -998,31 +1076,12 @@ std::vector<ColorPixel> renderToonTile(const RenderScene &scene,
                                        const RenderTile &tile,
                                        const int *canceled, int nesting,
                                        const ToonLineRaster &toon) {
-  auto brush = toon;
-  if (brush.style.bottomWeight > 0) {
-    // Use the actual screen-space extent of the model surfaces. Ink Line
-    // splines and visible light markers must not move the weight gradient.
-    double bottom = std::numeric_limits<double>::infinity();
-    double top    = -bottom;
-    const auto &m = tile.affine;
-    for (const auto &triangle : scene.triangles) {
-      if (canceled && *canceled) return {};
-      if (!triangle.toonSurface) continue;
-      for (const auto &v : triangle.vertices) {
-        const double y = m[3] * v.x + m[4] * v.y + m[5];
-        bottom         = std::min(bottom, y);
-        top            = std::max(top, y);
-      }
-    }
-    if (top > bottom) {
-      brush.bottom = bottom;
-      brush.middle = 0.5 * bottom + 0.5 * top;
-    }
-  }
   const double scale = std::max(toon.scaleX, toon.scaleY);
+  // Each width-smoothing pass can reach another half pixel along the contour.
+  // Include that support so independently rendered tiles agree at their edges.
   const int margin =
       int(std::ceil(toon.radius(toon.style.maximumRadius()) * scale)) + 2 +
-      MinContourSpan / 4;
+      MinContourSpan / 4 + (toon.smoothingPasses() + 1) / 2;
   std::vector<ColorPixel> result(std::size_t(tile.width) * tile.height);
   // Bound scratch space for the depth, coverage and transparency buffers, even
   // when a caller supplies a full frame or a wide film-resolution tile.
@@ -1036,7 +1095,7 @@ std::vector<ColorPixel> renderToonTile(const RenderScene &scene,
       request.width  = columns + 2 * margin;
       request.height = rows + 2 * margin;
       const auto pixels =
-          renderLayeredTile(scene, request, canceled, nesting, &brush, true);
+          renderLayeredTile(scene, request, canceled, nesting, &toon, true);
       if (pixels.empty()) return {};
       for (int row = 0; row < rows; ++row)
         std::copy_n(
@@ -1093,12 +1152,12 @@ std::vector<ColorPixel> renderLayeredTile(const RenderScene &scene,
   if (toon && scene.layers.empty() && !padded)
     return renderToonTile(scene, tile, canceled, nesting, *toon);
 
-  // Four hits per pixel, a quarter-pixel edge grid and up to eight
-  // edge indices per pixel (including vector growth).
+  // Four hits per pixel, a quarter-pixel edge grid, component indices and
+  // radius-smoothing buffers (including vector growth).
   const std::size_t contourMemory =
       toon && scene.layers.empty()
           ? 4 * (sizeof(ContourSample) + sizeof(float)) +
-                16 * (sizeof(unsigned char) + sizeof(int))
+                16 * (sizeof(unsigned char) + sizeof(int) + 2 * sizeof(float))
           : 0;
   const std::size_t bytesPerPixel =
       std::size_t(nesting + 2) * sizeof(ColorPixel) + 4 * sizeof(Sample) +
