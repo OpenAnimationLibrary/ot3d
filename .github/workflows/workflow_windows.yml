@@ -240,11 +240,10 @@ jobs:
           if %errorlevel% neq 0 exit /b %errorlevel%
           threepointlightfx_test.exe
           if %errorlevel% neq 0 exit /b %errorlevel%
-          del glbmodelfx_test.exe
-          del threepointlightfx_test.exe
-          del amlevel_test.exe
-          del amfx_test.exe
-          del amcamera_test.exe
+          REM Keep regression executables out of the portable application.
+          REM This includes EXR and Point Light tests built by earlier steps.
+          del /Q *_test.exe
+          if exist *_test.exe exit /b 1
 
       # Create artifact from the build
       - name: Create Artifact
