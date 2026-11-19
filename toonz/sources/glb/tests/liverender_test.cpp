@@ -39,6 +39,19 @@ int main() {
     check(group.batches[0].affine[2] == 3 &&
               group.batches[0].colorScale[3] == .25,
           "live group lost source placement/opacity");
+    RenderScene artwork;
+    auto plane     = t;
+    plane.textured = true;
+    plane.uv       = {{{{0, 0}}, {{1, 0}}, {{0, 1}}}};
+    artwork.triangles.push_back(plane);
+    artwork.texturePerspective = true;
+    artwork.textureWidth = artwork.textureHeight = 1;
+    artwork.texture = std::make_shared<const std::vector<ColorPixel>>(
+        1, ColorPixel{1, 0, 0, 1});
+    const auto liveArtwork = prepareLiveFrame(artwork);
+    check(liveArtwork.batches[0].vertices[0].position[3] == 2 &&
+              liveArtwork.batches[0].vertices[2].position[3] == .5,
+          "spatial drawing lost GPU perspective texture interpolation");
     std::atomic<bool> obsolete{true};
     check(prepareLiveFrame(*scene, nullptr, &obsolete).batches.empty(),
           "obsolete preparation escaped");

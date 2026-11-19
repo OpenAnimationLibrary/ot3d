@@ -227,11 +227,18 @@ void TStageObjectTree::insertColumn(int index) {
     }
   }
 
+  std::map<TStageObjectId, TStageObjectId> constraintIds;
+  for (const auto &entry : pegbars)
+    if (entry.first.isColumn() && entry.first.getIndex() >= index)
+      constraintIds[entry.first] =
+          TStageObjectId::ColumnId(entry.first.getIndex() + 1);
   pegbars.clear();
   pegbars.insert(tmp.begin(), tmp.end());
 
   pegbars[id] = pegbar;
   pegbar->addRef();
+  for (const auto &entry : pegbars)
+    entry.second->remapConstraintTargets(constraintIds);
 
 #ifndef NDEBUG
   checkIntegrity();
@@ -276,8 +283,16 @@ son->setParent(parentId);
     }
   }
 
+  std::map<TStageObjectId, TStageObjectId> constraintIds;
+  constraintIds[id] = TStageObjectId::NoneId;
+  for (const auto &entry : pegbars)
+    if (entry.first.isColumn() && entry.first.getIndex() > index)
+      constraintIds[entry.first] =
+          TStageObjectId::ColumnId(entry.first.getIndex() - 1);
   pegbars.clear();
   pegbars.insert(tmp.begin(), tmp.end());
+  for (const auto &entry : pegbars)
+    entry.second->remapConstraintTargets(constraintIds);
 
 #ifndef NDEBUG
   checkIntegrity();
@@ -364,6 +379,10 @@ void TStageObjectTree::swapColumns(int i, int j) {
     // creo
     getStageObject(idi, true);
   }
+  const std::map<TStageObjectId, TStageObjectId> constraintIds{{idi, idj},
+                                                               {idj, idi}};
+  for (const auto &entry : pegbars)
+    entry.second->remapConstraintTargets(constraintIds);
   assert(checkId(this, idi));
   assert(checkId(this, idj));
 

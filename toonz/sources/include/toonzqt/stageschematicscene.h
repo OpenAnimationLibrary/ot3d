@@ -130,6 +130,7 @@ public:
   }
   TStageObjectId getCurrentObject();
   TFrameHandle *getFrameHandle() { return m_frameHandle; }
+  TSceneHandle *getSceneHandle() const { return m_sceneHandle; }
   TColumnHandle *getColumnHandle() { return m_colHandle; }
   void updateNestedGroupEditors(StageSchematicNode *node,
                                 const QPointF &newPos);

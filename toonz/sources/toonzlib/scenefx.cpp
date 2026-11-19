@@ -968,6 +968,11 @@ PlacedFx FxBuilder::makePF(TLevelColumnFx *lcfx) {
     addPlasticDeformerFx(pf);
   }
 
+  const bool spatialDrawing =
+      !nativeModel && !cell.isEmpty() && cell.m_level->getSimpleLevel() &&
+      m_xsh->getStageObject(TStageObjectId::ColumnId(pf.m_columnIndex))
+          ->hasSpatialOrientation();
+  if (spatialDrawing) columnVisible = true;  // Clip the plane, not its origin.
   if (columnVisible) {
     // Column is visible, alright
     TXshSimpleLevel *sl = cell.isEmpty() ? 0 : cell.m_level->getSimpleLevel();
@@ -1010,6 +1015,19 @@ PlacedFx FxBuilder::makePF(TLevelColumnFx *lcfx) {
             ::getDpiAffine(sl, column->getCell(r0).m_frameId, true);
         pf.m_fx = TFxUtil::makeAffine(pf.m_fx, dpiAff);
       }
+    }
+
+    if (spatialDrawing) {
+      auto *object =
+          m_xsh->getStageObject(TStageObjectId::ColumnId(pf.m_columnIndex));
+      const double depthScale = 1 - object->getGlobalNoScaleZ() / 1000;
+      const auto placement =
+          otam::multiply(object->getAMPlacement(m_frame),
+                         otam::scaling(depthScale, depthScale, depthScale));
+      pf.m_fx = makeSpatialDrawingFx(
+          dynamic_cast<TRasterFx *>(pf.m_fx.getPointer()), placement,
+          amModelCamera(m_xsh, m_frame, m_isPreview));
+      pf.m_aff = TAffine();
     }
 
     // Apply column's color filter and semi-transparency for rendering

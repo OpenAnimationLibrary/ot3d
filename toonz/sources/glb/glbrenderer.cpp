@@ -1264,15 +1264,23 @@ std::vector<ColorPixel> renderLayeredTile(const RenderScene &scene,
               color = {};
               if (scene.texture && scene.textureWidth > 0 &&
                   scene.textureHeight > 0) {
-                // The plane uses an orthographic camera; UVs interpolate
-                // linearly.
                 {
-                  const double u = a * triangle.uv[0][0] +
-                                   b * triangle.uv[1][0] +
-                                   c * triangle.uv[2][0];
-                  const double v = a * triangle.uv[0][1] +
-                                   b * triangle.uv[1][1] +
-                                   c * triangle.uv[2][1];
+                  std::array<double, 3> weights{{a, b, c}};
+                  if (scene.texturePerspective) {
+                    double total = 0;
+                    for (int i = 0; i < 3; ++i) {
+                      weights[i] *= triangle.vertices[i].depth;
+                      total += weights[i];
+                    }
+                    if (!(total > 0)) continue;
+                    for (auto &w : weights) w /= total;
+                  }
+                  const double u = weights[0] * triangle.uv[0][0] +
+                                   weights[1] * triangle.uv[1][0] +
+                                   weights[2] * triangle.uv[2][0];
+                  const double v = weights[0] * triangle.uv[0][1] +
+                                   weights[1] * triangle.uv[1][1] +
+                                   weights[2] * triangle.uv[2][1];
                   if (u >= 0 && u <= 1 && v >= 0 && v <= 1) {
                     const int tx = std::min(scene.textureWidth - 1,
                                             int(u * scene.textureWidth));
@@ -1415,6 +1423,78 @@ std::vector<ColorPixel> renderTile(const RenderScene &scene,
                                    const RenderTile &tile,
                                    const int *canceled) {
   return renderLayeredTile(scene, tile, canceled, 0);
+}
+
+RenderScene projectImagePlane3D(const std::array<double, 4> &box,
+                                const std::array<double, 16> &camera,
+                                const std::array<double, 16> &film) {
+  for (double v : box)
+    require(std::isfinite(v), "Non-finite drawing plane bounds");
+  for (double v : camera)
+    require(std::isfinite(v), "Non-finite drawing plane transform");
+  for (double v : film)
+    require(std::isfinite(v), "Non-finite drawing camera transform");
+  RenderScene scene;
+  scene.texturePerspective = true;
+  if (box[2] <= box[0] || box[3] <= box[1]) return scene;
+  struct Vertex {
+    std::array<double, 3> p;
+    std::array<double, 2> uv;
+  };
+  const std::array<std::array<double, 2>, 4> positions{{{{box[0], box[1]}},
+                                                        {{box[2], box[1]}},
+                                                        {{box[2], box[3]}},
+                                                        {{box[0], box[3]}}}};
+  const std::array<std::array<double, 2>, 4> uvs{
+      {{{0, 0}}, {{1, 0}}, {{1, 1}}, {{0, 1}}}};
+  std::vector<Vertex> polygon;
+  for (int i = 0; i < 4; ++i) {
+    Vertex v;
+    v.uv = uvs[i];
+    for (int k = 0; k < 3; ++k)
+      v.p[k] = camera[4 * k] * positions[i][0] +
+               camera[4 * k + 1] * positions[i][1] + camera[4 * k + 3];
+    polygon.push_back(v);
+  }
+  std::vector<Vertex> clipped;
+  for (std::size_t i = 0; i < polygon.size(); ++i) {
+    const auto &a = polygon[i], &b = polygon[(i + 1) % polygon.size()];
+    const bool insideA = a.p[2] <= -1, insideB = b.p[2] <= -1;
+    if (insideA) clipped.push_back(a);
+    if (insideA != insideB) {
+      const double t = (-1 - a.p[2]) / (b.p[2] - a.p[2]);
+      Vertex v;
+      for (int k = 0; k < 3; ++k) v.p[k] = a.p[k] + t * (b.p[k] - a.p[k]);
+      for (int k = 0; k < 2; ++k) v.uv[k] = a.uv[k] + t * (b.uv[k] - a.uv[k]);
+      clipped.push_back(v);
+    }
+  }
+  for (std::size_t i = 1; i + 1 < clipped.size(); ++i) {
+    const Vertex vertices[]{clipped[0], clipped[i], clipped[i + 1]};
+    RenderTriangle triangle;
+    triangle.textured = true;
+    triangle.color    = {{1, 1, 1}};
+    triangle.edges    = {{true, true, true}};
+    for (int j = 0; j < 3; ++j) {
+      const auto &v      = vertices[j];
+      const double depth = 1000 / -v.p[2], x = v.p[0] * depth,
+                   y  = v.p[1] * depth;
+      const double px = film[0] * x + film[1] * y + film[3],
+                   py = film[4] * x + film[5] * y + film[7];
+      require(std::isfinite(px) && std::isfinite(py) && std::abs(px) < 1e12 &&
+                  std::abs(py) < 1e12,
+              "Drawing plane projection overflows");
+      triangle.vertices[j] = {px, py, depth};
+      triangle.uv[j]       = v.uv;
+      if (scene.triangles.empty() && j == 0) scene.bounds = {{px, py, px, py}};
+      scene.bounds[0] = std::min(scene.bounds[0], px);
+      scene.bounds[1] = std::min(scene.bounds[1], py);
+      scene.bounds[2] = std::max(scene.bounds[2], px);
+      scene.bounds[3] = std::max(scene.bounds[3], py);
+    }
+    scene.triangles.push_back(triangle);
+  }
+  return scene;
 }
 
 RenderScene prepareImagePlane(

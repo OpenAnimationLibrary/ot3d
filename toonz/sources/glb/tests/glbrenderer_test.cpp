@@ -478,6 +478,56 @@ int main() {
       check(prepareImagePlane(2, 2, pixels, {camera}).triangles.empty(),
             "plane behind camera survived");
     });
+    run("spatial drawing texture follows depth rotation", [] {
+      const std::array<double, 16> film{
+          {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}};
+      const double sine = std::sqrt(3.0) / 2;
+      auto camera       = film;
+      camera[0]         = .5;
+      camera[2]         = sine;
+      camera[8]         = -sine;
+      camera[10]        = .5;
+      camera[11]        = -1000;
+      auto scene = projectImagePlane3D({{-100, -100, 100, 100}}, camera, film);
+      check(scene.triangles.size() == 2 && scene.texturePerspective,
+            "spatial plane missing");
+      auto pixels = std::make_shared<std::vector<ColorPixel>>(200 * 200);
+      for (int y = 0; y < 200; ++y)
+        for (int x = 0; x < 200; ++x)
+          (*pixels)[y * 200 + x] = {x / 199.f, 0, 0, 1};
+      scene.texture      = pixels;
+      scene.textureWidth = scene.textureHeight = 200;
+      RenderTile tile;
+      tile.width = tile.height = 1;
+      tile.x                   = 24;
+      tile.y                   = 0;
+      auto result              = renderTile(scene, tile);
+      double expected          = 0;
+      for (double x : {24.25, 24.75}) {
+        const double source = 1000 * x / (500 - sine * x);
+        expected += std::floor(source + 100) / 199 / 2;
+      }
+      near(result[0].r, expected);
+      near(result[0].alpha, 1);
+      // Cropping/expanding artwork bounds does not recenter the input plane.
+      const auto offset = projectImagePlane3D(
+          {{10, 20, 30, 40}},
+          {{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, -1000, 0, 0, 0, 1}}, film);
+      near(offset.bounds[0], 10);
+      near(offset.bounds[1], 20);
+      camera[11] = -25;
+      const auto clipped =
+          projectImagePlane3D({{-100, -100, 100, 100}}, camera, film);
+      check(!clipped.empty(), "near-plane crossing disappeared");
+      for (const auto &triangle : clipped.triangles)
+        for (const auto &v : triangle.vertices)
+          check(std::isfinite(v.x) && std::isfinite(v.y) && v.depth > 0 &&
+                    v.depth <= 1000.00001,
+                "bad clipped drawing vertex");
+      camera[11] = 1000;
+      check(projectImagePlane3D({{-100, -100, 100, 100}}, camera, film).empty(),
+            "drawing behind camera survived");
+    });
     std::cout << passed << " renderer groups passed\n";
     return 0;
   } catch (const std::exception &e) {
