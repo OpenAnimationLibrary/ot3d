@@ -179,6 +179,8 @@ set(SOURCES
     txshamlevel.cpp
     txshglblevel.cpp
     amlevelrender.cpp
+    orientationconstraints.cpp
+    spatialdrawingfx.cpp
     vectorinkrender.cpp
     autoadjust.cpp
     autoclose.cpp

@@ -57,6 +57,9 @@ DVAPI TRasterFx *makeNativeModelRenderFx(TXsheet *xsheet, int column,
                                          double frame, bool previewCamera);
 DVAPI TRasterFx *makeAMLevelRenderFx(TXsheet *xsheet, int column, double frame,
                                      bool previewCamera = false);
+DVAPI TRasterFx *makeSpatialDrawingFx(TRasterFx *input,
+                                      const otam::Matrix &placement,
+                                      const AMModelCamera &camera);
 DVAPI bool setAMLevelColorFilter(TRasterFx *fx, const TPixel32 &color);
 // Passed upstream with the existing native 3D scene request.
 class DVAPI TAMCageRenderData final : public TRasterFxRenderData {

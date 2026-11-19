@@ -204,6 +204,7 @@ struct RenderScene {
                                       const std::array<double, 6> &)>
       placeWorldPoint;
   bool wireframe = false;
+  bool texturePerspective = false;
   int textureWidth = 0, textureHeight = 0;
   std::shared_ptr<const std::vector<ColorPixel>> texture;
   // Back-to-front source layers. Each retains its own camera/depth, texture,
@@ -242,6 +243,12 @@ RenderScene prepareImagePlane(
 // Geometry-only query for FX bounds; does not allocate or evaluate pixels.
 RenderScene projectImagePlane(int width, int height,
                               const std::vector<ModelTransform> &transforms);
+
+// Spatial drawing plane in stage coordinates, clipped against the optical
+// near plane. Matrices are row-major doubles, as in native model placement.
+RenderScene projectImagePlane3D(const std::array<double, 4> &rectangle,
+                                const std::array<double, 16> &localToCamera,
+                                const std::array<double, 16> &imageToStage);
 
 // Append an emissive sphere in the source camera with ordinary depth testing.
 // Existing material shaders and source geometry remain immutable.

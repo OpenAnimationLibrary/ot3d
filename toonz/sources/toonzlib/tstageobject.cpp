@@ -88,6 +88,8 @@ TStageObjectParams::TStageObjectParams(TStageObjectParams *data)
     : m_id(data->m_id)
     , m_parentId(data->m_parentId)
     , m_children(data->m_children)
+    , m_constraints(data->m_constraints)
+    , m_constraintIdentity(data->m_constraintIdentity)
     , m_keyframes(data->m_keyframes)
     , m_cycleEnabled(data->m_cycleEnabled)
     , m_spline(data->m_spline)
@@ -1307,6 +1309,7 @@ TStageObject *TStageObject::clone() {
   cloned->m_localPlacement  = m_localPlacement;
   cloned->m_absPlacement    = m_absPlacement;
   cloned->m_status          = m_status;
+  cloned->m_constraints     = m_constraints;
   cloned->doSetSpline(m_spline);
 
   cloned->m_x       = static_cast<TDoubleParam *>(m_x->clone());
@@ -1489,6 +1492,12 @@ TAffine TStageObject::computeLocalPlacement(double frame) {
 //-----------------------------------------------------------------------------
 
 TAffine TStageObject::getPlacement(double t) {
+  if (hasOrientationConstraints()) {
+    // The editing view uses the planar part; Preview/Render projects the full
+    // image plane. Never cache links against parent-only invalidation.
+    const auto m = getAMPlacement(t);
+    return TAffine(m[0], m[1], m[3], m[4], m[5], m[7]);
+  }
   double &time = lazyData().m_time;
 
   if (time == t) return m_absPlacement;
@@ -1514,6 +1523,10 @@ TAffine TStageObject::getPlacement(double t) {
 //-----------------------------------------------------------------------------
 
 double TStageObject::getZ(double t) {
+  if (!is3DTransformEnabled() && hasSpatialOrientation()) {
+    const auto c = getCenter(t) * Stage::inch;
+    return otam::transform(getAMPlacement(t), {{c.x, c.y, 0}})[2];
+  }
   double tt = paramsTime(t);
   if (m_parent)
     return m_parent->getZ(t) + m_z->getValue(tt);
@@ -1730,6 +1743,18 @@ void TStageObject::saveData(TOStream &os) {
 
   os.child("center") << m_center.x << m_center.y << -m_offset.x << -m_offset.y;
   os.child("status") << (int)m_status;
+  if (!m_constraintIdentity.empty())
+    os.child("constraintIdentity") << m_constraintIdentity;
+  for (const auto &link : m_constraints) {
+    std::map<std::string, std::string> attrs;
+    attrs["target"]   = getConstraintTargetId(link).toString();
+    attrs["identity"] = link.targetIdentity;
+    os.openChild("orientationConstraint", attrs);
+    os << int(link.type) << int(link.scope) << int(link.enabled)
+       << link.influence;
+    for (double v : link.offset) os << v;
+    os.closeChild();
+  }
   if (m_noScaleZ != 0) os.child("noScaleZ") << m_noScaleZ;
 
   if (m_spline) os.child("splinep") << m_spline;
@@ -1773,6 +1798,8 @@ os.child("xPrevalence") << (int)isXPrevalence;*/
 //-----------------------------------------------------------------------------
 
 void TStageObject::loadData(TIStream &is) {
+  m_constraints.clear();
+  m_constraintIdentity.clear();
   VersionNumber tnzVersion = is.getVersion();
   string tagName;
   QList<int> groupIds;
@@ -1805,6 +1832,37 @@ void TStageObject::loadData(TIStream &is) {
     } else if (tagName == "center") {
       is >> m_center.x >> m_center.y >> m_offset.x >> m_offset.y;
       m_offset = -m_offset;
+    } else if (tagName == "constraintIdentity") {
+      is >> m_constraintIdentity;
+    } else if (tagName == "orientationConstraint") {
+      Constraint link;
+      int type = 0, scope = 0, enabled = 0;
+      link.target         = toStageObjectId(is.getTagAttribute("target"));
+      link.targetIdentity = is.getTagAttribute("identity");
+      is >> type >> scope >> enabled >> link.influence;
+      for (double &v : link.offset) is >> v;
+      if (type >= Constraint::AimAt && type <= Constraint::OrientLike &&
+          scope >= Constraint::Self && scope <= Constraint::Children) {
+        link.type    = static_cast<Constraint::Type>(type);
+        link.scope   = static_cast<Constraint::Scope>(scope);
+        link.enabled = enabled != 0;
+        m_constraints.push_back(link);
+      }
+    } else if (tagName == "constraint") {
+      // Read Aim At records from OT-Dev's original constraints branch.
+      Constraint link;
+      int type = 0, enabled = 0;
+      double radius = 0, strength = 0, angle = 0;
+      link.target = toStageObjectId(is.getTagAttribute("target"));
+      link.scope  = is.getTagAttribute("scope") == "children"
+                        ? Constraint::Children
+                        : Constraint::Self;
+      is >> type >> enabled >> link.influence >> radius >> strength >> angle;
+      if (type == 0) {
+        link.enabled = enabled != 0;
+        link.offset  = otam::rotation(0, 0, angle);
+        m_constraints.push_back(link);
+      }
     } else if (tagName == "name")
       is >> m_name;
     else if (tagName == "x")
@@ -1959,6 +2017,8 @@ TStageObjectParams *TStageObject::getParams() const {
   data->m_parentId = getParent();
   data->m_offset   = m_offset;
   data->m_status   = m_status;
+  data->m_constraints        = m_constraints;
+  data->m_constraintIdentity = m_constraintIdentity;
 
   data->m_x       = m_x;
   data->m_y       = m_y;
@@ -1998,6 +2058,19 @@ void TStageObject::assignParams(const TStageObjectParams *src,
   m_noScaleZ = src->m_noScaleZ;
   m_offset   = src->m_offset;
   m_status   = src->m_status;
+  m_constraints        = src->m_constraints;
+  m_constraintIdentity = src->m_constraintIdentity;
+  // A pasted object gets a fresh identity when the original is still present.
+  // Undo restoration keeps the stored identity when the original is absent.
+  if (!m_constraintIdentity.empty())
+    for (int i = 0; i < m_tree->getStageObjectCount(); ++i) {
+      auto *other = m_tree->getStageObject(i);
+      if (other != this &&
+          other->m_constraintIdentity == m_constraintIdentity) {
+        m_constraintIdentity.clear();
+        break;
+      }
+    }
   m_amTransformEnabled = src->m_amTransformEnabled;
   if (m_spline) m_spline->release();
   m_spline = src->m_spline;
@@ -2258,6 +2331,15 @@ void TStageObject::enableAMTransform(bool enabled) {
 }
 
 std::array<double, 16> TStageObject::getAMPlacement(double t) {
+  // Scene files or later reparenting may introduce a cycle. Pointer keys also
+  // distinguish identical column IDs in separate nested xsheets.
+  static thread_local std::set<const TStageObject *> evaluating;
+  if (!evaluating.insert(this).second) return otam::identity();
+  struct Guard {
+    std::set<const TStageObject *> &active;
+    const TStageObject *object;
+    ~Guard() { active.erase(object); }
+  } guard{evaluating, this};
   const double frame = paramsTime(t);
   otam::Matrix local;
   if (!is3DTransformEnabled()) {
@@ -2304,5 +2386,7 @@ std::array<double, 16> TStageObject::getAMPlacement(double t) {
                                                       -m_amCenterZ->getValue(frame) *
                                                           Stage::inch)))));
   }
-  return m_parent ? otam::multiply(m_parent->getAMPlacement(t), local) : local;
+  const auto world =
+      m_parent ? otam::multiply(m_parent->getAMPlacement(t), local) : local;
+  return applyOrientationConstraints(world, t);
 }

@@ -2,6 +2,12 @@
 #include "../../stdfx/transform3dfx.cpp"
 #include "../../stdfx/threepointlightfx.cpp"
 #include "amfixture.h"
+#include "amorientation.h"
+#include "toonz/txshsimplelevel.h"
+#include "toonz/levelproperties.h"
+#include "toonz/txshleveltypes.h"
+#include "trasterimage.h"
+#include "liverender.h"
 #include "toonz/txshamlevel.h"
 #include "toonz/toonzscene.h"
 #include "toonz/txsheet.h"
@@ -79,6 +85,183 @@ public:
     m_renderer.uninstall();
   }
 };
+void matrixEqual(const otam::Matrix &a, const otam::Matrix &b) {
+  for (int i = 0; i < 16; ++i) nearlyEqual(a[i], b[i]);
+}
+void orientationConstraints(const QString &directory) {
+  ToonzScene scene;
+  auto *sheet   = scene.getXsheet();
+  auto *tree    = sheet->getStageObjectTree();
+  auto *model   = sheet->getStageObject(TStageObjectId::ColumnId(0));
+  auto *drawing = sheet->getStageObject(TStageObjectId::ColumnId(1));
+  model->enableAMTransform(true);
+  drawing->setParent(model->getId());
+  set(model, TStageObject::T_RotationX, 25);
+  set(model, TStageObject::T_RotationY, 60);
+  set(model, TStageObject::T_Angle, 13);
+  set(drawing, TStageObject::T_X, .2);
+  using Link = TStageObject::Constraint;
+  Link orient;
+  orient.type   = Link::OrientLike;
+  orient.target = model->getId();
+  check(drawing->addConstraint(orient), "attach Orient Like to parent");
+  check(drawing->hasSpatialOrientation(),
+        "drawing did not opt into spatial rendering");
+  matrixEqual(*otam::orientation(drawing->getAMPlacement(0)),
+              *otam::orientation(model->getAMPlacement(0)));
+  const auto before = drawing->getAMPlacement(0);
+  set(model, TStageObject::T_RotationY, 75);
+  const auto after = drawing->getAMPlacement(0);
+  check(std::abs(before[0] - after[0]) > .01,
+        "same-frame target edit stayed cached");
+  check(std::abs(drawing->getPlacement(0).a11 - after[0]) < 1e-7,
+        "editing view lost spatial orientation");
+  nearlyEqual(drawing->getParam(TStageObject::T_RotationY)->getValue(0), 0);
+  // Parent rotation is already present: Orient Like must not apply it twice.
+  matrixEqual(*otam::orientation(after),
+              *otam::orientation(model->getAMPlacement(0)));
+  auto *peer = sheet->getStageObject(TStageObjectId::ColumnId(2));
+  set(peer, TStageObject::T_Angle, 37);
+  Link keep = orient;
+  check(peer->captureConstraintOffset(keep, 0) && peer->addConstraint(keep),
+        "capture orientation offset");
+  matrixEqual(*otam::orientation(peer->getAMPlacement(0)),
+              otam::rotation(0, 0, 37));
+  // A different parent must not add its rotation to the matched world frame.
+  auto *peg = sheet->getStageObject(TStageObjectId::PegbarId(0));
+  set(peg, TStageObject::T_Angle, -22);
+  set(peg, TStageObject::T_ScaleX, 2);
+  peer->clearConstraints();
+  peer->setParent(peg->getId());
+  check(peer->addConstraint(orient), "separate-parent orientation");
+  matrixEqual(*otam::orientation(peer->getAMPlacement(0)),
+              *otam::orientation(model->getAMPlacement(0)));
+  Link cycle   = orient;
+  cycle.target = drawing->getId();
+  check(!model->addConstraint(cycle), "parent/constraint cycle accepted");
+  cycle.target = peer->getId();
+  check(!model->addConstraint(cycle), "constraint-link cycle accepted");
+  // Snapshot restoration is the path used by constraint Undo/Redo.
+  const auto snapshot = drawing->getConstraints();
+  drawing->clearConstraints();
+  check(!drawing->hasSpatialOrientation(),
+        "clear did not disable drawing projection");
+  drawing->setConstraints(snapshot);
+  matrixEqual(drawing->getAMPlacement(0), after);
+  std::unique_ptr<TStageObjectParams> params(drawing->getParams());
+  auto *copy = sheet->getStageObject(TStageObjectId::ColumnId(3));
+  copy->assignParams(params.get());
+  check(copy->getConstraints().size() == 1,
+        "constraint snapshot copy lost links");
+  // Planar Aim At remains live and handles coincident positions safely.
+  auto *aim    = sheet->getStageObject(TStageObjectId::PegbarId(1));
+  auto *target = sheet->getStageObject(TStageObjectId::PegbarId(2));
+  set(target, TStageObject::T_Y, 2);
+  Link at;
+  at.target = target->getId();
+  check(aim->addConstraint(at), "planar Aim At assignment");
+  nearlyEqual(aim->getPlacement(0).a21, 1);
+  set(target, TStageObject::T_Y, 0);
+  set(target, TStageObject::T_X, 2);
+  nearlyEqual(aim->getPlacement(0).a11, 1);
+  set(target, TStageObject::T_X, 0);
+  nearlyEqual(aim->getPlacement(0).a11, 1);
+  // Save/reopen retains both the link and target identity.
+  const TFilePath saved(directory + "/orientation.xml");
+  {
+    TOStream out(saved);
+    out << sheet;
+  }
+  TPersist *data = nullptr;
+  {
+    TIStream in(saved);
+    in >> data;
+  }
+  std::unique_ptr<TPersist> owner(data);
+  auto *restored = dynamic_cast<TXsheet *>(data);
+  check(restored, "constraint scene reopen");
+  auto *restoredDrawing = restored->getStageObject(drawing->getId());
+  check(restoredDrawing->getConstraints().size() == 1,
+        "saved constraint missing");
+  matrixEqual(restoredDrawing->getAMPlacement(0), after);
+  // A target keeps its identity across insert/swap/delete and delete Undo.
+  std::unique_ptr<TStageObjectParams> modelParams(model->getParams());
+  tree->insertColumn(0);
+  check(drawing->getConstraints()[0].target == TStageObjectId::ColumnId(1),
+        "insert retargeted drawing");
+  tree->swapColumns(0, 1);
+  check(drawing->getConstraints()[0].target == TStageObjectId::ColumnId(0),
+        "swap retargeted drawing");
+  tree->removeColumn(0);
+  for (double v : drawing->getAMPlacement(0))
+    check(std::isfinite(v), "missing target is not safe");
+  tree->insertColumn(0);
+  auto *replacement = tree->getStageObject(TStageObjectId::ColumnId(0));
+  set(replacement, TStageObject::T_Angle, 123);
+  check(!drawing->hasSpatialOrientation(),
+        "missing target rebound to an unrelated column");
+  replacement->assignParams(modelParams.get());
+  check(drawing->hasSpatialOrientation(),
+        "restored target identity did not reconnect");
+
+  // Evaluate a real drawing column through the expanded production FX tree.
+  ToonzScene artworkScene;
+  artworkScene.setScenePath(TFilePath(directory + "/artwork.tnz"));
+  auto *artSheet         = artworkScene.getXsheet();
+  TXshSimpleLevelP level = new TXshSimpleLevel(L"Attached artwork");
+  level->setScene(&artworkScene);
+  level->setType(OVL_XSHLEVEL);
+  level->setPath(TFilePath(directory + "/artwork..png"));
+  level->getProperties()->setDpi(Stage::inch);
+  for (int f = 1; f <= 2; ++f) {
+    TRaster32P raster(80, 40);
+    raster->fill(f == 1 ? TPixel32::Red : TPixel32::Blue);
+    TRasterImageP image = new TRasterImage(raster);
+    image->setDpi(Stage::inch, Stage::inch);
+    level->setFrame(TFrameId(f), image);
+    check(
+        artSheet->setCell(f - 1, 1, TXshCell(level.getPointer(), TFrameId(f))),
+        "expose drawing");
+  }
+  auto *artModel = artSheet->getStageObject(TStageObjectId::ColumnId(0));
+  artModel->enableAMTransform(true);
+  set(artModel, TStageObject::T_RotationY, 60);
+  auto *artObject = artSheet->getStageObject(TStageObjectId::ColumnId(1));
+  artObject->setParent(artModel->getId());
+  orient.target = artModel->getId();
+  orient.targetIdentity.clear();
+  check(artObject->addConstraint(orient), "drawing attachment assignment");
+  auto *column = artSheet->getColumn(1)->getFx();
+  TRenderSettings settings;
+  TRasterFxP first =
+      buildSceneFx(&artworkScene, 0, artSheet, column, BSFX_NO_TR);
+  auto *spatial = dynamic_cast<T3DRenderSource *>(first.getPointer());
+  check(spatial, "expanded drawing lost spatial source");
+  auto bounds = spatial->get3DRenderGeometry(0, nullptr, nullptr, &settings);
+  check(bounds && !bounds->empty(), "spatial drawing geometry missing");
+  check(bounds->bounds[2] - bounds->bounds[0] < 60,
+        "depth rotation did not foreshorten artwork");
+  RenderSession session;
+  auto red = spatial->get3DRenderScene(0, nullptr, nullptr, nullptr, &settings);
+  check(
+      red && red->texturePerspective && red->texture && !red->texture->empty(),
+      "drawing texture missing");
+  check((*red->texture)[red->texture->size() / 2].r > 0,
+        "first exposure lost red artwork");
+  TRasterFxP second =
+      buildSceneFx(&artworkScene, 1, artSheet, column, BSFX_NO_TR);
+  auto *blueSpatial = dynamic_cast<T3DRenderSource *>(second.getPointer());
+  check(blueSpatial, "animated drawing lost spatial source");
+  auto blue =
+      blueSpatial->get3DRenderScene(1, nullptr, nullptr, nullptr, &settings);
+  check(blue && blue->texture &&
+            (*blue->texture)[blue->texture->size() / 2].b > 0,
+        "animated exposure did not update artwork");
+  std::unique_ptr<TFx> cloned(first->clone(true));
+  auto *clonedSpatial = dynamic_cast<T3DRenderSource *>(cloned.get());
+  check(clonedSpatial && clonedSpatial->get3DRenderGeometry(0, nullptr),
+        "spatial drawing clone lost placement");
+}
 }  // namespace
 int main(int argc, char **argv) {
   QGuiApplication app(argc, argv);
@@ -87,6 +270,7 @@ int main(int argc, char **argv) {
   try {
     QTemporaryDir temp;
     check(temp.isValid(), "temporary directory");
+    orientationConstraints(temp.path());
     const auto path = temp.filePath("model.mdl");
     {
       QFile f(path);

@@ -97,6 +97,36 @@ class DVAPI TStageObject final : public TSmartObject, public TParamObserver {
   DECLARE_CLASS_CODE
 
 public:
+  // Live orientation links, evaluated without changing authored channels.
+  struct Constraint {
+    enum Type { AimAt, OrientLike };
+    enum Scope { Self, Children };
+    Type type   = AimAt;
+    Scope scope = Self;
+    TStageObjectId target;
+    std::string targetIdentity;
+    bool enabled     = true;
+    double influence = 1.0;
+    // Extra rotation after aiming/matching; also stores Keep Orientation.
+    std::array<double, 16> offset{
+        {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}};
+  };
+  const std::vector<Constraint> &getConstraints() const {
+    return m_constraints;
+  }
+  bool addConstraint(const Constraint &constraint);
+  void setConstraints(const std::vector<Constraint> &constraints);
+  bool removeConstraint(int index);
+  void clearConstraints();
+  bool hasOrientationConstraints() const;
+  // True when an enabled link makes this drawing a spatial image plane.
+  bool hasSpatialOrientation() const;
+  bool captureConstraintOffset(Constraint &constraint, double frame);
+  std::string getConstraintIdentity();
+  TStageObjectId getConstraintTargetId(const Constraint &constraint) const;
+  void remapConstraintTargets(
+      const std::map<TStageObjectId, TStageObjectId> &ids);
+
   /*!
 Used to describe the object status - ie how the object can move.
 The default value is XY.
@@ -530,6 +560,13 @@ private:
   TStageObjectTree *m_tree;
   TStageObject *m_parent;
   std::list<TStageObject *> m_children;
+  std::vector<Constraint> m_constraints;
+  std::string m_constraintIdentity;
+  TStageObject *resolveConstraintTarget(const Constraint &constraint) const;
+  std::array<double, 16> applyOrientationConstraints(
+      const std::array<double, 16> &placement, double frame);
+  bool constraintTargetDependsOnThis(TStageObjectId target,
+                                     const std::string &identity = {}) const;
 
   bool m_cycleEnabled;
 
@@ -619,6 +656,8 @@ class DVAPI TStageObjectParams {
 public:
   TStageObjectId m_id, m_parentId;
   std::vector<TStageObjectId> m_children;
+  std::vector<TStageObject::Constraint> m_constraints;
+  std::string m_constraintIdentity;
   std::map<int, TStageObject::Keyframe> m_keyframes;
   bool m_cycleEnabled, m_isOpened;
   TStageObjectSpline *m_spline;

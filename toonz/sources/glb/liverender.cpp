@@ -105,8 +105,10 @@ void append(LiveFrame &out, const RenderScene &scene,
       v.position[0]    = float(p.x);
       v.position[1]    = float(p.y);
       v.position[2] = hi > lo ? float(1 - 2 * (p.depth - lo) / (hi - lo)) : 0;
-      v.position[3] =
-          surface && scene.surfacePerspective ? float(1 / p.depth) : 1;
+      v.position[3]    = ((surface && scene.surfacePerspective) ||
+                       (t.textured && scene.texturePerspective))
+                             ? float(1 / p.depth)
+                             : 1;
       require(std::isfinite(v.position[3]) && v.position[3] > 0,
               "Invalid Live Render perspective depth");
       for (int k = 0; k < 3; ++k) {

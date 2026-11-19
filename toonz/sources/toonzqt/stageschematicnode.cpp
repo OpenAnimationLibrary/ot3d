@@ -8,6 +8,8 @@
 #include "tvectorimage.h"
 #include "tundo.h"
 #include "tconst.h"
+#include "historytypes.h"
+#include "amorientation.h"
 
 // TnzLib includes
 #include "toonz/tstageobjectid.h"
@@ -32,6 +34,7 @@
 #include "toonz/preferences.h"
 #include "toonz/txshsimplelevel.h"
 #include "toonz/txsheethandle.h"
+#include "toonz/tscenehandle.h"
 
 // TnzQt includes
 #include "toonzqt/gutil.h"
@@ -47,10 +50,203 @@
 #include <QMenu>
 #include <QTextCursor>
 #include <QSet>
+#include <QDialog>
+#include <QFormLayout>
+#include <QComboBox>
+#include <QDoubleSpinBox>
+#include <QCheckBox>
+#include <QDialogButtonBox>
+#include <QMessageBox>
 
 #include "toonzqt/stageschematicnode.h"
 
 namespace {
+// Constraint edits retain the same snapshots as OT-Dev's Aim At workflow.
+class ConstraintEditUndo final : public TUndo {
+  TStageObjectP m_object;
+  std::vector<TStageObject::Constraint> m_before, m_after;
+  TXsheetHandle *m_xsheet;
+  TSceneHandle *m_scene;
+  void notify() const {
+    m_scene->setDirtyFlag(true);
+    m_xsheet->notifyXsheetChanged();
+  }
+
+public:
+  ConstraintEditUndo(StageSchematicScene *scene, TStageObject *object,
+                     std::vector<TStageObject::Constraint> before)
+      : m_object(object)
+      , m_before(std::move(before))
+      , m_after(object->getConstraints())
+      , m_xsheet(scene->getXsheetHandle())
+      , m_scene(scene->getSceneHandle()) {}
+  void undo() const override {
+    m_object->setConstraints(m_before);
+    notify();
+  }
+  void redo() const override {
+    m_object->setConstraints(m_after);
+    notify();
+  }
+  int getSize() const override {
+    return sizeof(*this) + (m_before.size() + m_after.size()) *
+                               sizeof(TStageObject::Constraint);
+  }
+  QString getHistoryString() override {
+    return QObject::tr("Change Constraints");
+  }
+  int getHistoryType() override { return HistoryType::Schematic; }
+};
+void recordConstraintEdit(StageSchematicScene *scene, TStageObject *object,
+                          std::vector<TStageObject::Constraint> before) {
+  auto *undo = new ConstraintEditUndo(scene, object, std::move(before));
+  undo->redo();
+  TUndoManager::manager()->add(undo);
+}
+void editOrientationConstraint(StageSchematicScene *scene, TStageObject *object,
+                               TStageObject::Constraint::Type type,
+                               int index = -1) {
+  using Constraint = TStageObject::Constraint;
+  Constraint link;
+  if (index >= 0)
+    link = object->getConstraints().at(index);
+  else
+    link.type = type;
+  QDialog dialog;
+  dialog.setWindowTitle(type == Constraint::AimAt ? QObject::tr("Aim At")
+                                                  : QObject::tr("Orient Like"));
+  QFormLayout layout(&dialog);
+  QComboBox targets, scope;
+  std::vector<TStageObjectId> ids;
+  auto *tree = scene->getXsheet()->getStageObjectTree();
+  for (int i = 0; i < tree->getStageObjectCount(); ++i) {
+    auto *candidate = tree->getStageObject(i);
+    if (candidate == object) continue;
+    ids.push_back(candidate->getId());
+    targets.addItem(QString::fromStdString(candidate->getFullName()));
+    if (candidate->getId() == object->getConstraintTargetId(link))
+      targets.setCurrentIndex(ids.size() - 1);
+  }
+  if (ids.empty()) return;
+  scope.addItem(QObject::tr("This Object"));
+  scope.addItem(QObject::tr("Child Objects (automatic)"));
+  scope.setCurrentIndex(link.scope == Constraint::Children ? 1 : 0);
+  QDoubleSpinBox influence;
+  influence.setRange(0, 100);
+  influence.setSuffix(" %");
+  influence.setValue(link.influence * 100);
+  QCheckBox keep(QObject::tr("Keep current orientation"));
+  keep.setChecked(index < 0 && type == Constraint::OrientLike);
+  keep.setVisible(type == Constraint::OrientLike);
+  keep.setEnabled(scope.currentIndex() == 0);
+  QObject::connect(&scope, qOverload<int>(&QComboBox::currentIndexChanged),
+                   &keep, [&keep](int i) { keep.setEnabled(i == 0); });
+  QDoubleSpinBox rx, ry, rz;
+  for (auto *spin : {&rx, &ry, &rz}) {
+    spin->setRange(-360, 360);
+    spin->setSuffix(QObject::tr(" degrees"));
+    spin->setDecimals(2);
+  }
+  layout.addRow(QObject::tr("Target:"), &targets);
+  layout.addRow(QObject::tr("Apply to:"), &scope);
+  layout.addRow(QObject::tr("Influence:"), &influence);
+  layout.addRow(&keep);
+  layout.addRow(QObject::tr("Additional rotation X:"), &rx);
+  layout.addRow(QObject::tr("Additional rotation Y:"), &ry);
+  layout.addRow(QObject::tr("Additional rotation Z:"), &rz);
+  QDialogButtonBox buttons(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+  layout.addRow(&buttons);
+  QObject::connect(&buttons, &QDialogButtonBox::accepted, &dialog,
+                   &QDialog::accept);
+  QObject::connect(&buttons, &QDialogButtonBox::rejected, &dialog,
+                   &QDialog::reject);
+  if (dialog.exec() != QDialog::Accepted) return;
+  link.target = ids.at(targets.currentIndex());
+  link.targetIdentity.clear();
+  link.scope =
+      scope.currentIndex() == 1 ? Constraint::Children : Constraint::Self;
+  link.influence = influence.value() / 100;
+  if (keep.isEnabled() && keep.isChecked() &&
+      !object->captureConstraintOffset(link,
+                                       scene->getFrameHandle()->getFrame())) {
+    QMessageBox::warning(
+        nullptr, QObject::tr("Constraint"),
+        QObject::tr("Cannot capture an offset for this target or transform."));
+    return;
+  }
+  link.offset = otam::multiply(
+      link.offset, otam::rotation(rx.value(), ry.value(), rz.value()));
+  const auto before = object->getConstraints();
+  if (index >= 0) object->removeConstraint(index);
+  if (!object->addConstraint(link)) {
+    object->setConstraints(before);
+    QMessageBox::warning(nullptr, QObject::tr("Constraint"),
+                         QObject::tr("This target would create a dependency "
+                                     "cycle or has an invalid transform."));
+    return;
+  }
+  // Retain evaluation order when editing an existing entry.
+  if (index >= 0) {
+    auto after = object->getConstraints();
+    after.pop_back();
+    after.insert(after.begin() + index, object->getConstraints().back());
+    object->setConstraints(after);
+  }
+  recordConstraintEdit(scene, object, before);
+}
+void addConstraintMenu(QMenu &menu, StageSchematicScene *scene,
+                       TStageObject *object) {
+  using Constraint  = TStageObject::Constraint;
+  auto *constraints = menu.addMenu(QObject::tr("Constraints"));
+  for (auto type : {Constraint::AimAt, Constraint::OrientLike}) {
+    auto *action = constraints->addAction(type == Constraint::AimAt
+                                              ? QObject::tr("Aim At...")
+                                              : QObject::tr("Orient Like..."));
+    QObject::connect(action, &QAction::triggered, constraints,
+                     [scene, object, type] {
+                       editOrientationConstraint(scene, object, type);
+                     });
+  }
+  if (object->getConstraints().empty()) return;
+  constraints->addSeparator();
+  for (int i = 0; i < int(object->getConstraints().size()); ++i) {
+    const auto link = object->getConstraints()[i];
+    auto *entry     = constraints->addMenu(
+            QObject::tr("%1. %2: %3")
+                .arg(i + 1)
+                .arg(link.type == Constraint::AimAt ? QObject::tr("Aim At")
+                                                    : QObject::tr("Orient Like"))
+                .arg(QString::fromStdString(
+                    object->getConstraintTargetId(link).toString())));
+    QObject::connect(entry->addAction(QObject::tr("Edit...")),
+                     &QAction::triggered, entry, [scene, object, link, i] {
+                       editOrientationConstraint(scene, object, link.type, i);
+                     });
+    auto *enabled = entry->addAction(QObject::tr("Enabled"));
+    enabled->setCheckable(true);
+    enabled->setChecked(link.enabled);
+    QObject::connect(enabled, &QAction::toggled, entry,
+                     [scene, object, i](bool on) {
+                       auto before = object->getConstraints(), after = before;
+                       after.at(i).enabled = on;
+                       object->setConstraints(after);
+                       recordConstraintEdit(scene, object, before);
+                     });
+    QObject::connect(entry->addAction(QObject::tr("Remove")),
+                     &QAction::triggered, entry, [scene, object, i] {
+                       auto before = object->getConstraints();
+                       object->removeConstraint(i);
+                       recordConstraintEdit(scene, object, before);
+                     });
+  }
+  QObject::connect(constraints->addAction(QObject::tr("Clear All Constraints")),
+                   &QAction::triggered, constraints, [scene, object] {
+                     auto before = object->getConstraints();
+                     object->clearConstraints();
+                     recordConstraintEdit(scene, object, before);
+                   });
+}
+
 void drawCamera(QPainter *painter, const QColor &color, const QPen &pen,
                 double width, double height) {
   QPointF points[3];
@@ -248,6 +444,7 @@ void ColumnPainter::contextMenuEvent(QGraphicsSceneContextMenuEvent *cme) {
   menu.addSeparator();
 
   menu.addAction(group);
+  addConstraintMenu(menu, stageScene, m_parent->getStageObject());
   menu.exec(cme->screenPos());
 }
 
@@ -442,6 +639,7 @@ void PegbarPainter::contextMenuEvent(QGraphicsSceneContextMenuEvent *cme) {
   menu.addAction(paste);
   menu.addSeparator();
   menu.addAction(group);
+  addConstraintMenu(menu, stageScene, m_parent->getStageObject());
   menu.exec(cme->screenPos());
 }
 

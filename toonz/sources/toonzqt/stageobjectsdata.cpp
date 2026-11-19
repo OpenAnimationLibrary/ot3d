@@ -1129,6 +1129,14 @@ std::vector<TStageObjectId> StageObjectsData::restoreObjects(
     }
   }
 
+  for (int elementIndex = 0; elementIndex < elementsCount; ++elementIndex) {
+    const auto *element = m_elements[elementIndex];
+    auto *object        = xsh->getStageObject(idTable[element->m_params->m_id]);
+    // Use stored IDs, before insertion shifted the live column indices.
+    object->setConstraints(element->m_params->m_constraints);
+    object->remapConstraintTargets(idTable.toStdMap());
+  }
+
   // Update the link, like in functions above
   if (!fxTable.empty() && doClone) updateFxLinks(fxTable.toStdMap());
 

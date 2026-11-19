@@ -7,6 +7,7 @@ else()
 endif()
 add_library(otam STATIC
     ammodel.cpp ammodel.h
+    amorientation.cpp amorientation.h
     amnormals.cpp
     ammaterial.cpp ammaterial.h
     amaction.cpp amaction.h
@@ -20,6 +21,9 @@ set_target_properties(otam PROPERTIES POSITION_INDEPENDENT_CODE ON)
 option(BUILD_AM_TESTS "Build native A:M parser/spatial regression tests" ${AM_STANDALONE})
 if(BUILD_AM_TESTS)
     enable_testing()
+    add_executable(orientation_test tests/orientation_test.cpp)
+    target_link_libraries(orientation_test PRIVATE otam)
+    add_test(NAME orientation COMMAND orientation_test)
     add_executable(ammodel_test tests/ammodel_test.cpp)
     target_link_libraries(ammodel_test PRIVATE otam)
     add_test(NAME ammodel COMMAND ammodel_test)
