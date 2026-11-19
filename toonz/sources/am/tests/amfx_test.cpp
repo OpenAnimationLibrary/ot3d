@@ -11,6 +11,7 @@
 #include "../../stdfx/threepointlightfx.cpp"
 #include "../../stdfx/pointlightfx.cpp"
 #include "../../stdfx/merge3dfx.cpp"
+#include "../../stdfx/multiplemodelsfx.cpp"
 #include "../../stdfx/glbmodelfx.cpp"
 #include "../../glb/tests/glbfixture.h"
 #include "amfixture.h"
@@ -1162,6 +1163,169 @@ void testSurfaceSmoothing() {
           "smoothing output lost linear HDR reflections");
 }
 
+// Invalid insertion must stop before it needs scene/selection handles or
+// changes the graph. Only the current Xsheet is needed for preflight.
+class Rejected3DFxApplication final : public TApplication {
+  TXsheetHandle *m_sheet;
+
+public:
+  explicit Rejected3DFxApplication(TXsheetHandle *sheet) : m_sheet(sheet) {}
+  TFrameHandle *getCurrentFrame() const override { return nullptr; }
+  TXshLevelHandle *getCurrentLevel() const override { return nullptr; }
+  TXsheetHandle *getCurrentXsheet() const override { return m_sheet; }
+  TObjectHandle *getCurrentObject() const override { return nullptr; }
+  TColumnHandle *getCurrentColumn() const override { return nullptr; }
+  TSceneHandle *getCurrentScene() const override { return nullptr; }
+  ToolHandle *getCurrentTool() const override { return nullptr; }
+  TSelectionHandle *getCurrentSelection() const override { return nullptr; }
+  TOnionSkinMaskHandle *getCurrentOnionSkin() const override { return nullptr; }
+  TPaletteHandle *getCurrentPalette() const override { return nullptr; }
+  TFxHandle *getCurrentFx() const override { return nullptr; }
+  PaletteController *getPaletteController() const override { return nullptr; }
+  TColorStyle *getCurrentLevelStyle() const override { return nullptr; }
+  int getCurrentLevelStyleIndex() const override { return 0; }
+  void setCurrentLevelStyleIndex(int, bool) override {}
+};
+
+void testMultipleModels(ToonzScene &source, TFx *glb,
+                        const QTemporaryDir &temp) {
+  ToonzScene scene;
+  auto *sheet = scene.getXsheet();
+  require(sheet->setCell(0, 0, source.getXsheet()->getCell(0, 0)),
+          "Multiple Models A:M exposure");
+  TXshZeraryFxColumnP glbColumn = new TXshZeraryFxColumn(2);
+  glbColumn->getZeraryColumnFx()->setZeraryFx(glb);
+  sheet->insertColumn(1, glbColumn.getPointer());
+  TFx *columns[] = {sheet->getColumn(0)->getFx(), sheet->getColumn(1)->getFx()};
+  TFxP owner     = new MultipleModelsFx;
+  auto &models   = *static_cast<MultipleModelsFx *>(owner.getPointer());
+  for (int i = 0; i < 12; ++i) {
+    if (i)
+      require(models.addInputPort("Model" + std::to_string(i + 1),
+                                  createDynamicFxPort(&models, 0), 0),
+              "Multiple Models dynamic input");
+    auto *port = models.getInputPort(i);
+    require(canConnectFxPort(port, columns[i % 2]) &&
+                !canConnectFxPort(port, sheet->getFxDag()->getXsheetFx()),
+            "Multiple Models lost typed input validation");
+    port->setFx(columns[i % 2]);
+  }
+  TRenderSettings info;
+  const auto geometry = models.get3DRenderGeometry(0, nullptr);
+  require(geometry && geometry->layers.size() == 12,
+          "Multiple Models dropped a mixed-model input");
+  require(!geometry->materialGroups.empty(),
+          "Multiple Models lost native material group metadata");
+  const auto foreground = geometry->layers.back().scene;
+  models.getInputPort(0)->setFx(columns[1]);
+  models.getInputPort(1)->setFx(columns[0]);
+  const auto reordered = models.get3DRenderGeometry(0, nullptr);
+  require(reordered &&
+              reordered->layers.back().scene->triangles.size() ==
+                  geometry->layers.front().scene->triangles.size() &&
+              reordered->layers[10].scene->triangles.size() ==
+                  foreground->triangles.size(),
+          "Multiple Models input stacking order was ignored");
+  models.getInputPort(0)->setFx(columns[0]);
+  models.getInputPort(1)->setFx(columns[1]);
+  models.set3DInputAffine(0, TTranslation(50, 0));
+  const auto placed = models.get3DRenderGeometry(0, nullptr);
+  require(placed->layers.back().affine[2] == 50,
+          "Multiple Models lost per-input placement");
+  const TFxP cloned = models.clone(true);
+  auto *copy        = dynamic_cast<MultipleModelsFx *>(cloned.getPointer());
+  require(
+      copy && copy->getInputPortCount() == 12 &&
+          copy->get3DRenderGeometry(0, nullptr)->layers.back().affine[2] == 50,
+      "Multiple Models clone lost inputs or placement");
+  for (int i = 0; i < 12; ++i)
+    require(!canConnectFxPort(copy->getInputPort(i),
+                              sheet->getFxDag()->getXsheetFx()),
+            "Multiple Models clone created an untyped input");
+  // One lighting node must reach every model, before it is rasterized.
+  TFxP lighting = new ThreePointLightFx;
+  lighting->getInputPort(0)->setFx(&models);
+  auto *light = static_cast<ThreePointLightFx *>(lighting.getPointer());
+  set(*light, "masterIntensity", 0);
+  const auto dark = light->get3DRenderScene(0, nullptr);
+  for (const auto &layer : dark->layers)
+    require(layer.scene->triangles[0].color == std::array<float, 3>{{0, 0, 0}},
+            "Multiple Models shared lighting missed a branch");
+  set(*light, "masterIntensity", 100);
+  set(*light, "ambient", 100);
+  const auto lit = light->get3DRenderScene(0, nullptr);
+  for (const auto &layer : lit->layers)
+    require(layer.scene->triangles[0].color[0] > 0,
+            "Multiple Models shared lighting lost a mixed model");
+  TFxP toon = new ToonLineFx;
+  toon->getInputPort(0)->setFx(light);
+  auto *outline       = static_cast<ToonLineFx *>(toon.getPointer());
+  const auto outlined = outline->get3DRenderScene(0, nullptr);
+  require(outlined && outlined->toonLine &&
+              outlined->layers[0].scene->layers.size() == 12,
+          "Multiple Models output lost Toon Line compatibility");
+  TRaster32P raster(128, 128);
+  TTile tile(raster, TPointD(-64, -64));
+  outline->doCompute(tile, 0, info);
+  require(coverage(raster) > 0, "Multiple Models raster output is empty");
+  TFxP point = new PointLightFx;
+  point->getInputPort(0)->setFx(outline);
+  auto *bulb            = static_cast<PointLightFx *>(point.getPointer());
+  const auto pointScene = bulb->get3DRenderScene(0, nullptr);
+  require(pointScene && pointScene->toonLine,
+          "Multiple Models lost Toon Line through a shared Point Light");
+  bulb->doCompute(tile, 0, info);
+  require(coverage(raster) > 0,
+          "Multiple Models shared Point Light output is empty");
+  int canceled = 1;
+  require(!models.get3DRenderScene(0, &canceled),
+          "Multiple Models ignored cancellation");
+  // Regression for Add/Insert FX after the raster-only Xsheet node.
+  TXsheetHandle handle;
+  handle.setXsheet(sheet);
+  Rejected3DFxApplication app(&handle);
+  QList<TFxP> selected;
+  selected << sheet->getFxDag()->getXsheetFx();
+  const int count = sheet->getFxDag()->getInternalFxs()->getFxCount();
+  TFxP rejected   = new PointLightFx;
+  TFxCommand::insertFx(rejected.getPointer(), selected,
+                       QList<TFxCommand::Link>(), &app, 0, 0);
+  TFxCommand::addFx(rejected.getPointer(), selected, &app, 0, 0);
+  require(sheet->getFxDag()->getInternalFxs()->getFxCount() == count &&
+              !rejected->getInputPort(0)->getFx() &&
+              models.getInputPort(0)->getFx() == columns[0],
+          "incompatible 3D insertion modified the graph");
+  models.set3DInputAffine(0, TAffine());
+  sheet->getFxDag()->getInternalFxs()->addFx(&models);
+  const TFxP tree = buildSceneFx(&scene, 0, sheet, owner, BSFX_NO_TR);
+  auto *built     = dynamic_cast<MultipleModelsFx *>(tree.getPointer());
+  require(built && built->get3DRenderGeometry(0, nullptr)->layers.size() == 12,
+          "Multiple Models render tree flattened model inputs");
+  const auto saved = temp.filePath("multiple-models.xml");
+  {
+    TOStream stream{TFilePath(saved)};
+    stream << sheet;
+  }
+  TPersist *persist = nullptr;
+  {
+    TIStream stream{TFilePath(saved)};
+    stream >> persist;
+  }
+  std::unique_ptr<TPersist> restoredOwner(persist);
+  auto *restored = dynamic_cast<TXsheet *>(persist);
+  require(restored, "Multiple Models scene restore failed");
+  auto *fxs                = restored->getFxDag()->getInternalFxs();
+  MultipleModelsFx *loaded = nullptr;
+  for (int i = 0; i < fxs->getFxCount(); ++i)
+    if (auto *fx = dynamic_cast<MultipleModelsFx *>(fxs->getFx(i))) loaded = fx;
+  require(loaded && loaded->getInputPortCount() == 12,
+          "Multiple Models persistence lost the dynamic stack");
+  for (int i = 0; i < 12; ++i)
+    require(loaded->getInputPort(i)->getFx() &&
+                dynamic_cast<T3DSourcePort *>(loaded->getInputPort(i)),
+            "Multiple Models persistence lost a typed connection");
+}
+
 void testRenderModes(ToonzScene &scene, TXshLevel *level, const QString &path) {
   auto *sheet  = scene.getXsheet();
   auto *column = sheet->getColumn(0)->getFx();
@@ -1414,6 +1578,7 @@ int main(int argc, char **argv) {
         dynamic_cast<TStringParam *>(glb.getParams()->getParam("modelFile"));
     require(file, "mixed-group GLB file parameter");
     file->setValue(glbPath.toStdWString());
+    testMultipleModels(scene, &glb, temp);
     TFxP mergeOwner = new Merge3DFx;
     auto &merge     = *static_cast<Merge3DFx *>(mergeOwner.getPointer());
     merge.getInputPort(0)->setFx(column);

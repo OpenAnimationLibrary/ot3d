@@ -28,6 +28,7 @@
 // TnzCore includes
 #include "tundo.h"
 #include "tconst.h"
+#include "tmsgcore.h"
 
 // Qt includes
 #include <QMap>
@@ -800,6 +801,37 @@ void InsertFxUndo::initialize(const TFxP &newFx, int row, int col) {
                          return containsInputFx(m_selectedFxs, link);
                        }),
         m_selectedLinks.end());
+
+    // Validate before cloning, registering or rewiring anything. Inserting a
+    // typed 3D FX after the raster-only Xsheet otherwise throws from setFx().
+    const TFxPort *input =
+        fx->getInputPortCount() ? fx->getInputPort(0) : nullptr;
+    bool compatible = true;
+    for (const auto &selected : m_selectedFxs) {
+      TFx *output = ::getActualOut(selected.getPointer());
+      if (input && !canConnectFxPort(input, output)) compatible = false;
+      if (m_attachOutputs)
+        for (int i = 0; i < output->getOutputConnectionCount(); ++i)
+          if (!canConnectFxPort(output->getOutputConnection(i), fx))
+            compatible = false;
+    }
+    for (const auto &link : m_selectedLinks) {
+      if (input &&
+          !canConnectFxPort(input, ::getActualOut(link.m_inputFx.getPointer())))
+        compatible = false;
+      if (link.m_index >= 0 &&
+          !canConnectFxPort(::getActualIn(link.m_outputFx.getPointer())
+                                ->getInputPort(link.m_index),
+                            fx))
+        compatible = false;
+    }
+    if (!compatible) {
+      DVGui::warning(QObject::tr(
+          "This effect cannot use the selected connection. Combine native "
+          "models with Multiple Models before adding shared 3D effects; "
+          "the Xsheet output is a raster image."));
+      return;
+    }
 
     // Build an fx for each of the specified inputs
     ::CloneFxFunctor cloneFx = {fx, true};
@@ -2014,7 +2046,7 @@ void DeleteLinksUndo::undo() const {
     for (d = 0; d != dCount; ++d) {
       const DynamicLink &link = dynLinks[d];
 
-      TFxPort *port = new TRasterFxPort;  // isAControlPort... semi-obsolete
+      TFxPort *port = createDynamicFxPort(outputFx, link.m_groupIndex);
       port->setFx(link.m_inputFx);
 
       outputFx->addInputPort(link.m_portName, port, link.m_groupIndex);

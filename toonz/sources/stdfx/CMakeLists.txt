@@ -180,6 +180,7 @@ set(SOURCES
     pointlightfx.cpp
     threepointlightfx.cpp
     merge3dfx.cpp
+    multiplemodelsfx.cpp
     tilefx.cpp
     tonecurvefx.cpp
     transform3dfx.cpp

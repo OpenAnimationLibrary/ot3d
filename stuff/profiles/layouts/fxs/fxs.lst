@@ -207,6 +207,7 @@
     STD_pointLightFx
     STD_threePointLightFx
     STD_merge3DFx
+    STD_multipleModelsFx
   </3D>
   <Utility>
     STD_openExrAovFx

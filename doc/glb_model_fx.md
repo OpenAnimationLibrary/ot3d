@@ -220,3 +220,33 @@ undo/redo, interpolation, clone/preset persistence and safe model replacement.
 
 These UI checks complement the automated tests; automated pixel tests do not
 claim an interactive UI acceptance pass on every platform.
+
+## Multiple Models
+
+Use **Add FX > 3D > Multiple Models** to combine any number of native A:M and
+GLB model columns, GLB Model FX, or compatible 3D effect branches. Connect each
+branch to a Model input; the schematic keeps one spare input available.
+
+**Model1 is the foreground**, followed by Model2, Model3, and so on. Drag a
+connected input onto another input on this node to move it in the stack.
+Ctrl-drag a new output onto an occupied input to insert it above that input.
+Reordering and removing connections support the usual Undo/Redo operations.
+
+Connect the combined output to one shared Point Light or Three-Point Light,
+Toon Line, 3D Transformer, A:M Material, Ink Line, surface smoothing, or
+lighting/environment chain. Branch-specific effects can stay before the merge.
+The group forwards lighting, transforms, materials, ink, and normal smoothing
+to its children before rasterization, while retaining each column's placement,
+exposure, group names, and render warnings. Geometry-only bounds and light-target
+queries do not rasterize inputs. The final output can feed ordinary 2D effects
+or the Xsheet as usual.
+
+Inputs are composited as ordered layers. Each model retains its own depth
+buffer; separate inputs do not intersect in a shared depth buffer or cast
+shadows onto each other. This is the same compositing behavior as 3D Merge,
+with an expandable input stack instead of two inputs.
+
+The Xsheet output is already a flattened raster and cannot feed a typed 3D
+input. Insert shared 3D effects after Multiple Models and before the Xsheet.
+Inserting an incompatible effect now leaves the existing connections intact
+and displays a compatibility message.

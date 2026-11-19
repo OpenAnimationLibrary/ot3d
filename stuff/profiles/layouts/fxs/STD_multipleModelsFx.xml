@@ -1,0 +1,8 @@
+<fxlayout>
+  <page name="Models">
+    <label>"Connect native A:M/GLB models or compatible 3D effects. New Model inputs appear as you connect them."</label>
+    <label>"Model1 is in front. Drag an input connection onto another input on this node to change the stacking order. Ctrl-drag a new output onto an occupied input to insert it above."</label>
+    <label>"Connect this output to shared Point Light, Three-Point Light, Toon Line, materials, environment or other 3D effects before the Xsheet. Native geometry and each column's placement remain available downstream."</label>
+    <label>"Inputs composite in layer order; models on separate inputs do not share a depth buffer or cast shadows onto one another."</label>
+  </page>
+</fxlayout>
