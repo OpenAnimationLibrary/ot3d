@@ -25,7 +25,8 @@ The intended workflow is:
 2. Model, rig, and animate 3D material in a dedicated DCC such as
    [Blender](https://www.blender.org/) or
    [Animation:Master](https://www.hash.com/animation-master-features).
-3. Exchange 3D assets through GLB (binary glTF 2.0).
+3. Exchange 3D assets through GLB (binary glTF 2.0), or load native
+   Animation:Master `.mdl` models.
 4. Stage and review both media together in OT3D's interactive Viewer.
 5. Use the final renderer when final-quality output is required.
 
@@ -33,16 +34,23 @@ GLB is a read-only interchange boundary in the initial architecture. The externa
 project remains the source of truth; OT3D does not write changes back to `.blend`,
 Animation:Master project files, or GLB assets.
 
-## Initial scope
+## Current experimental capabilities
 
-Essential Viewer work comes before broad 3D feature coverage:
+The current development line includes:
 
-- establish a deterministic OpenToonz and migrated-3D source baseline;
-- draw static GLB geometry in the interactive Viewer;
-- make 2D planes and 3D geometry share a camera and depth model;
-- play supported GLB animation at scene time;
-- add selection, transforms, diagnostics, and dependable asset reload;
-- then expand 2D-plane orientation, fidelity, performance, and exchange workflows.
+- native GLB and Animation:Master model levels, hybrid Viewer staging, spatial
+  transforms, and supported GLB animation playback;
+- A:M group palettes, control point editing and Actions, native bone animation,
+  3D Plastic posing, and Distortion Cage deformation;
+- model materials, Ink Line and Toon Line, Point Light and Three-Point Light,
+  environment reflections, image based lighting, and surface smoothing;
+- Live Render controls and GPU environment reflection previews; and
+- retained EXR sources, multipart/channel selection, and deep-image transport.
+
+These are experimental features with individual limits. See the feature
+documents below for supported inputs and workflows. The roadmap describes the
+remaining mixed-media camera/depth, fidelity, performance, and exchange work;
+the presence of a feature does not establish completion of a roadmap milestone.
 
 Arbitrary 3D rotation of 2D planes is deliberately deferred. During the early
 milestones, 2D columns retain their current planar orientation controls and Z placement;
@@ -58,16 +66,27 @@ See the [roadmap](doc/ot3d/ROADMAP.md) for ordered milestones and explicit non-g
 - [Release policy](doc/ot3d/RELEASES.md)
 - [OpenToonz relationship and upstream policy](doc/ot3d/UPSTREAM.md)
 - [Initial 3D source migration record](doc/ot3d/THREE_D_MIGRATION.md)
+- [Native A:M models, editing, and animation](doc/ot3d/AM_MODEL_LEVEL.md)
+- [GLB Model and 3D FX workflows](doc/glb_model_fx.md)
+- [A:M Material node](doc/ot3d/AM_MATERIAL_NODE.md)
+- [Point Light](doc/point_light_fx.md)
+- [Live Render](doc/ot3d/LIVE_RENDER.md)
+- [EXR and deep-image foundations](doc/ot3d/EXR_DOCUMENT_AND_DEEP.md)
 
 ## Builds and releases
 
-Tagged OT3D builds will be published in this repository's
-[Releases](https://github.com/OpenAnimationLibrary/ot3d/releases). Early releases will
-be clearly marked pre-release and will prioritize a portable Windows package so that
-test preferences can remain isolated from an installed OpenToonz configuration.
+Tagged OT3D alpha builds are available from this repository's
+[Releases](https://github.com/OpenAnimationLibrary/ot3d/releases). Download the
+portable Windows x64 package for the selected release. Its `portablestuff` folder
+keeps test preferences separate from an installed OpenToonz configuration.
 
-Until the first tagged release is published, build from source using the inherited
-OpenToonz instructions:
+Untagged CI artifacts are development snapshots and can contain changes newer
+than the latest alpha. Read the release notes for the features included in a
+particular tagged build.
+
+To build from source, use the inherited OpenToonz instructions. Automatic OT3D
+application checks currently target Windows; macOS and Linux instructions do
+not imply current CI verification:
 
 - [Windows](doc/how_to_build_win.md)
 - [macOS](doc/how_to_build_macosx.md)
