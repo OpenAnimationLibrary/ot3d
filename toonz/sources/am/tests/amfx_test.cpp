@@ -1234,16 +1234,20 @@ void testMultipleModels(ToonzScene &source, TFx *glb,
   const auto placed = models.get3DRenderGeometry(0, nullptr);
   require(placed->layers.back().affine[2] == 50,
           "Multiple Models lost per-input placement");
-  const TFxP cloned = models.clone(true);
+  // Live column wrappers are scene-owned. Duplicate the FX and reconnect its
+  // inputs; recursive cloning is exercised on the expanded render tree below.
+  const TFxP cloned = models.clone(false);
   auto *copy        = dynamic_cast<MultipleModelsFx *>(cloned.getPointer());
-  require(
-      copy && copy->getInputPortCount() == 12 &&
-          copy->get3DRenderGeometry(0, nullptr)->layers.back().affine[2] == 50,
-      "Multiple Models clone lost inputs or placement");
-  for (int i = 0; i < 12; ++i)
+  require(copy && copy->getInputPortCount() == 12,
+          "Multiple Models clone lost dynamic inputs");
+  for (int i = 0; i < 12; ++i) {
     require(!canConnectFxPort(copy->getInputPort(i),
                               sheet->getFxDag()->getXsheetFx()),
             "Multiple Models clone created an untyped input");
+    copy->getInputPort(i)->setFx(models.getInputPort(i)->getFx());
+  }
+  require(copy->get3DRenderGeometry(0, nullptr)->layers.back().affine[2] == 50,
+          "Multiple Models clone lost input placement");
   // One lighting node must reach every model, before it is rasterized.
   TFxP lighting = new ThreePointLightFx;
   lighting->getInputPort(0)->setFx(&models);
@@ -1332,6 +1336,11 @@ void testMultipleModels(ToonzScene &source, TFx *glb,
   auto *built     = dynamic_cast<MultipleModelsFx *>(tree.getPointer());
   require(built && built->get3DRenderGeometry(0, nullptr)->layers.size() == 12,
           "Multiple Models render tree flattened model inputs");
+  const TFxP renderClone = tree->clone(true);
+  auto *renderCopy = dynamic_cast<MultipleModelsFx *>(renderClone.getPointer());
+  require(renderCopy &&
+              renderCopy->get3DRenderGeometry(0, nullptr)->layers.size() == 12,
+          "Multiple Models recursive render clone lost mixed-model inputs");
   const auto saved = temp.filePath("multiple-models.xml");
   {
     TOStream stream{TFilePath(saved)};
